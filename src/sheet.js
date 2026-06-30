@@ -1,0 +1,247 @@
+// VexFlow 4.x sheet music renderer (grand staff)
+import { state } from './state.js';
+import { quantizeNotes, groupByMeasure, groupIntoChords, fillWithRests, findBestDuration } from './quantizer.js';
+import { detectChord, keyUsesFlats } from './chords.js';
+
+function VF() { return window.Vex?.Flow; }
+
+// MIDI note → VexFlow "note/octave" string
+const NOTE_SHARP = ['c', 'c#', 'd', 'd#', 'e', 'f', 'f#', 'g', 'g#', 'a', 'a#', 'b'];
+const NOTE_FLAT  = ['c', 'db', 'd', 'eb', 'e', 'f', 'gb', 'g', 'ab', 'a', 'bb', 'b'];
+
+function midiToVexKey(midi, useFlats) {
+  const names = useFlats ? NOTE_FLAT : NOTE_SHARP;
+  return `${names[midi % 12]}/${Math.floor(midi / 12) - 1}`;
+}
+
+// Split a rest duration into clean note values (no dotted for simplicity)
+function splitDurationToNoteValues(beats) {
+  const VALUES = [4, 2, 1, 0.5, 0.25, 0.125];
+  const parts = [];
+  let rem = beats;
+  while (rem > 0.05) {
+    const v = VALUES.find(val => val <= rem + 0.01);
+    if (!v) break;
+    parts.push(v);
+    rem -= v;
+  }
+  return parts;
+}
+
+let container = null;
+let renderer = null;
+let svgCtx = null;
+
+export function initSheet(el) {
+  container = el;
+  el.innerHTML = '';
+}
+
+export function renderSheet(notes, composition, currentTimeMs = null) {
+  if (!container || !window.Vex) return;
+
+  const {
+    Renderer, Stave, StaveNote, Voice, Formatter,
+    Accidental, StaveConnector, Beam,
+  } = VF();
+
+  const { tempo, timeSignature, keySignature } = composition;
+  const useFlats = keyUsesFlats(keySignature);
+  const beatsPerMeasure = timeSignature.numerator * (4 / timeSignature.denominator);
+
+  const quantized = quantizeNotes(notes, tempo, timeSignature, state.ui.quantize);
+  const { measures } = groupByMeasure(quantized, timeSignature);
+  const totalMeasures = Math.max(measures.size, 4);
+
+  // Layout
+  const cw = container.clientWidth || 900;
+  const MEASURES_PER_LINE = Math.max(2, Math.floor((cw - 60) / 280));
+  const STAVE_W = Math.floor((cw - 40) / MEASURES_PER_LINE);
+  const TREBLE_Y = 55;
+  const BASS_OFFSET = 115; // pixels below treble stave top
+  const SYSTEM_H = 220;    // pixels per system (treble + bass + gap)
+  const MX = 10;
+
+  const numLines = Math.ceil(totalMeasures / MEASURES_PER_LINE);
+  const totalH = numLines * SYSTEM_H + 60;
+
+  container.innerHTML = '';
+  renderer = new Renderer(container, Renderer.Backends.SVG);
+  renderer.resize(cw, totalH);
+  svgCtx = renderer.getContext();
+
+  for (let m = 0; m < totalMeasures; m++) {
+    const line = Math.floor(m / MEASURES_PER_LINE);
+    const col  = m % MEASURES_PER_LINE;
+    const x = MX + col * STAVE_W;
+    const tY = TREBLE_Y + line * SYSTEM_H;
+    const bY = tY + BASS_OFFSET;
+    const isFirst = m === 0;
+    const isFirstInLine = col === 0;
+
+    const trebleStave = new Stave(x, tY, STAVE_W);
+    const bassStave   = new Stave(x, bY, STAVE_W);
+
+    if (isFirstInLine) {
+      trebleStave.addClef('treble');
+      bassStave.addClef('bass');
+    }
+    if (isFirst) {
+      trebleStave.addKeySignature(keySignature);
+      bassStave.addKeySignature(keySignature);
+      trebleStave.addTimeSignature(`${timeSignature.numerator}/${timeSignature.denominator}`);
+      bassStave.addTimeSignature(`${timeSignature.numerator}/${timeSignature.denominator}`);
+    }
+
+    trebleStave.setContext(svgCtx).draw();
+    bassStave.setContext(svgCtx).draw();
+
+    // Brace + connectors
+    try {
+      if (isFirstInLine) {
+        new StaveConnector(trebleStave, bassStave).setType('singleLeft').setContext(svgCtx).draw();
+      }
+      if (isFirst) {
+        new StaveConnector(trebleStave, bassStave).setType('brace').setContext(svgCtx).draw();
+      }
+      new StaveConnector(trebleStave, bassStave).setType('singleRight').setContext(svgCtx).draw();
+    } catch (_) {}
+
+    const measureNotes = measures.get(m) || [];
+    const trebleNotes  = measureNotes.filter(n => n.pitch >= 60);
+    const bassNotes    = measureNotes.filter(n => n.pitch <  60);
+
+    const trebleTicks = buildTickables(trebleNotes, beatsPerMeasure, 'treble', useFlats);
+    const bassTicks   = buildTickables(bassNotes,   beatsPerMeasure, 'bass',   useFlats);
+
+    drawVoice(trebleTicks, trebleStave, timeSignature, Formatter, Voice, Accidental, Beam, keySignature, 'treble');
+    drawVoice(bassTicks,   bassStave,   timeSignature, Formatter, Voice, Accidental, Beam, keySignature, 'bass');
+
+    // Chord labels
+    if (measureNotes.length > 0) {
+      drawChordLabels(measureNotes, trebleStave, beatsPerMeasure, useFlats);
+    }
+
+    // Playhead line
+    if (currentTimeMs !== null) {
+      drawPlayhead(currentTimeMs, m, trebleStave, bassStave, tempo, beatsPerMeasure);
+    }
+  }
+}
+
+function buildTickables(staveNotes, beatsPerMeasure, clef, useFlats) {
+  const { StaveNote } = VF();
+  const chordGroups = groupIntoChords(staveNotes);
+  const filled = fillWithRests(chordGroups, beatsPerMeasure);
+  const tickables = [];
+
+  for (const item of filled) {
+    if (item.isRest) {
+      // Split rest into clean note values
+      const parts = splitDurationToNoteValues(item.durationBeats);
+      for (const beats of parts) {
+        const { vexDuration } = findBestDuration(beats);
+        const restKey = clef === 'bass' ? 'd/3' : 'b/4';
+        try {
+          tickables.push(new StaveNote({ keys: [restKey], duration: vexDuration + 'r', clef }));
+        } catch (_) {
+          try { tickables.push(new StaveNote({ keys: ['b/4'], duration: 'qr' })); } catch (__) {}
+        }
+      }
+    } else {
+      const group = item.group;
+      const keys = group.map(n => midiToVexKey(n.pitch, useFlats));
+      const { vexDuration } = findBestDuration(group[0].durationBeats);
+      try {
+        tickables.push(new StaveNote({ keys, duration: vexDuration, clef }));
+      } catch (e) {
+        console.warn('StaveNote error:', keys, vexDuration, e.message);
+      }
+    }
+  }
+  return tickables;
+}
+
+function drawVoice(tickables, stave, timeSignature, Formatter, Voice, Accidental, Beam, key, clef) {
+  if (!tickables.length) return;
+  try {
+    const voice = new Voice({
+      num_beats: timeSignature.numerator,
+      beat_value: timeSignature.denominator,
+    }).setMode(Voice.Mode.SOFT);
+    voice.addTickables(tickables);
+
+    Accidental.applyAccidentals([voice], key);
+
+    const noteStartX = stave.getNoteStartX();
+    const noteEndX   = stave.getX() + stave.getWidth() - 10;
+    const availW = Math.max(80, noteEndX - noteStartX);
+    new Formatter().joinVoices([voice]).format([voice], availW);
+
+    voice.draw(svgCtx, stave);
+
+    // Beam non-rest notes in groups of 8th/16th
+    const nonRest = tickables.filter(t => {
+      try { return !t.isRest(); } catch (_) { return true; }
+    });
+    const beams = Beam.generateBeams(nonRest);
+    beams.forEach(b => b.setContext(svgCtx).draw());
+  } catch (e) {
+    console.warn(`Voice draw [${clef}]:`, e.message);
+  }
+}
+
+function drawChordLabels(measureNotes, trebleStave, beatsPerMeasure, useFlats) {
+  const chordGroups = groupIntoChords(measureNotes);
+  const noteStartX = trebleStave.getNoteStartX();
+  const noteEndX   = trebleStave.getX() + trebleStave.getWidth() - 10;
+  const availW = noteEndX - noteStartX;
+  const svg = container.querySelector('svg');
+
+  for (const group of chordGroups) {
+    if (group.length < 2) continue;
+    const label = detectChord(group.map(n => n.pitch), useFlats);
+    if (!label) continue;
+
+    const frac = group[0].beatInMeasure / beatsPerMeasure;
+    const x = noteStartX + frac * availW;
+    const y = trebleStave.getY() + 12;
+
+    try {
+      svgCtx.fillText(label, x, y);
+      // Apply blue inline style so it beats the global CSS dark-theme override
+      if (svg) {
+        const texts = svg.querySelectorAll('text');
+        const el = texts[texts.length - 1];
+        if (el) {
+          el.style.fill = '#5bc0eb';
+          el.style.fontWeight = 'bold';
+          el.style.fontSize = '12px';
+        }
+      }
+    } catch (_) {}
+  }
+}
+
+function drawPlayhead(currentTimeMs, measureIdx, trebleStave, bassStave, tempo, beatsPerMeasure) {
+  const beatMs = (60 / tempo) * 1000;
+  const currentBeat = currentTimeMs / beatMs;
+  const mIdx = Math.floor(currentBeat / beatsPerMeasure);
+  if (mIdx !== measureIdx) return;
+
+  const beatFrac = (currentBeat - mIdx * beatsPerMeasure) / beatsPerMeasure;
+  const noteStartX = trebleStave.getNoteStartX();
+  const noteEndX   = trebleStave.getX() + trebleStave.getWidth() - 10;
+  const x = noteStartX + beatFrac * (noteEndX - noteStartX);
+
+  try {
+    svgCtx.save();
+    svgCtx.beginPath();
+    svgCtx.setStrokeStyle('rgba(233, 69, 96, 0.8)');
+    svgCtx.setLineWidth(2);
+    svgCtx.moveTo(x, trebleStave.getY() - 8);
+    svgCtx.lineTo(x, bassStave.getY() + 95);
+    svgCtx.stroke();
+    svgCtx.restore();
+  } catch (_) {}
+}
