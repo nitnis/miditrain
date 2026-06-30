@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>MidiTrain</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="stylesheet" href="css/main.css">
+
+  <!-- VexFlow 4 — music notation rendering (bundled locally) -->
+  <script src="lib/vexflow.js"></script>
+  <!-- localforage — IndexedDB wrapper for local storage (bundled locally) -->
+  <script src="lib/localforage.min.js"></script>
+</head>
+<body>
+<div id="app">
+
+  <!-- ── HEADER ── -->
+  <header id="header">
+    <div class="brand">
+      <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 18V5l12-2v13"/>
+        <circle cx="6" cy="18" r="3"/>
+        <circle cx="18" cy="16" r="3"/>
+      </svg>
+      <span class="brand-name">MidiTrain</span>
+    </div>
+
+    <span id="composition-name" class="composition-name" contenteditable="true" spellcheck="false">Untitled</span>
+
+    <div class="header-right">
+      <button class="hdr-btn" id="btn-new">New</button>
+      <button class="hdr-btn" id="btn-open">Open</button>
+      <button class="hdr-btn" id="btn-save">Save</button>
+      <div class="midi-status" id="midi-status" title="Click for MIDI settings">
+        <div class="status-dot disconnected" id="midi-dot"></div>
+        <span id="midi-text">No MIDI</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── TOOLBAR ── -->
+  <div id="toolbar">
+    <div class="toolbar-row">
+
+      <!-- Transport -->
+      <div class="tool-group transport-group">
+        <button class="transport-btn" id="btn-to-start" title="Go to start (Home)">&#9664;&#9664;</button>
+        <button class="transport-btn" id="btn-stop" title="Stop">&#9632;</button>
+        <button class="transport-btn record-btn" id="btn-record" title="Record (R)">&#9679;</button>
+        <button class="transport-btn play-btn" id="btn-play" title="Play/Pause (Space)">&#9654;</button>
+        <button class="transport-btn" id="btn-to-end" title="Go to end">&#9654;&#9654;</button>
+      </div>
+
+      <!-- Position display -->
+      <div class="tool-group display-group">
+        <div class="display-box">
+          <span class="display-label">TIME</span>
+          <span class="display-value" id="display-time">0:00.000</span>
+        </div>
+        <div class="display-box">
+          <span class="display-label">BAR.BEAT</span>
+          <span class="display-value" id="display-beat">1.1</span>
+        </div>
+      </div>
+
+      <!-- Tempo -->
+      <div class="tool-group tempo-group">
+        <span class="tool-label">BPM</span>
+        <button class="adj-btn" id="btn-tempo-down">&#8722;</button>
+        <input class="tempo-input" type="number" id="tempo-input" value="120" min="20" max="300">
+        <button class="adj-btn" id="btn-tempo-up">&#43;</button>
+        <input type="range" id="tempo-slider" min="20" max="300" value="120" class="tempo-slider">
+      </div>
+
+      <!-- Time Signature -->
+      <div class="tool-group meter-group">
+        <span class="tool-label">METER</span>
+        <select id="ts-num">
+          <option>2</option>
+          <option>3</option>
+          <option selected>4</option>
+          <option>5</option>
+          <option>6</option>
+          <option>7</option>
+          <option>8</option>
+          <option>9</option>
+          <option>12</option>
+        </select>
+        <span class="tool-sep">/</span>
+        <select id="ts-den">
+          <option value="2">2</option>
+          <option value="4" selected>4</option>
+          <option value="8">8</option>
+        </select>
+      </div>
+
+      <!-- Metronome -->
+      <div class="tool-group">
+        <button class="toggle-btn" id="btn-metronome" title="Toggle Metronome">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2 L19 20 L5 20 Z"/>
+            <line x1="12" y1="20" x2="12" y2="8" stroke-width="1.5" opacity="0.5"/>
+          </svg>
+          Metro
+        </button>
+      </div>
+
+      <!-- Speed -->
+      <div class="tool-group speed-group">
+        <span class="tool-label">SPEED</span>
+        <input type="range" id="speed-slider" min="25" max="200" value="100" step="5">
+        <span class="speed-value" id="speed-value">100%</span>
+      </div>
+
+      <!-- Training Mode -->
+      <div class="tool-group">
+        <button class="toggle-btn" id="btn-train-mode" title="Toggle Training Mode">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/>
+            <circle cx="12" cy="12" r="4"/>
+            <line x1="12" y1="2" x2="12" y2="5"/>
+            <line x1="12" y1="19" x2="12" y2="22"/>
+            <line x1="2" y1="12" x2="5" y2="12"/>
+            <line x1="19" y1="12" x2="22" y2="12"/>
+          </svg>
+          Train
+        </button>
+      </div>
+
+    </div><!-- .toolbar-row -->
+
+    <!-- Loop Controls -->
+    <div class="toolbar-row loop-row">
+      <label class="loop-label">
+        <input type="checkbox" id="loop-enabled">
+        <span class="tool-label">LOOP</span>
+      </label>
+      <span class="tool-label">from bar</span>
+      <input type="number" class="loop-input" id="loop-start" value="1" min="1" max="999">
+      <span class="tool-label">to</span>
+      <input type="number" class="loop-input" id="loop-end" value="4" min="1" max="999">
+    </div>
+
+  </div><!-- #toolbar -->
+
+  <!-- ── MAIN CONTENT ── -->
+  <div id="main-content">
+
+    <!-- View Tabs -->
+    <div class="view-tabs" id="view-tabs">
+      <button class="view-tab active" data-view="sheet">Sheet Music</button>
+      <button class="view-tab" data-view="piano-roll">Piano Roll</button>
+    </div>
+
+    <!-- Sheet Music Panel -->
+    <div class="view-panel" id="panel-sheet">
+      <div id="sheet-toolbar">
+        <span class="tool-label">Key:</span>
+        <select id="key-select">
+          <option value="C">C major</option>
+          <option value="G">G major</option>
+          <option value="D">D major</option>
+          <option value="A">A major</option>
+          <option value="E">E major</option>
+          <option value="B">B major</option>
+          <option value="F#">F# major</option>
+          <option value="F">F major</option>
+          <option value="Bb">Bb major</option>
+          <option value="Eb">Eb major</option>
+          <option value="Ab">Ab major</option>
+          <option value="Db">Db major</option>
+        </select>
+        <span class="tool-label" style="margin-left:10px">Quantize:</span>
+        <select id="quantize-select">
+          <option value="32">1/32</option>
+          <option value="16">1/16</option>
+          <option value="8" selected>1/8</option>
+          <option value="4">1/4</option>
+          <option value="2">1/2</option>
+        </select>
+        <button class="small-btn" id="btn-clear" style="margin-left:auto">Clear All</button>
+      </div>
+      <div id="sheet-container">
+        <div id="vexflow-output"></div>
+      </div>
+    </div>
+
+    <!-- Piano Roll Panel -->
+    <div class="view-panel hidden" id="panel-roll">
+      <canvas id="roll-canvas"></canvas>
+    </div>
+
+  </div><!-- #main-content -->
+
+  <!-- ── PIANO SECTION (Falling Notes + Keyboard) ── -->
+  <div id="piano-section">
+    <div id="falling-notes-container">
+      <canvas id="falling-canvas"></canvas>
+    </div>
+    <div id="piano-keyboard-container">
+      <div id="piano-keyboard"></div>
+    </div>
+  </div>
+
+  <!-- ── MODALS ── -->
+
+  <!-- Accuracy Results Modal -->
+  <div class="modal-overlay hidden" id="accuracy-modal">
+    <div class="modal-box">
+      <h2>Training Results</h2>
+      <div class="accuracy-score-display">
+        <svg class="score-ring" viewBox="0 0 120 120">
+          <circle class="score-bg" cx="60" cy="60" r="50"/>
+          <circle class="score-arc" cx="60" cy="60" r="50" id="score-arc"/>
+        </svg>
+        <div class="score-text">
+          <span id="score-pct">0</span>%
+        </div>
+      </div>
+      <div class="accuracy-stats">
+        <div class="stat-item">
+          <span class="stat-label">Correct</span>
+          <span class="stat-value correct" id="stat-correct">0</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Missed</span>
+          <span class="stat-value missed" id="stat-missed">0</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Extra Notes</span>
+          <span class="stat-value extra" id="stat-extra">0</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Avg Timing</span>
+          <span class="stat-value timing" id="stat-timing">±0ms</span>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="modal-btn" id="btn-train-again">Try Again</button>
+        <button class="modal-btn primary" id="btn-close-accuracy">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Song Browser Modal -->
+  <div class="modal-overlay hidden" id="song-browser-modal">
+    <div class="modal-box">
+      <h2>Open Composition</h2>
+      <div id="song-list"></div>
+      <div class="modal-actions">
+        <button class="modal-btn primary" id="btn-close-browser">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MIDI Info Modal -->
+  <div class="modal-overlay hidden" id="midi-info-modal">
+    <div class="modal-box">
+      <h2>MIDI Setup</h2>
+      <div class="midi-info">
+        <p style="font-size:13px;color:var(--muted);line-height:1.5">
+          Connect a USB or Bluetooth MIDI keyboard to use MidiTrain with live input.
+        </p>
+        <div id="midi-devices-list"><p style="color:var(--muted)">No devices found.</p></div>
+        <div class="midi-note">
+          <strong>iPad users:</strong> Safari does not support Web MIDI API.
+          Install <a href="https://apps.apple.com/app/webmidi-browser/id1262741284" target="_blank">WebMIDI Browser</a>
+          from the App Store, then open this page inside that app.
+          Alternatively, use a Web MIDI–enabled browser such as Chrome on desktop.
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="modal-btn primary" id="btn-close-midi-info">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast notification -->
+  <div id="toast" class="toast hidden"></div>
+
+</div><!-- #app -->
+
+<script type="module" src="src/app.js"></script>
+</body>
+</html>
