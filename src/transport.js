@@ -103,6 +103,7 @@ export function stop() {
   }
 
   stopMetronome();
+  if (state.transport.mode === 'stopped') return; // idempotent: no event when already stopped
   update('transport.mode', 'stopped');
   emit('transport:stop');
 }
