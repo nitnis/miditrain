@@ -1,5 +1,6 @@
 // Falling notes canvas + 88-key piano keyboard display
 import { state } from './state.js';
+import { getAccuracyResults } from './accuracy.js';
 
 // Piano layout constants
 const MIDI_MIN = 21; // A0
@@ -22,6 +23,7 @@ let kbCanvas = null;
 let kbCtx = null;
 let fallingCtx = null;
 let keyLayout = []; // { midi, x, w, isWhite }
+let keyMap = new Map(); // midi → keyInfo, built once for O(1) lookup
 let animFrameId = null;
 
 export function initPianoRoll(fallingEl, keyboardEl) {
@@ -88,6 +90,7 @@ function buildKeyLayout(totalWidth, height) {
       keyLayout.push({ midi: m, x, w: bkW, h: bkH, isWhite: false });
     }
   }
+  keyMap = new Map(keyLayout.map(k => [k.midi, k]));
 }
 
 export function drawKeyboard(activeNotes = null) {
@@ -122,7 +125,7 @@ export function drawKeyboard(activeNotes = null) {
 }
 
 function getKeyX(midi) {
-  const key = keyLayout.find(k => k.midi === midi);
+  const key = keyMap.get(midi);
   if (!key) return null;
   return key.x + key.w / 2;
 }
@@ -185,7 +188,7 @@ export function drawFallingNotes(notes, composition, currentTimeMs, accuracyResu
   );
 
   for (const note of visibleNotes) {
-    const keyInfo = keyLayout.find(k => k.midi === note.pitch);
+    const keyInfo = keyMap.get(note.pitch);
     if (!keyInfo) continue;
 
     // Y position: note bottom = where it lands at startTime
@@ -233,7 +236,7 @@ export function drawFallingNotes(notes, composition, currentTimeMs, accuracyResu
 
   // Draw active notes "glow" at the hit line
   for (const midi of state.midi.activeNotes) {
-    const keyInfo = keyLayout.find(k => k.midi === midi);
+    const keyInfo = keyMap.get(midi);
     if (!keyInfo) continue;
     const x = keyInfo.x + keyInfo.w / 2;
     const grad2 = fallingCtx.createRadialGradient(x, ch, 0, x, ch, 40);
@@ -251,7 +254,8 @@ function startAnimation() {
     const t = state.transport.currentTime;
     const active = state.midi.activeNotes;
 
-    drawFallingNotes(notes, comp, t, null, state.ui.trainMode);
+    const accuracyResults = state.ui.trainMode ? getAccuracyResults() : null;
+    drawFallingNotes(notes, comp, t, accuracyResults, state.ui.trainMode);
     drawKeyboard(active);
 
     animFrameId = requestAnimationFrame(frame);
@@ -286,13 +290,13 @@ export function renderPianoRoll(canvas, notes, currentTimeMs) {
   }
 
   // Range of visible MIDI pitches
-  const minPitch = Math.max(21, Math.min(...notes.map(n => n.pitch)) - 4);
-  const maxPitch = Math.min(108, Math.max(...notes.map(n => n.pitch)) + 4);
+  const minPitch = Math.max(21, notes.reduce((m, n) => Math.min(m, n.pitch), 108) - 4);
+  const maxPitch = Math.min(108, notes.reduce((m, n) => Math.max(m, n.pitch), 21) + 4);
   const pitchRange = maxPitch - minPitch + 1;
   const noteH = Math.max(4, h / pitchRange);
 
   // Time range
-  const maxTime = Math.max(...notes.map(n => n.startTime + n.duration), currentTimeMs + 2000);
+  const maxTime = Math.max(notes.reduce((m, n) => Math.max(m, n.startTime + n.duration), 0), currentTimeMs + 2000);
   const msPerPx = maxTime / w;
 
   // Draw octave guides

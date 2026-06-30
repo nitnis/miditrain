@@ -92,8 +92,7 @@ function bindTransport() {
     document.getElementById('btn-play').textContent = '▶';
     updatePositionDisplay(state.transport.currentTime);
     if (state.ui.trainMode && state.accuracy.active) {
-      const results = stopAccuracy();
-      showAccuracyResults(results);
+      stopAccuracy(); // emits accuracy:complete → showAccuracyResults via the listener at initUI
     }
   });
 }

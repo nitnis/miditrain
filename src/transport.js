@@ -15,7 +15,19 @@ function currentPosition() {
 function getCompositionDuration() {
   const notes = state.composition.notes;
   if (!notes.length) return 0;
-  return Math.max(...notes.map(n => n.startTime + n.duration));
+  return notes.reduce((max, n) => Math.max(max, n.startTime + n.duration), 0);
+}
+
+// Restart playback at a new position without emitting transport:stop (used for loop wrap)
+function restartAt(ms) {
+  cancelAnimationFrame(rafId);
+  rafId = null;
+  stopMetronome();
+  update('transport.currentTime', Math.max(0, ms));
+  perfStart = performance.now();
+  posStart = state.transport.currentTime;
+  if (state.ui.metronomeEnabled) startMetronome(0);
+  rafId = requestAnimationFrame(loop);
 }
 
 function loop() {
@@ -27,7 +39,7 @@ function loop() {
     const loopEndMs = barStartMs(state.transport.loopEndBar, state.composition.tempo, state.composition.timeSignature);
     if (t >= loopEndMs) {
       const loopStartMs = barStartMs(state.transport.loopStartBar - 1, state.composition.tempo, state.composition.timeSignature);
-      seekTo(loopStartMs);
+      restartAt(loopStartMs);
       return;
     }
   }

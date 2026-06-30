@@ -101,7 +101,7 @@ export function fillWithRests(chordGroups, beatsPerMeasure) {
       filled.push({ isRest: true, beatInMeasure: cursor, durationBeats: beat - cursor });
     }
     filled.push({ isRest: false, beatInMeasure: beat, group });
-    cursor = beat + group[0].durationBeats;
+    cursor = beat + group.reduce((max, n) => Math.max(max, n.durationBeats), 0);
   }
 
   if (cursor < beatsPerMeasure - 0.01) {
