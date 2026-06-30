@@ -28,6 +28,7 @@ function scheduleClick(time, isDownbeat) {
 
   osc.start(time);
   osc.stop(time + 0.05);
+  osc.addEventListener('ended', () => { osc.disconnect(); gain.disconnect(); });
 }
 
 function scheduler() {
@@ -84,4 +85,5 @@ export function scheduleNotePreview(pitch, durationMs) {
   gain.connect(ctx.destination);
   osc.start(ctx.currentTime);
   osc.stop(ctx.currentTime + durationMs / 1000 + 0.05);
+  osc.addEventListener('ended', () => { osc.disconnect(); gain.disconnect(); });
 }

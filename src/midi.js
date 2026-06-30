@@ -49,9 +49,10 @@ function onMidiMessage(e) {
 }
 
 function noteOn(pitch, velocity, timeStamp) {
-  pendingNoteOns.set(pitch, { perf: performance.now(), velocity });
+  const perf = performance.now();
+  pendingNoteOns.set(pitch, { perf, velocity });
   state.midi.activeNotes.add(pitch);
-  emit('midi:noteon', { pitch, velocity, perf: performance.now() });
+  emit('midi:noteon', { pitch, velocity, perf });
 }
 
 function noteOff(pitch, timeStamp) {

@@ -28,15 +28,17 @@ export function startAccuracy(composition) {
 
   const onNoteOn = ({ pitch, perf }) => {
     const currentTime = state.transport.currentTime;
-    playedNotes.push({ pitch, time: currentTime, matched: false });
-    checkHit(pitch, currentTime);
+    const playedNote = { pitch, time: currentTime, matched: false };
+    playedNotes.push(playedNote);
+    checkHit(pitch, currentTime, playedNote);
   };
 
+  cleanupFns.forEach(fn => fn()); // clean up any previous session listener
   const unsubOn = on('midi:noteon', onNoteOn);
   cleanupFns = [unsubOn];
 }
 
-function checkHit(pitch, time) {
+function checkHit(pitch, time, playedNote) {
   // Find closest expected note with matching pitch and within window
   let best = null;
   let bestDist = Infinity;
@@ -56,6 +58,7 @@ function checkHit(pitch, time) {
     best.hit = bestDist <= HIT_WINDOW_MS;
     best.latencyMs = time - best.startTimeMs;
     best.matched = true;
+    playedNote.matched = true; // mark the played note so extra count is correct
     emit('accuracy:note', { noteId: best.id, hit: best.hit, latencyMs: best.latencyMs });
   }
 }
