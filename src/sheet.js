@@ -78,7 +78,13 @@ export function renderSheet(notes, composition, currentTimeMs = null) {
 
   const quantized = quantizeNotes(notes, tempo, timeSignature, state.ui.quantize);
   const { measures } = groupByMeasure(quantized, timeSignature);
-  const totalMeasures = Math.max(measures.size, 4);
+
+  // Keep drawing measures far enough to hold the step cursor, so stepping past
+  // the last recorded note still has somewhere to show
+  const stepping = state.transport.mode === 'step-recording';
+  const cursorBeat = state.transport.currentTime / ((60 / tempo) * 1000);
+  const cursorMeasure = stepping ? Math.floor(cursorBeat / beatsPerMeasure + 1e-6) : 0;
+  const totalMeasures = Math.max(measures.size, 4, cursorMeasure + 1);
 
   // Layout
   const cw = container.clientWidth || 900;
@@ -144,7 +150,7 @@ export function renderSheet(notes, composition, currentTimeMs = null) {
     const trebleTicks = buildTickables(trebleNotes, beatsPerMeasure, 'treble', useFlats);
     const bassTicks   = buildTickables(bassNotes,   beatsPerMeasure, 'bass',   useFlats);
 
-    drawSystem(
+    const beatPositions = drawSystem(
       [{ tickables: trebleTicks, stave: trebleStave, clef: 'treble' },
        { tickables: bassTicks,   stave: bassStave,   clef: 'bass' }],
       timeSignature, Formatter, Voice, Accidental, Beam, keySignature
@@ -155,8 +161,10 @@ export function renderSheet(notes, composition, currentTimeMs = null) {
       drawChordLabels(measureNotes, trebleStave, beatsPerMeasure, useFlats);
     }
 
-    // Playhead line
-    if (currentTimeMs !== null) {
+    // Step cursor takes the place of the playhead while step recording
+    if (stepping) {
+      drawStepCursor(cursorBeat, m, trebleStave, bassStave, beatsPerMeasure, beatPositions);
+    } else if (currentTimeMs !== null) {
       drawPlayhead(currentTimeMs, m, trebleStave, bassStave, tempo, beatsPerMeasure);
     }
   }
@@ -201,7 +209,7 @@ function buildTickables(staveNotes, beatsPerMeasure, clef, useFlats) {
 // on the other clef and the measure reads as having more beats than it does.
 function drawSystem(parts, timeSignature, Formatter, Voice, Accidental, Beam, key) {
   const active = parts.filter(p => p.tickables.length);
-  if (!active.length) return;
+  if (!active.length) return [];
 
   try {
     for (const part of active) {
@@ -231,8 +239,20 @@ function drawSystem(parts, timeSignature, Formatter, Voice, Accidental, Beam, ke
       });
       Beam.generateBeams(nonRest).forEach(b => b.setContext(svgCtx).draw());
     }
+
+    // Where each beat actually landed, so the step cursor can sit on a real
+    // tickable instead of a linear guess — VexFlow does not space time evenly
+    const quarter = VF().RESOLUTION / 4;
+    const positions = [];
+    let beat = 0;
+    for (const t of active[0].tickables) {
+      positions.push({ beat, x: t.getAbsoluteX() });
+      beat += t.getTicks().value() / quarter;
+    }
+    return positions;
   } catch (e) {
     console.warn('System draw:', e.message);
+    return [];
   }
 }
 
@@ -267,6 +287,39 @@ function drawChordLabels(measureNotes, trebleStave, beatsPerMeasure, useFlats) {
       y: svgY + offsetY,
     });
   }
+}
+
+// Where the next step-recorded note will land. Distinct from the playhead so
+// it is obvious the score is waiting for input rather than playing back.
+function drawStepCursor(cursorBeat, measureIdx, trebleStave, bassStave, beatsPerMeasure, beatPositions) {
+  const mIdx = Math.floor(cursorBeat / beatsPerMeasure + 1e-6);
+  if (mIdx !== measureIdx) return;
+
+  const inMeasure = cursorBeat - mIdx * beatsPerMeasure;
+  const noteStartX = trebleStave.getNoteStartX();
+  const noteEndX   = trebleStave.getX() + trebleStave.getWidth() - 10;
+
+  // Sit on the tickable holding this beat; fall back to a linear estimate
+  let x = noteStartX + (inMeasure / beatsPerMeasure) * (noteEndX - noteStartX);
+  const hit = beatPositions && beatPositions.find(p => p.beat >= inMeasure - 1e-6);
+  if (hit) x = hit.x;
+
+  const top = trebleStave.getY() - 16;
+  const bottom = bassStave.getYForLine(4) + 10;
+
+  try {
+    svgCtx.save();
+    svgCtx.setStrokeStyle('rgba(91,192,235,0.95)');
+    svgCtx.setLineWidth(2);
+    svgCtx.beginPath();
+    svgCtx.moveTo(x, top + 7);
+    svgCtx.lineTo(x, bottom);
+    svgCtx.stroke();
+    // Solid tab at the top so the cursor reads as an insertion point
+    svgCtx.setFillStyle('rgba(91,192,235,0.95)');
+    svgCtx.fillRect(x - 6, top, 12, 7);
+    svgCtx.restore();
+  } catch (_) {}
 }
 
 function drawPlayhead(currentTimeMs, measureIdx, trebleStave, bassStave, tempo, beatsPerMeasure) {

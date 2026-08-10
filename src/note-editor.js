@@ -127,6 +127,8 @@ function onMouseUp() {
 function onKeyDown(e) {
   // Only act when piano roll is visible and we have a selection
   if (state.ui.view !== 'piano-roll') return;
+  // While stepping, Backspace belongs to the step recorder
+  if (state.transport.mode === 'step-recording') return;
   const sel = state.ui.editorSelectedNotes;
   if (!sel.size) return;
   if (e.target.tagName === 'INPUT' || e.target.contentEditable === 'true') return;
