@@ -286,7 +286,13 @@ select:focus { outline: 1px solid var(--accent); }
   transition: all 0.15s;
 }
 .toggle-btn .icon { width: 16px; height: 16px; }
+.toggle-btn .icon.hidden { display: none; }
 .toggle-btn:hover { border-color: var(--accent); color: var(--accent); }
+.toggle-btn.muted {
+  border-color: var(--red);
+  color: var(--red);
+}
+.toggle-btn.muted:hover { background: rgba(231, 76, 60, 0.14); }
 .toggle-btn.active {
   background: var(--accent);
   border-color: var(--accent);

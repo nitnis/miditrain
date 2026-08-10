@@ -1,6 +1,7 @@
 // Transport engine: record, play, stop, seek
 import { state, update, emit, on } from './state.js';
 import { startMetronome, stopMetronome } from './metronome.js';
+import { startPlaybackAudio, stopPlaybackAudio, stopAllAudio } from './audio.js';
 import { barStartMs } from './quantizer.js';
 
 let rafId = null;
@@ -27,6 +28,7 @@ function restartAt(ms) {
   perfStart = performance.now();
   posStart = state.transport.currentTime;
   if (state.ui.metronomeEnabled) startMetronome(0);
+  if (state.transport.mode === 'playing') startPlaybackAudio(state.transport.currentTime);
   rafId = requestAnimationFrame(loop);
 }
 
@@ -83,6 +85,7 @@ export function play() {
   posStart = state.transport.currentTime;
 
   if (state.ui.metronomeEnabled) startMetronome(0);
+  startPlaybackAudio(posStart);
 
   rafId = requestAnimationFrame(loop);
   emit('transport:play');
@@ -91,6 +94,7 @@ export function play() {
 export function stop() {
   // step-recording mode: just transition; step-recorder cleans up via mode-change listener
   if (state.transport.mode === 'step-recording') {
+    stopAllAudio();
     update('transport.mode', 'stopped');
     emit('transport:stop');
     return;
@@ -110,6 +114,7 @@ export function stop() {
   }
 
   stopMetronome();
+  stopPlaybackAudio();
   if (state.transport.mode === 'stopped') return; // idempotent: no event when already stopped
   update('transport.mode', 'stopped');
   emit('transport:stop');

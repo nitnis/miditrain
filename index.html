@@ -113,6 +113,23 @@
         </select>
       </div>
 
+      <!-- Mute -->
+      <div class="tool-group">
+        <button class="toggle-btn" id="btn-mute" title="Mute all audio">
+          <svg class="icon" id="icon-sound-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M11 5 L6 9 H2 v6 h4 l5 4 Z"/>
+            <path d="M15.5 8.5a5 5 0 0 1 0 7"/>
+            <path d="M18.5 5.5a9 9 0 0 1 0 13"/>
+          </svg>
+          <svg class="icon hidden" id="icon-sound-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M11 5 L6 9 H2 v6 h4 l5 4 Z"/>
+            <line x1="16" y1="9" x2="22" y2="15"/>
+            <line x1="22" y1="9" x2="16" y2="15"/>
+          </svg>
+          <span id="mute-label">Sound</span>
+        </button>
+      </div>
+
       <!-- Metronome -->
       <div class="tool-group">
         <button class="toggle-btn" id="btn-metronome" title="Toggle Metronome">
