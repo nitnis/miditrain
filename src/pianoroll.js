@@ -1,6 +1,7 @@
 // Falling notes canvas + 88-key piano keyboard display
 import { state } from './state.js';
 import { getAccuracyResults } from './accuracy.js';
+import { setEditorLayout } from './note-editor.js';
 
 // Piano layout constants
 const MIDI_MIN = 21; // A0
@@ -286,22 +287,21 @@ export function renderPianoRoll(canvas, notes, currentTimeMs) {
     ctx.font = '14px system-ui';
     ctx.textAlign = 'center';
     ctx.fillText('No notes recorded yet', w / 2, h / 2);
+    setEditorLayout({ msPerPx: 1, minPitch: 21, noteH: 10, h, w }, []);
     return;
   }
 
-  // Range of visible MIDI pitches
   const minPitch = Math.max(21, notes.reduce((m, n) => Math.min(m, n.pitch), 108) - 4);
   const maxPitch = Math.min(108, notes.reduce((m, n) => Math.max(m, n.pitch), 21) + 4);
   const pitchRange = maxPitch - minPitch + 1;
   const noteH = Math.max(4, h / pitchRange);
 
-  // Time range
   const maxTime = Math.max(notes.reduce((m, n) => Math.max(m, n.startTime + n.duration), 0), currentTimeMs + 2000);
   const msPerPx = maxTime / w;
 
-  // Draw octave guides
+  // Grid guides
   for (let p = minPitch; p <= maxPitch; p++) {
-    if (p % 12 === 0) { // C notes
+    if (p % 12 === 0) {
       const y = h - (p - minPitch + 1) * noteH;
       ctx.strokeStyle = 'rgba(255,255,255,0.06)';
       ctx.lineWidth = 1;
@@ -310,7 +310,6 @@ export function renderPianoRoll(canvas, notes, currentTimeMs) {
       ctx.lineTo(w, y);
       ctx.stroke();
     }
-    // Black key background
     if (!IS_WHITE[p % 12]) {
       const y = h - (p - minPitch + 1) * noteH;
       ctx.fillStyle = 'rgba(0,0,0,0.25)';
@@ -318,15 +317,46 @@ export function renderPianoRoll(canvas, notes, currentTimeMs) {
     }
   }
 
-  // Draw notes
+  // Step-record cursor
+  if (state.transport.mode === 'step-recording') {
+    const cx = state.transport.currentTime / msPerPx;
+    ctx.fillStyle = 'rgba(91,192,235,0.15)';
+    ctx.fillRect(cx, 0, w - cx, h);
+    ctx.strokeStyle = 'rgba(91,192,235,0.9)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cx, 0);
+    ctx.lineTo(cx, h);
+    ctx.stroke();
+  }
+
+  // Build note rects for editor hit-testing
+  const noteRects = [];
+  const sel = state.ui.editorSelectedNotes;
+
   for (const note of notes) {
     const x = note.startTime / msPerPx;
-    const noteW = Math.max(2, note.duration / msPerPx);
+    const nw = Math.max(2, note.duration / msPerPx);
     const y = h - (note.pitch - minPitch + 1) * noteH;
-    ctx.fillStyle = getNoteColor(note.pitch, 0.9);
+    const isSelected = sel.has(note.id);
+
+    ctx.fillStyle = isSelected
+      ? 'rgba(255,255,255,0.9)'
+      : getNoteColor(note.pitch, 0.9);
+    ctx.shadowColor = isSelected ? '#fff' : getNoteColor(note.pitch, 0.5);
+    ctx.shadowBlur = isSelected ? 6 : 0;
     ctx.beginPath();
-    ctx.roundRect(x, y + 1, noteW, noteH - 2, 2);
+    ctx.roundRect(x, y + 1, nw, noteH - 2, 2);
     ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Resize handle hint on selected notes
+    if (isSelected && nw > 10) {
+      ctx.fillStyle = 'rgba(0,0,0,0.4)';
+      ctx.fillRect(x + nw - 5, y + 1, 4, noteH - 2);
+    }
+
+    noteRects.push({ id: note.id, x, y: y + 1, w: nw, h: noteH - 2 });
   }
 
   // Playhead
@@ -338,7 +368,7 @@ export function renderPianoRoll(canvas, notes, currentTimeMs) {
   ctx.lineTo(px, h);
   ctx.stroke();
 
-  // Pitch labels on left
+  // Pitch labels
   ctx.fillStyle = 'rgba(200,200,220,0.7)';
   ctx.font = '10px monospace';
   ctx.textAlign = 'left';
@@ -349,4 +379,6 @@ export function renderPianoRoll(canvas, notes, currentTimeMs) {
       ctx.fillText(`C${oct}`, 2, y - 2);
     }
   }
+
+  setEditorLayout({ msPerPx, minPitch, noteH, h, w }, noteRects);
 }

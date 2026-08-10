@@ -89,6 +89,13 @@ export function play() {
 }
 
 export function stop() {
+  // step-recording mode: just transition; step-recorder cleans up via mode-change listener
+  if (state.transport.mode === 'step-recording') {
+    update('transport.mode', 'stopped');
+    emit('transport:stop');
+    return;
+  }
+
   cancelAnimationFrame(rafId);
   rafId = null;
 
@@ -159,6 +166,38 @@ export function deleteNote(noteId) {
     state.composition.notes.splice(idx, 1);
     emit('transport:noteschanged', state.composition.notes);
   }
+}
+
+export function updateNote(noteId, changes) {
+  const note = state.composition.notes.find(n => n.id === noteId);
+  if (!note) return;
+  Object.assign(note, changes);
+  emit('transport:noteschanged', state.composition.notes);
+}
+
+export function deleteNotes(noteIds) {
+  const ids = new Set(noteIds);
+  state.composition.notes = state.composition.notes.filter(n => !ids.has(n.id));
+  emit('transport:noteschanged', state.composition.notes);
+}
+
+export function transposeNotes(noteIds, semitones) {
+  for (const id of noteIds) {
+    const note = state.composition.notes.find(n => n.id === id);
+    if (note) note.pitch = Math.max(21, Math.min(108, note.pitch + semitones));
+  }
+  emit('transport:noteschanged', state.composition.notes);
+}
+
+export function applyLegato(noteIds) {
+  const selected = state.composition.notes
+    .filter(n => noteIds.has(n.id))
+    .sort((a, b) => a.startTime - b.startTime);
+  for (let i = 0; i < selected.length - 1; i++) {
+    const next = selected[i + 1];
+    selected[i].duration = next.startTime - selected[i].startTime;
+  }
+  emit('transport:noteschanged', state.composition.notes);
 }
 
 export function clearAllNotes() {
