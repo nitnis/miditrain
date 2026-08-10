@@ -272,72 +272,104 @@ export function stopAnimation() {
 
 // ── Piano Roll (time × pitch grid view) ──────────────────────────────────────
 
-const PIANO_KEY_WIDTH = 52; // px reserved for the vertical mini-piano strip
+const PIANO_KEY_WIDTH = 56; // px reserved for the vertical mini-piano strip
+const MIN_ROW_H = 9; // px — below this a pitch row is too thin to read as a key
 
+// Draws a keyboard seen from above: white keys form one continuous field,
+// black keys are overlaid at partial width, exactly like a DAW's key strip.
 function drawVerticalPiano(ctx, minPitch, maxPitch, noteH, h, pitchesWithNotes) {
   const pw = PIANO_KEY_WIDTH;
+  const blackW = Math.round(pw * 0.62);
+  const rowY = (p) => h - (p - minPitch + 1) * noteH; // top edge of p's row
+  const topY = rowY(maxPitch);
+  const totalH = (maxPitch - minPitch + 1) * noteH;
 
-  // Background of piano strip
-  ctx.fillStyle = '#13131f';
-  ctx.fillRect(0, 0, pw, h);
+  // 1. Continuous white field — the black-key rows keep white to the right of
+  //    the black key, which is what makes the strip read as a keyboard.
+  ctx.fillStyle = '#e9e9f2';
+  ctx.fillRect(0, topY, pw, totalH);
 
-  // Separator line
-  ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+  // 2. Tint white keys that carry notes
+  for (let p = minPitch; p <= maxPitch; p++) {
+    if (!IS_WHITE[p % 12] || !pitchesWithNotes.has(p)) continue;
+    ctx.fillStyle = '#8fd8d8';
+    ctx.fillRect(0, rowY(p), pw, noteH);
+  }
+
+  // 3. Seams between white keys: full width where two white keys touch
+  //    (E|F, B|C), otherwise a short seam through the intervening black row.
+  ctx.strokeStyle = 'rgba(0,0,0,0.30)';
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(pw, 0);
-  ctx.lineTo(pw, h);
+  for (let p = minPitch; p <= maxPitch; p++) {
+    if (IS_WHITE[p % 12]) {
+      if (p + 1 <= maxPitch && IS_WHITE[(p + 1) % 12]) {
+        const y = Math.round(rowY(p)) + 0.5;
+        ctx.moveTo(0, y);
+        ctx.lineTo(pw, y);
+      }
+    } else {
+      const y = Math.round(rowY(p) + noteH / 2) + 0.5;
+      ctx.moveTo(blackW, y);
+      ctx.lineTo(pw, y);
+    }
+  }
   ctx.stroke();
 
-  const blackW = pw * 0.55;
-
+  // 4. Black keys on top
   for (let p = minPitch; p <= maxPitch; p++) {
-    const y = h - (p - minPitch + 1) * noteH;
-    const isWhite = IS_WHITE[p % 12];
-    const hasNote = pitchesWithNotes.has(p);
-
-    if (isWhite) {
-      ctx.fillStyle = hasNote ? '#7ecfcf' : '#dde';
-      ctx.fillRect(0, y, pw - 1, noteH);
-      ctx.strokeStyle = 'rgba(0,0,0,0.35)';
-      ctx.lineWidth = 0.5;
-      ctx.strokeRect(0, y, pw - 1, noteH);
-    }
+    if (IS_WHITE[p % 12]) continue;
+    const y = rowY(p);
+    ctx.fillStyle = pitchesWithNotes.has(p) ? '#2e8b8b' : '#1b1b26';
+    ctx.fillRect(0, y, blackW, noteH);
+    ctx.fillStyle = 'rgba(255,255,255,0.10)';
+    ctx.fillRect(0, y, blackW, 1);
   }
 
-  // Black keys on top
-  for (let p = minPitch; p <= maxPitch; p++) {
-    const y = h - (p - minPitch + 1) * noteH;
-    const isWhite = IS_WHITE[p % 12];
-    const hasNote = pitchesWithNotes.has(p);
-    if (!isWhite) {
-      ctx.fillStyle = hasNote ? '#3a8f8f' : '#222';
-      ctx.fillRect(0, y, blackW, noteH);
-    }
-  }
+  // 5. Right edge of the strip
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(pw - 1, topY, 1, totalH);
 
-  // Octave labels (C notes)
-  ctx.fillStyle = 'rgba(200,200,230,0.8)';
-  ctx.font = `${Math.min(10, noteH - 1)}px monospace`;
-  ctx.textAlign = 'right';
-  for (let p = minPitch; p <= maxPitch; p++) {
-    if (p % 12 === 0) {
-      const oct = Math.floor(p / 12) - 1;
-      const y = h - (p - minPitch) * noteH;
-      ctx.fillText(`C${oct}`, pw - 3, y - 2);
+  // 6. Octave labels on C rows, only when the row can fit the text
+  if (noteH >= 8) {
+    ctx.fillStyle = '#4a4a60';
+    ctx.font = `${Math.min(10, noteH - 2)}px system-ui, monospace`;
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    for (let p = minPitch; p <= maxPitch; p++) {
+      if (p % 12 !== 0) continue;
+      ctx.fillText(`C${Math.floor(p / 12) - 1}`, pw - 4, rowY(p) + noteH / 2);
     }
+    ctx.textBaseline = 'alphabetic';
   }
 }
 
 export function renderPianoRoll(canvas, notes, currentTimeMs) {
   if (!canvas || !notes) return;
   const ctx = canvas.getContext('2d');
+  const LEFT = PIANO_KEY_WIDTH;
+
+  // Pitch window: the recorded range with a little headroom, or a sensible
+  // default octave span (C2–C6) when nothing has been recorded yet.
+  const minPitch = notes.length
+    ? Math.max(21, notes.reduce((m, n) => Math.min(m, n.pitch), 108) - 4)
+    : 36;
+  const maxPitch = notes.length
+    ? Math.min(108, notes.reduce((m, n) => Math.max(m, n.pitch), 21) + 4)
+    : 84;
+  const pitchRange = maxPitch - minPitch + 1;
+
+  // Grow the canvas past the viewport rather than squashing rows into it —
+  // #roll-scroll then scrolls vertically, as a DAW piano roll does.
+  const viewH = canvas.parentElement ? canvas.parentElement.clientHeight : 0;
+  const h = Math.max(viewH, pitchRange * MIN_ROW_H);
+  canvas.style.height = h + 'px';
+  canvas.height = h;
   const w = canvas.width = canvas.offsetWidth;
-  const h = canvas.height = canvas.offsetHeight;
   if (!w || !h) return;
 
-  const LEFT = PIANO_KEY_WIDTH;
   const rollW = w - LEFT; // width of the time-axis area
+  const noteH = h / pitchRange;
 
   ctx.fillStyle = '#0a0a15';
   ctx.fillRect(0, 0, w, h);
@@ -347,15 +379,10 @@ export function renderPianoRoll(canvas, notes, currentTimeMs) {
     ctx.font = '14px system-ui';
     ctx.textAlign = 'center';
     ctx.fillText('No notes recorded yet', LEFT + rollW / 2, h / 2);
-    drawVerticalPiano(ctx, 36, 84, Math.max(4, h / 48), h, new Set());
-    setEditorLayout({ msPerPx: 1, minPitch: 21, noteH: 10, h, w, leftMargin: LEFT }, []);
+    drawVerticalPiano(ctx, minPitch, maxPitch, noteH, h, new Set());
+    setEditorLayout({ msPerPx: 1, minPitch, noteH, h, w, leftMargin: LEFT }, []);
     return;
   }
-
-  const minPitch = Math.max(21, notes.reduce((m, n) => Math.min(m, n.pitch), 108) - 4);
-  const maxPitch = Math.min(108, notes.reduce((m, n) => Math.max(m, n.pitch), 21) + 4);
-  const pitchRange = maxPitch - minPitch + 1;
-  const noteH = Math.max(4, h / pitchRange);
 
   const maxTime = Math.max(notes.reduce((m, n) => Math.max(m, n.startTime + n.duration), 0), currentTimeMs + 2000);
   const msPerPx = maxTime / rollW;
