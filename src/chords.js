@@ -24,6 +24,8 @@ export function detectChord(midiPitches, useFlats = false) {
   if (midiPitches.length < 2) return null;
   const names = useFlats ? NOTE_NAMES_FLAT : NOTE_NAMES_SHARP;
   const pcs = [...new Set(midiPitches.map(pitchClass))].sort((a, b) => a - b);
+  // The lowest sounding note decides the inversion
+  const bass = pitchClass(Math.min(...midiPitches));
 
   // Try each pc as root
   for (const root of pcs) {
@@ -32,7 +34,8 @@ export function detectChord(midiPitches, useFlats = false) {
       if (intervals.length === pattern.length &&
           intervals.every((v, i) => v === pattern[i])) {
         const rootName = names[root];
-        return name === 'maj' ? rootName : `${rootName}${name}`;
+        const label = name === 'maj' ? rootName : `${rootName}${name}`;
+        return bass === root ? label : `${label}/${names[bass]}`;
       }
     }
   }
@@ -52,3 +55,40 @@ export function midiToNoteWithOctave(midi) {
 
 const FLAT_KEYS = new Set(['F', 'Bb', 'Eb', 'Ab', 'Db', 'Gb']);
 export function keyUsesFlats(key) { return FLAT_KEYS.has(key); }
+
+// ── Staff positions ──────────────────────────────────────────────────────────
+// A staff position is a diatonic index: octave * 7 + letter, so consecutive
+// values are consecutive lines/spaces. C4 is 4 * 7 + 0 = 28.
+const LETTERS = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+const SHARP_ORDER = ['F', 'C', 'G', 'D', 'A', 'E', 'B'];
+const FLAT_ORDER  = ['B', 'E', 'A', 'D', 'G', 'C', 'F'];
+const KEY_ACCIDENTAL_COUNT = {
+  C: 0, G: 1, D: 2, A: 3, E: 4, B: 5, 'F#': 6,
+  F: -1, Bb: -2, Eb: -3, Ab: -4, Db: -5, Gb: -6,
+};
+
+// Semitone offset of each letter within its octave
+const LETTER_SEMITONES = [0, 2, 4, 5, 7, 9, 11];
+
+function keyAccidentalFor(letter, keySignature) {
+  const n = KEY_ACCIDENTAL_COUNT[keySignature] ?? 0;
+  if (n > 0 && SHARP_ORDER.slice(0, n).includes(letter)) return '♯';
+  if (n < 0 && FLAT_ORDER.slice(0, -n).includes(letter)) return '♭';
+  return '';
+}
+
+// Staff position → display name, with the key signature's accidental applied
+export function staffPositionName(dia, keySignature = 'C') {
+  const letter = LETTERS[((dia % 7) + 7) % 7];
+  const octave = Math.floor(dia / 7);
+  return `${letter}${keyAccidentalFor(letter, keySignature)}${octave}`;
+}
+
+// Staff position → MIDI pitch, with the key signature's accidental applied
+export function staffPositionToMidi(dia, keySignature = 'C') {
+  const idx = ((dia % 7) + 7) % 7;
+  const octave = Math.floor(dia / 7);
+  const acc = keyAccidentalFor(LETTERS[idx], keySignature);
+  const shift = acc === '♯' ? 1 : acc === '♭' ? -1 : 0;
+  return (octave + 1) * 12 + LETTER_SEMITONES[idx] + shift;
+}
