@@ -32,12 +32,17 @@ let container = null;
 let renderer = null;
 let svgCtx = null;
 
+// Chord label positions for HTML overlay: [{ label, pitches, x, y }]
+let _chordOverlayData = [];
+export function getChordOverlayData() { return _chordOverlayData; }
+
 export function initSheet(el) {
   container = el;
   el.innerHTML = '';
 }
 
 export function renderSheet(notes, composition, currentTimeMs = null) {
+  _chordOverlayData = [];
   if (!container || !window.Vex) return;
 
   const {
@@ -196,7 +201,9 @@ function drawChordLabels(measureNotes, trebleStave, beatsPerMeasure, useFlats) {
   const noteStartX = trebleStave.getNoteStartX();
   const noteEndX   = trebleStave.getX() + trebleStave.getWidth() - 10;
   const availW = noteEndX - noteStartX;
-  const svg = container.querySelector('svg');
+  const svgEl = container.querySelector('svg');
+  const svgRect = svgEl ? svgEl.getBoundingClientRect() : null;
+  const containerRect = container.getBoundingClientRect();
 
   for (const group of chordGroups) {
     if (group.length < 2) continue;
@@ -204,22 +211,21 @@ function drawChordLabels(measureNotes, trebleStave, beatsPerMeasure, useFlats) {
     if (!label) continue;
 
     const frac = group[0].beatInMeasure / beatsPerMeasure;
-    const x = noteStartX + frac * availW;
-    const y = trebleStave.getY() + 12;
+    // SVG internal coordinate
+    const svgX = noteStartX + frac * availW;
+    const svgY = trebleStave.getY() - 4;
 
-    try {
-      svgCtx.fillText(label, x, y);
-      // Apply blue inline style so it beats the global CSS dark-theme override
-      if (svg) {
-        const texts = svg.querySelectorAll('text');
-        const el = texts[texts.length - 1];
-        if (el) {
-          el.style.fill = '#5bc0eb';
-          el.style.fontWeight = 'bold';
-          el.style.fontSize = '12px';
-        }
-      }
-    } catch (_) {}
+    // Convert SVG coordinate → container-relative pixel position
+    // VexFlow renders at 1:1 by default so SVG user units ≈ px
+    const offsetX = svgRect ? (svgRect.left - containerRect.left) : 0;
+    const offsetY = svgRect ? (svgRect.top  - containerRect.top)  : 0;
+
+    _chordOverlayData.push({
+      label,
+      pitches: group.map(n => n.pitch),
+      x: svgX + offsetX,
+      y: svgY + offsetY,
+    });
   }
 }
 

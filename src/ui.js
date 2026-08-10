@@ -1,11 +1,13 @@
 // UI updates: DOM manipulation, modals, controls
 import { state, update, emit, on } from './state.js';
-import { record, play, stop, seekToStart, seekToEnd, clearAllNotes } from './transport.js';
-import { renderSheet, initSheet } from './sheet.js';
+import { record, play, stop, seekToStart, seekToEnd, clearAllNotes, transposeNotes, applyLegato, deleteNotes } from './transport.js';
+import { renderSheet, initSheet, getChordOverlayData } from './sheet.js';
 import { initPianoRoll, renderPianoRoll } from './pianoroll.js';
 import { saveComposition, listCompositions, deleteComposition } from './storage.js';
 import { startAccuracy, stopAccuracy } from './accuracy.js';
 import { resumeAudioContext, stopMetronome } from './metronome.js';
+import { startStepRecord, stopStepRecord, stepInsertRest, stepGoBack } from './step-recorder.js';
+import { initNoteEditor, getSelectedIds } from './note-editor.js';
 
 let sheetContainer = null;
 let renderDebounce = null;
@@ -17,6 +19,7 @@ export function initUI() {
     document.getElementById('falling-canvas'),
     document.getElementById('piano-keyboard')
   );
+  initNoteEditor(document.getElementById('roll-canvas'));
 
   bindTransport();
   bindToolbar();
@@ -25,6 +28,8 @@ export function initUI() {
   bindLoopControls();
   bindModalControls();
   bindKeyboardShortcuts();
+  bindEditorToolbar();
+  bindChordOverlay();
 
   // Re-render sheet on notes change
   on('transport:noteschanged', () => scheduleSheetRender());
@@ -62,39 +67,75 @@ function bindTransport() {
   const modeGuard = () => resumeAudioContext();
 
   document.getElementById('btn-to-start').onclick = () => { modeGuard(); seekToStart(); };
-  document.getElementById('btn-stop').onclick = () => { modeGuard(); stop(); };
+  document.getElementById('btn-stop').onclick = () => {
+    modeGuard();
+    if (state.transport.mode === 'step-recording') stopStepRecord();
+    else stop();
+  };
   document.getElementById('btn-record').onclick = () => {
     modeGuard();
     if (state.transport.mode === 'recording') stop();
-    else record();
+    else { if (state.transport.mode === 'step-recording') stopStepRecord(); record(); }
   };
+  document.getElementById('btn-step-record').onclick = () => {
+    modeGuard();
+    if (state.transport.mode === 'step-recording') stopStepRecord();
+    else { stop(); startStepRecord(); }
+  };
+  document.getElementById('btn-step-rest').onclick = () => stepInsertRest();
+  document.getElementById('btn-step-back').onclick = () => stepGoBack();
   document.getElementById('btn-play').onclick = () => {
     modeGuard();
     if (state.transport.mode === 'playing') stop();
     else if (state.ui.trainMode) startTrainingSession();
-    else play();
+    else { if (state.transport.mode === 'step-recording') stopStepRecord(); play(); }
   };
   document.getElementById('btn-to-end').onclick = () => { modeGuard(); seekToEnd?.(); };
 
   on('transport:record', () => {
     document.getElementById('btn-record').classList.add('active');
+    document.getElementById('btn-step-record').classList.remove('active');
     document.getElementById('btn-play').classList.remove('active');
     document.getElementById('btn-play').textContent = '▶';
+    setStepControlsVisible(false);
+  });
+  on('transport:step-record', () => {
+    document.getElementById('btn-step-record').classList.add('active');
+    document.getElementById('btn-record').classList.remove('active');
+    document.getElementById('btn-play').classList.remove('active');
+    document.getElementById('btn-play').textContent = '▶';
+    setStepControlsVisible(true);
   });
   on('transport:play', () => {
     document.getElementById('btn-play').classList.add('active');
     document.getElementById('btn-play').textContent = '⏸';
     document.getElementById('btn-record').classList.remove('active');
+    document.getElementById('btn-step-record').classList.remove('active');
+    setStepControlsVisible(false);
   });
   on('transport:stop', () => {
     document.getElementById('btn-record').classList.remove('active');
+    document.getElementById('btn-step-record').classList.remove('active');
     document.getElementById('btn-play').classList.remove('active');
     document.getElementById('btn-play').textContent = '▶';
+    setStepControlsVisible(false);
     updatePositionDisplay(state.transport.currentTime);
     if (state.ui.trainMode && state.accuracy.active) {
-      stopAccuracy(); // emits accuracy:complete → showAccuracyResults via the listener at initUI
+      stopAccuracy();
     }
   });
+
+  // Keep position display live during step recording
+  on('change:transport.currentTime', ({ value }) => {
+    if (state.transport.mode === 'step-recording') {
+      updatePositionDisplay(value);
+      scheduleSheetRender();
+    }
+  });
+}
+
+function setStepControlsVisible(visible) {
+  document.getElementById('step-controls').classList.toggle('hidden', !visible);
 }
 
 function startTrainingSession() {
@@ -165,6 +206,10 @@ function bindToolbar() {
     scheduleSheetRender();
   };
 
+  document.getElementById('step-division-select').onchange = (e) => {
+    update('transport.stepDivision', parseInt(e.target.value));
+  };
+
   document.getElementById('btn-clear').onclick = () => {
     if (confirm('Clear all notes?')) clearAllNotes();
   };
@@ -179,6 +224,7 @@ function bindViewTabs() {
       tab.classList.add('active');
       document.getElementById('panel-sheet').classList.toggle('hidden', view === 'piano-roll');
       document.getElementById('panel-roll').classList.toggle('hidden', view !== 'piano-roll');
+      scheduleSheetRender();
     };
   });
 }
@@ -352,9 +398,11 @@ function scheduleSheetRender() {
   clearTimeout(renderDebounce);
   renderDebounce = setTimeout(() => {
     renderDebounce = null;
-    const t = state.transport.mode !== 'stopped' ? state.transport.currentTime : null;
+    const t = (state.transport.mode !== 'stopped' && state.transport.mode !== 'step-recording')
+      ? state.transport.currentTime : null;
     if (state.ui.view !== 'piano-roll') {
       renderSheet(state.composition.notes, state.composition, t);
+      updateChordOverlay();
     }
     if (state.ui.view === 'piano-roll') {
       const rollCanvas = document.getElementById('roll-canvas');
@@ -407,6 +455,116 @@ export function showToast(msg, duration = 2500) {
     toast.classList.add('fade-out');
     setTimeout(() => toast.classList.add('hidden'), 500);
   }, duration);
+}
+
+function bindEditorToolbar() {
+  document.getElementById('btn-transpose-up').onclick = () => {
+    const sel = getSelectedIds();
+    if (sel.size) transposeNotes(sel, 1);
+  };
+  document.getElementById('btn-transpose-down').onclick = () => {
+    const sel = getSelectedIds();
+    if (sel.size) transposeNotes(sel, -1);
+  };
+  document.getElementById('btn-oct-up').onclick = () => {
+    const sel = getSelectedIds();
+    if (sel.size) transposeNotes(sel, 12);
+  };
+  document.getElementById('btn-oct-down').onclick = () => {
+    const sel = getSelectedIds();
+    if (sel.size) transposeNotes(sel, -12);
+  };
+  document.getElementById('btn-legato').onclick = () => {
+    const sel = getSelectedIds();
+    if (sel.size) applyLegato(sel);
+  };
+  document.getElementById('btn-editor-delete').onclick = () => {
+    const sel = getSelectedIds();
+    if (!sel.size) return;
+    deleteNotes(sel);
+    sel.clear();
+  };
+
+  on('editor:selection', (sel) => {
+    const hasSelection = sel && sel.size > 0;
+    document.getElementById('editor-toolbar').classList.toggle('has-selection', hasSelection);
+    const hint = document.getElementById('editor-hint');
+    hint.textContent = hasSelection
+      ? `${sel.size} note${sel.size > 1 ? 's' : ''} selected — drag to move, drag right edge to resize`
+      : 'Click note to select · Shift+click multi-select · Del to delete · ↑↓ transpose';
+  });
+}
+
+// ── Chord overlay + mini-piano hover ──────────────────────────────────────────
+
+function buildMiniPianoSVG(pitches) {
+  const pcs = new Set(pitches.map(p => p % 12));
+  // Show one octave (12 keys), 7 white keys
+  const WHITE = [0, 2, 4, 5, 7, 9, 11]; // C D E F G A B
+  const BLACK = { 1:0, 3:1, 6:3, 8:4, 10:5 }; // pc → white-key index (left edge)
+  const KW = 14, KH = 42, BW = 9, BH = 26;
+  const totalW = WHITE.length * KW;
+
+  let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${totalW}" height="${KH}" style="display:block">`;
+  // White keys
+  WHITE.forEach((pc, i) => {
+    const fill = pcs.has(pc) ? '#5bc0eb' : '#dde';
+    svg += `<rect x="${i * KW}" y="0" width="${KW - 1}" height="${KH}" fill="${fill}" stroke="#444" stroke-width="1" rx="1"/>`;
+  });
+  // Black keys
+  Object.entries(BLACK).forEach(([pcStr, wIdx]) => {
+    const pc = parseInt(pcStr);
+    const x = wIdx * KW + KW - BW / 2;
+    const fill = pcs.has(pc) ? '#5bc0eb' : '#222';
+    svg += `<rect x="${x}" y="0" width="${BW}" height="${BH}" fill="${fill}" stroke="#111" stroke-width="1" rx="1"/>`;
+  });
+  svg += '</svg>';
+  return svg;
+}
+
+function bindChordOverlay() {
+  const tooltip = document.getElementById('chord-tooltip');
+
+  // After each sheet render, rebuild the chord label overlay
+  on('transport:noteschanged', () => updateChordOverlay());
+  on('transport:stop', () => updateChordOverlay());
+
+  // Tooltip dismiss
+  document.addEventListener('mousemove', (e) => {
+    if (!e.target.closest('.chord-label-el, #chord-tooltip')) {
+      tooltip.classList.add('hidden');
+    }
+  });
+}
+
+function updateChordOverlay() {
+  const overlay = document.getElementById('chord-labels-overlay');
+  if (!overlay) return;
+  // Rebuild after a short delay so VexFlow SVG is fully laid out
+  setTimeout(() => {
+    overlay.innerHTML = '';
+    const data = getChordOverlayData();
+    const tooltip = document.getElementById('chord-tooltip');
+    const containerEl = document.getElementById('sheet-container');
+    const containerRect = containerEl ? containerEl.getBoundingClientRect() : { left: 0, top: 0 };
+    // The overlay is positioned absolutely inside #sheet-container
+    for (const item of data) {
+      const el = document.createElement('span');
+      el.className = 'chord-label-el';
+      el.textContent = item.label;
+      el.style.left = item.x + 'px';
+      el.style.top = item.y + 'px';
+      el.addEventListener('mouseenter', (e) => {
+        tooltip.innerHTML = `<div class="chord-tooltip-name">${item.label}</div>` +
+          buildMiniPianoSVG(item.pitches);
+        const r = el.getBoundingClientRect();
+        tooltip.style.left = (r.left - containerRect.left) + 'px';
+        tooltip.style.top = (r.bottom - containerRect.top + 4) + 'px';
+        tooltip.classList.remove('hidden');
+      });
+      overlay.appendChild(el);
+    }
+  }, 120);
 }
 
 function showAccuracyResults(results) {
