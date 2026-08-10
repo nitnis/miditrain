@@ -375,6 +375,13 @@ function bindKeyboardShortcuts() {
         else if (state.transport.mode === 'playing') stop();
         else play();
         break;
+      case 'Backspace':
+        // Step back over the last entry; otherwise let the browser have it
+        if (state.transport.mode === 'step-recording') {
+          e.preventDefault();
+          stepGoBack();
+        }
+        break;
       case 'KeyR':
         if (state.transport.mode === 'recording') stop();
         else record();
