@@ -20,6 +20,10 @@ export function startStepRecord() {
   cleanupFns = [];
   pendingNotes.clear();
   update('transport.mode', 'step-recording');
+  // Entering step mode from an arbitrary playback position would write every
+  // step off the grid, so square the cursor up to the nearest step boundary.
+  const stepMs = getStepMs();
+  update('transport.currentTime', Math.round(state.transport.currentTime / stepMs) * stepMs);
   cleanupFns = [
     on('midi:noteon', handleNoteOn),
     on('change:transport.mode', handleModeChange),
