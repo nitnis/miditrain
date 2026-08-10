@@ -7,8 +7,10 @@ let pendingNotes = new Map(); // pitch -> velocity
 let chordTimer = null;
 const CHORD_WINDOW_MS = 80; // collect simultaneous notes into one chord
 
+// Step size is the quantize value, so recorded steps always land on the grid
+// the notation is snapped to.
 export function getStepMs() {
-  const beats = 4 / state.transport.stepDivision;
+  const beats = 4 / state.ui.quantize;
   return beatsToMs(beats, state.composition.tempo);
 }
 
