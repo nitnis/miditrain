@@ -30,6 +30,13 @@ export function initUI() {
   bindKeyboardShortcuts();
   bindEditorToolbar();
   bindChordOverlay();
+  bindPianoResizer();
+
+  // The piano roll canvas is sized from its viewport, so re-render whenever
+  // that viewport changes (window resize, or dragging the piano resizer).
+  new ResizeObserver(() => {
+    if (state.ui.view === 'piano-roll') scheduleSheetRender();
+  }).observe(document.getElementById('roll-scroll'));
 
   // Re-render sheet on notes change
   on('transport:noteschanged', () => scheduleSheetRender());
@@ -392,6 +399,67 @@ function updatePositionDisplay(ms) {
   const bar = Math.floor(totalBeats / beatsPerBar) + 1;
   const beat = Math.floor(totalBeats % beatsPerBar) + 1;
   document.getElementById('display-beat').textContent = `${bar}.${beat}`;
+}
+
+const PIANO_H_KEY = 'miditrain.pianoHeight';
+const PIANO_H_MIN = 130; // keyboard + a usable sliver of falling notes
+
+function pianoHeightMax() {
+  return Math.max(PIANO_H_MIN, window.innerHeight - 260);
+}
+
+function setPianoHeight(px) {
+  const h = Math.round(Math.min(pianoHeightMax(), Math.max(PIANO_H_MIN, px)));
+  document.documentElement.style.setProperty('--piano-h', h + 'px');
+  return h;
+}
+
+function bindPianoResizer() {
+  const bar = document.getElementById('piano-resizer');
+  if (!bar) return;
+
+  const saved = parseInt(localStorage.getItem(PIANO_H_KEY), 10);
+  if (Number.isFinite(saved)) setPianoHeight(saved);
+
+  let startY = 0;
+  let startH = 0;
+
+  function onMove(e) {
+    // Dragging up grows the piano section, so invert the delta.
+    setPianoHeight(startH + (startY - e.clientY));
+  }
+
+  function onUp(e) {
+    bar.classList.remove('dragging');
+    bar.releasePointerCapture?.(e.pointerId);
+    bar.removeEventListener('pointermove', onMove);
+    bar.removeEventListener('pointerup', onUp);
+    bar.removeEventListener('pointercancel', onUp);
+    const h = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--piano-h'), 10);
+    if (Number.isFinite(h)) localStorage.setItem(PIANO_H_KEY, String(h));
+  }
+
+  bar.addEventListener('pointerdown', (e) => {
+    startY = e.clientY;
+    startH = document.getElementById('piano-section').offsetHeight;
+    bar.classList.add('dragging');
+    // Capture so the drag survives the pointer leaving the thin handle
+    bar.setPointerCapture(e.pointerId);
+    bar.addEventListener('pointermove', onMove);
+    bar.addEventListener('pointerup', onUp);
+    bar.addEventListener('pointercancel', onUp);
+    e.preventDefault();
+  });
+
+  // Double-click restores the default split
+  bar.addEventListener('dblclick', () => {
+    localStorage.setItem(PIANO_H_KEY, String(setPianoHeight(250)));
+  });
+
+  // Keep the section within bounds when the window itself changes size
+  window.addEventListener('resize', () => {
+    setPianoHeight(document.getElementById('piano-section').offsetHeight);
+  });
 }
 
 function scheduleSheetRender() {

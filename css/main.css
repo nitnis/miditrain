@@ -432,6 +432,39 @@ select:focus { outline: 1px solid var(--accent); }
 #vexflow-output svg text.chord-label { fill: #5bc0eb; }
 
 /* ── PIANO SECTION ── */
+#piano-resizer {
+  height: 14px;
+  flex-shrink: 0;
+  cursor: ns-resize;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  position: relative;
+  touch-action: none;
+  transition: background 0.15s;
+}
+#piano-resizer::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 72px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--muted);
+  opacity: 0.6;
+  transition: background 0.15s, opacity 0.15s, width 0.15s;
+}
+#piano-resizer:hover,
+#piano-resizer.dragging { background: var(--surface); }
+#piano-resizer:hover::after,
+#piano-resizer.dragging::after {
+  background: var(--accent);
+  opacity: 1;
+  width: 104px;
+}
+
 #piano-section {
   height: var(--piano-h);
   flex-shrink: 0;

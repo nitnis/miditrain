@@ -38,21 +38,29 @@ export function initPianoRoll(fallingEl, keyboardEl) {
   kbCtx = kbCanvas.getContext('2d');
 
   resizePiano();
-  window.addEventListener('resize', resizePiano);
+  // The piano section is user-resizable, so watch the containers themselves
+  // rather than only the window.
+  const ro = new ResizeObserver(resizePiano);
+  ro.observe(fallingCanvas.parentElement);
+  ro.observe(keyboardEl);
   startAnimation();
 }
 
 function resizePiano() {
-  const container = kbCanvas.parentElement;
-  const w = container.clientWidth;
-  const kbH = 120;
+  const kbBox = kbCanvas.parentElement;
+  const fallBox = fallingCanvas.parentElement;
+  const w = kbBox.clientWidth;
+  const kbH = kbBox.clientHeight;
+  if (!w || !kbH) return;
 
-  kbCanvas.width = w;
-  kbCanvas.height = kbH;
-  fallingCanvas.width = w;
-  fallingCanvas.height = fallingCanvas.parentElement.clientHeight;
+  if (kbCanvas.width !== w || kbCanvas.height !== kbH) {
+    kbCanvas.width = w;
+    kbCanvas.height = kbH;
+    buildKeyLayout(w, kbH);
+  }
+  fallingCanvas.width = fallBox.clientWidth;
+  fallingCanvas.height = fallBox.clientHeight;
 
-  buildKeyLayout(w, kbH);
   drawKeyboard();
 }
 
@@ -273,6 +281,7 @@ export function stopAnimation() {
 // ── Piano Roll (time × pitch grid view) ──────────────────────────────────────
 
 const PIANO_KEY_WIDTH = 56; // px reserved for the vertical mini-piano strip
+const ROLL_GUTTER = 16; // px of breathing room between the key strip and time 0
 const MIN_ROW_H = 9; // px — below this a pitch row is too thin to read as a key
 
 // Draws a keyboard seen from above: white keys form one continuous field,
@@ -368,7 +377,10 @@ export function renderPianoRoll(canvas, notes, currentTimeMs) {
   const w = canvas.width = canvas.offsetWidth;
   if (!w || !h) return;
 
-  const rollW = w - LEFT; // width of the time-axis area
+  // Time 0 starts past a gutter so the earliest notes never sit flush against
+  // the key strip.
+  const GRID_X = LEFT + ROLL_GUTTER;
+  const rollW = w - GRID_X; // width of the time-axis area
   const noteH = h / pitchRange;
 
   ctx.fillStyle = '#0a0a15';
@@ -378,7 +390,7 @@ export function renderPianoRoll(canvas, notes, currentTimeMs) {
     ctx.fillStyle = '#3a3a5c';
     ctx.font = '14px system-ui';
     ctx.textAlign = 'center';
-    ctx.fillText('No notes recorded yet', LEFT + rollW / 2, h / 2);
+    ctx.fillText('No notes recorded yet', GRID_X + rollW / 2, h / 2);
     drawVerticalPiano(ctx, minPitch, maxPitch, noteH, h, new Set());
     setEditorLayout({ msPerPx: 1, minPitch, noteH, h, w, leftMargin: LEFT }, []);
     return;
@@ -387,7 +399,14 @@ export function renderPianoRoll(canvas, notes, currentTimeMs) {
   const maxTime = Math.max(notes.reduce((m, n) => Math.max(m, n.startTime + n.duration), 0), currentTimeMs + 2000);
   const msPerPx = maxTime / rollW;
 
-  // Grid guides (offset by LEFT)
+  // Everything time-based is clipped to the right of the key strip, so no note
+  // or playhead can ever paint into the piano.
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(LEFT, 0, w - LEFT, h);
+  ctx.clip();
+
+  // Grid guides
   for (let p = minPitch; p <= maxPitch; p++) {
     const y = h - (p - minPitch + 1) * noteH;
     if (p % 12 === 0) {
@@ -400,13 +419,13 @@ export function renderPianoRoll(canvas, notes, currentTimeMs) {
     }
     if (!IS_WHITE[p % 12]) {
       ctx.fillStyle = 'rgba(0,0,0,0.25)';
-      ctx.fillRect(LEFT, y, rollW, noteH);
+      ctx.fillRect(LEFT, y, w - LEFT, noteH);
     }
   }
 
   // Step-record cursor
   if (state.transport.mode === 'step-recording') {
-    const cx = LEFT + state.transport.currentTime / msPerPx;
+    const cx = GRID_X + state.transport.currentTime / msPerPx;
     ctx.fillStyle = 'rgba(91,192,235,0.15)';
     ctx.fillRect(cx, 0, w - cx, h);
     ctx.strokeStyle = 'rgba(91,192,235,0.9)';
@@ -423,7 +442,7 @@ export function renderPianoRoll(canvas, notes, currentTimeMs) {
   const pitchesWithNotes = new Set(notes.map(n => n.pitch));
 
   for (const note of notes) {
-    const x = LEFT + note.startTime / msPerPx;
+    const x = GRID_X + note.startTime / msPerPx;
     const nw = Math.max(2, note.duration / msPerPx);
     const y = h - (note.pitch - minPitch + 1) * noteH;
     const isSelected = sel.has(note.id);
@@ -448,7 +467,7 @@ export function renderPianoRoll(canvas, notes, currentTimeMs) {
   }
 
   // Playhead
-  const px = LEFT + currentTimeMs / msPerPx;
+  const px = GRID_X + currentTimeMs / msPerPx;
   ctx.strokeStyle = 'rgba(233,69,96,0.85)';
   ctx.lineWidth = 2;
   ctx.beginPath();
@@ -456,7 +475,9 @@ export function renderPianoRoll(canvas, notes, currentTimeMs) {
   ctx.lineTo(px, h);
   ctx.stroke();
 
-  // Draw vertical piano strip over the left margin
+  ctx.restore();
+
+  // The key strip owns the left margin outright
   drawVerticalPiano(ctx, minPitch, maxPitch, noteH, h, pitchesWithNotes);
 
   setEditorLayout({ msPerPx, minPitch, noteH, h, w, leftMargin: LEFT }, noteRects);
