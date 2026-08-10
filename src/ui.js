@@ -208,14 +208,18 @@ function bindToolbar() {
     scheduleSheetRender();
   };
 
-  document.getElementById('quantize-select').onchange = (e) => {
-    update('ui.quantize', parseInt(e.target.value));
-    scheduleSheetRender();
-  };
-
-  document.getElementById('step-division-select').onchange = (e) => {
-    update('transport.stepDivision', parseInt(e.target.value));
-  };
+  // Quantize and step size are one setting, surfaced in two places
+  const quantizeSelects = ['quantize-select', 'step-division-select']
+    .map(id => document.getElementById(id));
+  for (const sel of quantizeSelects) {
+    sel.value = String(state.ui.quantize);
+    sel.onchange = (e) => {
+      const v = parseInt(e.target.value);
+      update('ui.quantize', v);
+      for (const other of quantizeSelects) other.value = String(v);
+      scheduleSheetRender();
+    };
+  }
 
   document.getElementById('btn-clear').onclick = () => {
     if (confirm('Clear all notes?')) clearAllNotes();

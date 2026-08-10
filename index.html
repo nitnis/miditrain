@@ -58,7 +58,7 @@
       <!-- Step controls (visible only in step-recording mode) -->
       <div class="tool-group step-controls hidden" id="step-controls">
         <span class="tool-label">STEP</span>
-        <select id="step-division-select" title="Step size">
+        <select id="step-division-select" title="Step size — same setting as Quantize">
           <option value="1">1/1</option>
           <option value="2">1/2</option>
           <option value="4">1/4</option>
@@ -189,13 +189,14 @@
           <option value="Ab">Ab major</option>
           <option value="Db">Db major</option>
         </select>
-        <span class="tool-label" style="margin-left:10px">Quantize:</span>
-        <select id="quantize-select">
-          <option value="32">1/32</option>
-          <option value="16">1/16</option>
-          <option value="8" selected>1/8</option>
-          <option value="4">1/4</option>
+        <span class="tool-label" style="margin-left:10px" title="Notation grid — also the step size when step recording">Quantize / Step:</span>
+        <select id="quantize-select" title="Notation grid — also the step size when step recording">
+          <option value="1">1/1</option>
           <option value="2">1/2</option>
+          <option value="4">1/4</option>
+          <option value="8" selected>1/8</option>
+          <option value="16">1/16</option>
+          <option value="32">1/32</option>
         </select>
         <button class="small-btn" id="btn-clear" style="margin-left:auto">Clear All</button>
       </div>
