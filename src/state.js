@@ -10,12 +10,13 @@ const _state = {
     notes: [], // NoteEvent[]
   },
   transport: {
-    mode: 'stopped', // 'stopped' | 'playing' | 'recording'
+    mode: 'stopped', // 'stopped' | 'playing' | 'recording' | 'step-recording'
     currentTime: 0,  // ms from composition start
     loopEnabled: false,
     loopStartBar: 1,
     loopEndBar: 4,
     speed: 1.0,
+    stepDivision: 8, // step size: 4=quarter, 8=eighth, 16=sixteenth, 32=thirty-second
   },
   midi: {
     available: false,
@@ -29,6 +30,7 @@ const _state = {
     metronomeEnabled: false,
     quantize: 8,            // grid division (8 = 1/8 note)
     keySignature: 'C',
+    editorSelectedNotes: new Set(), // selected note IDs in piano roll editor
   },
   accuracy: {
     active: false,

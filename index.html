@@ -50,8 +50,24 @@
         <button class="transport-btn" id="btn-to-start" title="Go to start (Home)">&#9664;&#9664;</button>
         <button class="transport-btn" id="btn-stop" title="Stop">&#9632;</button>
         <button class="transport-btn record-btn" id="btn-record" title="Record (R)">&#9679;</button>
+        <button class="transport-btn step-btn" id="btn-step-record" title="Step Record — write one note/chord per step">&#9655;&#9679;</button>
         <button class="transport-btn play-btn" id="btn-play" title="Play/Pause (Space)">&#9654;</button>
         <button class="transport-btn" id="btn-to-end" title="Go to end">&#9654;&#9654;</button>
+      </div>
+
+      <!-- Step controls (visible only in step-recording mode) -->
+      <div class="tool-group step-controls hidden" id="step-controls">
+        <span class="tool-label">STEP</span>
+        <select id="step-division-select" title="Step size">
+          <option value="1">1/1</option>
+          <option value="2">1/2</option>
+          <option value="4">1/4</option>
+          <option value="8" selected>1/8</option>
+          <option value="16">1/16</option>
+          <option value="32">1/32</option>
+        </select>
+        <button class="small-btn" id="btn-step-back" title="Undo last step">&#8592; Back</button>
+        <button class="small-btn" id="btn-step-rest" title="Insert rest (advance without note)">Rest &#8594;</button>
       </div>
 
       <!-- Position display -->
@@ -185,11 +201,23 @@
       </div>
       <div id="sheet-container">
         <div id="vexflow-output"></div>
+        <div id="chord-labels-overlay"></div>
+        <div id="chord-tooltip" class="chord-tooltip hidden"></div>
       </div>
     </div>
 
     <!-- Piano Roll Panel -->
     <div class="view-panel hidden" id="panel-roll">
+      <div id="editor-toolbar">
+        <span class="tool-label" style="margin-right:4px">EDIT:</span>
+        <button class="small-btn" id="btn-transpose-up" title="Transpose up 1 semitone (↑)">&#9650; Semi</button>
+        <button class="small-btn" id="btn-transpose-down" title="Transpose down 1 semitone (↓)">&#9660; Semi</button>
+        <button class="small-btn" id="btn-oct-up" title="Transpose up 1 octave (Shift+↑)">&#9650; Oct</button>
+        <button class="small-btn" id="btn-oct-down" title="Transpose down 1 octave (Shift+↓)">&#9660; Oct</button>
+        <button class="small-btn" id="btn-legato" title="Extend selected notes to touch the next note">Legato</button>
+        <button class="small-btn danger" id="btn-editor-delete" title="Delete selected notes (Del)">Delete</button>
+        <span id="editor-hint" class="editor-hint">Click note to select · Shift+click multi-select · Del to delete · ↑↓ transpose</span>
+      </div>
       <canvas id="roll-canvas"></canvas>
     </div>
 
