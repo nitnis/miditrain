@@ -16,7 +16,6 @@ const _state = {
     loopStartBar: 1,
     loopEndBar: 4,
     speed: 1.0,
-    stepDivision: 8, // step size: 4=quarter, 8=eighth, 16=sixteenth, 32=thirty-second
   },
   midi: {
     available: false,
@@ -28,7 +27,7 @@ const _state = {
     view: 'sheet',          // 'sheet' | 'piano-roll' | 'split'
     trainMode: false,
     metronomeEnabled: false,
-    quantize: 8,            // grid division (8 = 1/8 note)
+    quantize: 8,            // grid division (8 = 1/8 note); also the step-record step size
     keySignature: 'C',
     editorSelectedNotes: new Set(), // selected note IDs in piano roll editor
   },

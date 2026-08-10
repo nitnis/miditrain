@@ -119,8 +119,11 @@ export function renderSheet(notes, composition, currentTimeMs = null) {
     const trebleTicks = buildTickables(trebleNotes, beatsPerMeasure, 'treble', useFlats);
     const bassTicks   = buildTickables(bassNotes,   beatsPerMeasure, 'bass',   useFlats);
 
-    drawVoice(trebleTicks, trebleStave, timeSignature, Formatter, Voice, Accidental, Beam, keySignature, 'treble');
-    drawVoice(bassTicks,   bassStave,   timeSignature, Formatter, Voice, Accidental, Beam, keySignature, 'bass');
+    drawSystem(
+      [{ tickables: trebleTicks, stave: trebleStave, clef: 'treble' },
+       { tickables: bassTicks,   stave: bassStave,   clef: 'bass' }],
+      timeSignature, Formatter, Voice, Accidental, Beam, keySignature
+    );
 
     // Chord labels
     if (measureNotes.length > 0) {
@@ -167,32 +170,44 @@ function buildTickables(staveNotes, beatsPerMeasure, clef, useFlats) {
   return tickables;
 }
 
-function drawVoice(tickables, stave, timeSignature, Formatter, Voice, Accidental, Beam, key, clef) {
-  if (!tickables.length) return;
+// Both staves of a measure must be formatted by one Formatter. Formatting them
+// separately spaces each stave across the full width on its own tickable count,
+// so a beat carried by only one clef lands at a different x than the same beat
+// on the other clef and the measure reads as having more beats than it does.
+function drawSystem(parts, timeSignature, Formatter, Voice, Accidental, Beam, key) {
+  const active = parts.filter(p => p.tickables.length);
+  if (!active.length) return;
+
   try {
-    const voice = new Voice({
-      num_beats: timeSignature.numerator,
-      beat_value: timeSignature.denominator,
-    }).setMode(Voice.Mode.SOFT);
-    voice.addTickables(tickables);
+    for (const part of active) {
+      part.voice = new Voice({
+        num_beats: timeSignature.numerator,
+        beat_value: timeSignature.denominator,
+      }).setMode(Voice.Mode.SOFT);
+      part.voice.addTickables(part.tickables);
+    }
 
-    Accidental.applyAccidentals([voice], key);
+    const voices = active.map(p => p.voice);
+    Accidental.applyAccidentals(voices, key);
 
+    // Every stave in the system shares an x range, so measure it once
+    const { stave } = active[0];
     const noteStartX = stave.getNoteStartX();
     const noteEndX   = stave.getX() + stave.getWidth() - 10;
     const availW = Math.max(80, noteEndX - noteStartX);
-    new Formatter().joinVoices([voice]).format([voice], availW);
+    new Formatter().joinVoices(voices).format(voices, availW);
 
-    voice.draw(svgCtx, stave);
+    for (const part of active) {
+      part.voice.draw(svgCtx, part.stave);
 
-    // Beam non-rest notes in groups of 8th/16th
-    const nonRest = tickables.filter(t => {
-      try { return !t.isRest(); } catch (_) { return true; }
-    });
-    const beams = Beam.generateBeams(nonRest);
-    beams.forEach(b => b.setContext(svgCtx).draw());
+      // Beam non-rest notes in groups of 8th/16th
+      const nonRest = part.tickables.filter(t => {
+        try { return !t.isRest(); } catch (_) { return true; }
+      });
+      Beam.generateBeams(nonRest).forEach(b => b.setContext(svgCtx).draw());
+    }
   } catch (e) {
-    console.warn(`Voice draw [${clef}]:`, e.message);
+    console.warn('System draw:', e.message);
   }
 }
 
