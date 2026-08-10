@@ -701,7 +701,8 @@ select:focus { outline: 1px solid var(--accent); }
 
 /* ── PIANO ROLL PANEL ── */
 #panel-roll { background: #0a0a15; flex-direction: column; }
-#roll-canvas { width: 100%; flex: 1; min-height: 0; display: block; }
+#roll-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+#roll-canvas { width: 100%; display: block; }
 
 #editor-toolbar {
   display: flex;

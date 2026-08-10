@@ -112,7 +112,6 @@ function onMouseMove(e) {
       note.duration = Math.max(50, orig.duration + dx * _layout.msPerPx);
     }
   }
-  // (note rects already include leftMargin in their x; msPerPx covers rollW only so dx maps correctly)
 
   emit('transport:noteschanged', state.composition.notes);
 }
