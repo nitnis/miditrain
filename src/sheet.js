@@ -36,6 +36,27 @@ let svgCtx = null;
 let _chordOverlayData = [];
 export function getChordOverlayData() { return _chordOverlayData; }
 
+// Staff position (diatonic index) of each clef's top line: treble F5, bass A3
+const TOP_LINE_DIA = { treble: 5 * 7 + 3, bass: 3 * 7 + 5 };
+
+// Per-stave geometry in SVG user units, for pointer → pitch lookups
+let _staveGeom = [];
+export function getStaveGeometry() { return _staveGeom; }
+
+function recordStaveGeom(stave, clef) {
+  const topLineY = stave.getYForLine(0);
+  const spacing = stave.getYForLine(1) - topLineY;
+  if (!spacing) return;
+  _staveGeom.push({
+    clef,
+    x: stave.getX(),
+    w: stave.getWidth(),
+    topLineY,
+    spacing,
+    topLineDia: TOP_LINE_DIA[clef],
+  });
+}
+
 export function initSheet(el) {
   container = el;
   el.innerHTML = '';
@@ -43,6 +64,7 @@ export function initSheet(el) {
 
 export function renderSheet(notes, composition, currentTimeMs = null) {
   _chordOverlayData = [];
+  _staveGeom = [];
   if (!container || !window.Vex) return;
 
   const {
@@ -100,6 +122,9 @@ export function renderSheet(notes, composition, currentTimeMs = null) {
 
     trebleStave.setContext(svgCtx).draw();
     bassStave.setContext(svgCtx).draw();
+
+    recordStaveGeom(trebleStave, 'treble');
+    recordStaveGeom(bassStave, 'bass');
 
     // Brace + connectors
     try {

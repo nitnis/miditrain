@@ -702,6 +702,34 @@ select:focus { outline: 1px solid var(--accent); }
 /* ── CHORD LABELS OVERLAY ── */
 #sheet-container { position: relative; }
 
+.staff-hint {
+  position: absolute;
+  z-index: 6;
+  pointer-events: none;
+  padding: 2px 7px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+}
+.staff-hint.hidden { display: none; }
+
+/* Thin rule marking the hovered line/space */
+.staff-hint-rule {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  height: 0;
+  border-top: 1px dashed var(--accent);
+  opacity: 0.7;
+}
+.staff-hint-rule.hidden { display: none; }
+
 #chord-labels-overlay {
   position: absolute;
   top: 10px; left: 10px;
@@ -743,6 +771,15 @@ select:focus { outline: 1px solid var(--accent); }
   margin-bottom: 6px;
   text-align: center;
 }
+.chord-tooltip-voicing {
+  margin-top: 6px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+/* Lowest note — the one that names the inversion */
+.voicing-bass { color: var(--accent2); font-weight: 700; }
 
 /* ── PIANO ROLL PANEL ── */
 #panel-roll { background: #0a0a15; flex-direction: column; }

@@ -1,13 +1,14 @@
 // UI updates: DOM manipulation, modals, controls
 import { state, update, emit, on } from './state.js';
 import { record, play, stop, seekToStart, seekToEnd, clearAllNotes, transposeNotes, applyLegato, deleteNotes } from './transport.js';
-import { renderSheet, initSheet, getChordOverlayData } from './sheet.js';
+import { renderSheet, initSheet, getChordOverlayData, getStaveGeometry } from './sheet.js';
 import { initPianoRoll, renderPianoRoll } from './pianoroll.js';
 import { saveComposition, listCompositions, deleteComposition } from './storage.js';
 import { startAccuracy, stopAccuracy } from './accuracy.js';
 import { resumeAudioContext, stopMetronome } from './metronome.js';
 import { startStepRecord, stopStepRecord, stepInsertRest, stepGoBack } from './step-recorder.js';
 import { initNoteEditor, getSelectedIds } from './note-editor.js';
+import { staffPositionName, midiToNoteWithOctave } from './chords.js';
 
 let sheetContainer = null;
 let renderDebounce = null;
@@ -30,6 +31,7 @@ export function initUI() {
   bindKeyboardShortcuts();
   bindEditorToolbar();
   bindChordOverlay();
+  bindStaffHint();
   bindPianoResizer();
 
   // The piano roll canvas is sized from its viewport, so re-render whenever
@@ -571,29 +573,130 @@ function bindEditorToolbar() {
 
 // ── Chord overlay + mini-piano hover ──────────────────────────────────────────
 
+// Draws the actual voicing across the octaves it spans, so inversions look
+// different from root position. Collapsing to pitch classes would render
+// C/E identically to C.
 function buildMiniPianoSVG(pitches) {
-  const pcs = new Set(pitches.map(p => p % 12));
-  // Show one octave (12 keys), 7 white keys
   const WHITE = [0, 2, 4, 5, 7, 9, 11]; // C D E F G A B
-  const BLACK = { 1:0, 3:1, 6:3, 8:4, 10:5 }; // pc → white-key index (left edge)
-  const KW = 14, KH = 42, BW = 9, BH = 26;
-  const totalW = WHITE.length * KW;
+  const BLACK = { 1: 0, 3: 1, 6: 3, 8: 4, 10: 5 }; // pc → white-key index it sits after
+
+  const sorted = [...new Set(pitches)].sort((a, b) => a - b);
+  if (!sorted.length) return '';
+  const held = new Set(sorted);
+  const bass = sorted[0];
+
+  const firstOct = Math.floor(bass / 12);
+  const lastOct = Math.floor(sorted[sorted.length - 1] / 12);
+  const octaves = lastOct - firstOct + 1;
+
+  const KW = octaves > 2 ? 10 : 14;
+  const BW = Math.round(KW * 0.62);
+  const KH = 42, BH = 26;
+  const totalW = octaves * WHITE.length * KW;
+
+  const fillFor = (midi, plain) =>
+    midi === bass ? '#e94560' : held.has(midi) ? '#5bc0eb' : plain;
 
   let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${totalW}" height="${KH}" style="display:block">`;
-  // White keys
-  WHITE.forEach((pc, i) => {
-    const fill = pcs.has(pc) ? '#5bc0eb' : '#dde';
-    svg += `<rect x="${i * KW}" y="0" width="${KW - 1}" height="${KH}" fill="${fill}" stroke="#444" stroke-width="1" rx="1"/>`;
-  });
-  // Black keys
-  Object.entries(BLACK).forEach(([pcStr, wIdx]) => {
-    const pc = parseInt(pcStr);
-    const x = wIdx * KW + KW - BW / 2;
-    const fill = pcs.has(pc) ? '#5bc0eb' : '#222';
-    svg += `<rect x="${x}" y="0" width="${BW}" height="${BH}" fill="${fill}" stroke="#111" stroke-width="1" rx="1"/>`;
-  });
+
+  for (let o = 0; o < octaves; o++) {
+    const base = (firstOct + o) * 12;
+    const originX = o * WHITE.length * KW;
+
+    WHITE.forEach((pc, i) => {
+      const x = originX + i * KW;
+      svg += `<rect x="${x}" y="0" width="${KW - 1}" height="${KH}" `
+           + `fill="${fillFor(base + pc, '#dde')}" stroke="#444" stroke-width="1" rx="1"/>`;
+    });
+
+    for (const [pcStr, wIdx] of Object.entries(BLACK)) {
+      const pc = parseInt(pcStr);
+      const x = originX + wIdx * KW + KW - BW / 2;
+      svg += `<rect x="${x}" y="0" width="${BW}" height="${BH}" `
+           + `fill="${fillFor(base + pc, '#222')}" stroke="#111" stroke-width="1" rx="1"/>`;
+    }
+  }
+
   svg += '</svg>';
   return svg;
+}
+
+// Voicing bottom-to-top, e.g. "E4 · G4 · C5" — the bass note is what names
+// the inversion, so it is marked.
+function buildVoicingCaption(pitches) {
+  const sorted = [...new Set(pitches)].sort((a, b) => a - b);
+  return sorted
+    .map((p, i) => {
+      const name = midiToNoteWithOctave(p);
+      return i === 0 ? `<span class="voicing-bass">${name}</span>` : name;
+    })
+    .join(' · ');
+}
+
+// Hovering a stave names the line or space under the pointer
+function bindStaffHint() {
+  const containerEl = document.getElementById('sheet-container');
+  const hint = document.getElementById('staff-hint');
+  const rule = document.getElementById('staff-hint-rule');
+  if (!containerEl || !hint || !rule) return;
+
+  function hide() {
+    hint.classList.add('hidden');
+    rule.classList.add('hidden');
+  }
+
+  containerEl.addEventListener('mouseleave', hide);
+
+  containerEl.addEventListener('mousemove', (e) => {
+    // Chord labels have their own tooltip; don't compete with it
+    if (e.target.closest('.chord-label-el, #chord-tooltip')) return hide();
+
+    const svg = containerEl.querySelector('#vexflow-output svg');
+    const geom = getStaveGeometry();
+    if (!svg || !geom.length || !svg.getScreenCTM) return hide();
+
+    // Screen → SVG user units, which is what the geometry is recorded in
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return hide();
+    const pt = svg.createSVGPoint();
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    const loc = pt.matrixTransform(ctm.inverse());
+
+    // Reach a few positions past each stave so ledger lines are still named
+    const LEDGER_STEPS = 6;
+    const stave = geom.find((g) => {
+      if (loc.x < g.x || loc.x > g.x + g.w) return false;
+      const pad = (LEDGER_STEPS / 2) * g.spacing;
+      return loc.y >= g.topLineY - pad && loc.y <= g.topLineY + 4 * g.spacing + pad;
+    });
+    if (!stave) return hide();
+
+    // Each half-spacing is one diatonic step, counted downward from the top line
+    const steps = Math.round((loc.y - stave.topLineY) / (stave.spacing / 2));
+    const dia = stave.topLineDia - steps;
+    const name = staffPositionName(dia, state.composition.keySignature);
+
+    // Snap the readout to the exact line/space the name refers to
+    const snappedSvgY = stave.topLineY + steps * (stave.spacing / 2);
+    const originPt = svg.createSVGPoint();
+    originPt.x = stave.x;
+    originPt.y = snappedSvgY;
+    const screen = originPt.matrixTransform(ctm);
+    const cRect = containerEl.getBoundingClientRect();
+    const left = screen.x - cRect.left + containerEl.scrollLeft;
+    const top = screen.y - cRect.top + containerEl.scrollTop;
+
+    hint.textContent = name;
+    hint.style.left = (e.clientX - cRect.left + containerEl.scrollLeft + 14) + 'px';
+    hint.style.top = (top - 9) + 'px';
+    hint.classList.remove('hidden');
+
+    rule.style.left = left + 'px';
+    rule.style.top = top + 'px';
+    rule.style.width = (stave.w * ctm.a) + 'px'; // ctm.a is the SVG→screen x scale
+    rule.classList.remove('hidden');
+  });
 }
 
 function bindChordOverlay() {
@@ -630,7 +733,8 @@ function updateChordOverlay() {
       el.style.top = item.y + 'px';
       el.addEventListener('mouseenter', (e) => {
         tooltip.innerHTML = `<div class="chord-tooltip-name">${item.label}</div>` +
-          buildMiniPianoSVG(item.pitches);
+          buildMiniPianoSVG(item.pitches) +
+          `<div class="chord-tooltip-voicing">${buildVoicingCaption(item.pitches)}</div>`;
         const r = el.getBoundingClientRect();
         tooltip.style.left = (r.left - containerRect.left) + 'px';
         tooltip.style.top = (r.bottom - containerRect.top + 4) + 'px';
