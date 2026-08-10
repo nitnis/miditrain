@@ -368,7 +368,9 @@ function bindKeyboardShortcuts() {
     switch (e.code) {
       case 'Space':
         e.preventDefault();
-        if (state.transport.mode === 'playing') stop();
+        // In step mode Space is the rest key: write a silent step and advance
+        if (state.transport.mode === 'step-recording') stepInsertRest();
+        else if (state.transport.mode === 'playing') stop();
         else play();
         break;
       case 'KeyR':
