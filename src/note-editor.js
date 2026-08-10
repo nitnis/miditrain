@@ -3,7 +3,7 @@ import { state, emit } from './state.js';
 import { deleteNotes, transposeNotes, applyLegato } from './transport.js';
 
 // Layout info shared with renderPianoRoll (set each render)
-let _layout = { msPerPx: 1, minPitch: 21, noteH: 10, h: 0, w: 0 };
+let _layout = { msPerPx: 1, minPitch: 21, noteH: 10, h: 0, w: 0, leftMargin: 0 };
 let _noteRects = []; // [{ id, x, y, w, h }] — set each render
 
 export function setEditorLayout(layout, noteRects) {
@@ -45,6 +45,10 @@ function isResizeHandle(x, rect) {
 
 function onMouseDown(e) {
   const pos = getPos(e);
+
+  // Clicks inside the piano key strip don't interact with notes
+  if (pos.x < _layout.leftMargin) return;
+
   const hit = hitTest(pos.x, pos.y);
 
   if (!hit) {
@@ -108,6 +112,7 @@ function onMouseMove(e) {
       note.duration = Math.max(50, orig.duration + dx * _layout.msPerPx);
     }
   }
+  // (note rects already include leftMargin in their x; msPerPx covers rollW only so dx maps correctly)
 
   emit('transport:noteschanged', state.composition.notes);
 }
