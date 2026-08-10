@@ -272,12 +272,72 @@ export function stopAnimation() {
 
 // ── Piano Roll (time × pitch grid view) ──────────────────────────────────────
 
+const PIANO_KEY_WIDTH = 52; // px reserved for the vertical mini-piano strip
+
+function drawVerticalPiano(ctx, minPitch, maxPitch, noteH, h, pitchesWithNotes) {
+  const pw = PIANO_KEY_WIDTH;
+
+  // Background of piano strip
+  ctx.fillStyle = '#13131f';
+  ctx.fillRect(0, 0, pw, h);
+
+  // Separator line
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(pw, 0);
+  ctx.lineTo(pw, h);
+  ctx.stroke();
+
+  const blackW = pw * 0.55;
+
+  for (let p = minPitch; p <= maxPitch; p++) {
+    const y = h - (p - minPitch + 1) * noteH;
+    const isWhite = IS_WHITE[p % 12];
+    const hasNote = pitchesWithNotes.has(p);
+
+    if (isWhite) {
+      ctx.fillStyle = hasNote ? '#7ecfcf' : '#dde';
+      ctx.fillRect(0, y, pw - 1, noteH);
+      ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+      ctx.lineWidth = 0.5;
+      ctx.strokeRect(0, y, pw - 1, noteH);
+    }
+  }
+
+  // Black keys on top
+  for (let p = minPitch; p <= maxPitch; p++) {
+    const y = h - (p - minPitch + 1) * noteH;
+    const isWhite = IS_WHITE[p % 12];
+    const hasNote = pitchesWithNotes.has(p);
+    if (!isWhite) {
+      ctx.fillStyle = hasNote ? '#3a8f8f' : '#222';
+      ctx.fillRect(0, y, blackW, noteH);
+    }
+  }
+
+  // Octave labels (C notes)
+  ctx.fillStyle = 'rgba(200,200,230,0.8)';
+  ctx.font = `${Math.min(10, noteH - 1)}px monospace`;
+  ctx.textAlign = 'right';
+  for (let p = minPitch; p <= maxPitch; p++) {
+    if (p % 12 === 0) {
+      const oct = Math.floor(p / 12) - 1;
+      const y = h - (p - minPitch) * noteH;
+      ctx.fillText(`C${oct}`, pw - 3, y - 2);
+    }
+  }
+}
+
 export function renderPianoRoll(canvas, notes, currentTimeMs) {
   if (!canvas || !notes) return;
   const ctx = canvas.getContext('2d');
   const w = canvas.width = canvas.offsetWidth;
   const h = canvas.height = canvas.offsetHeight;
   if (!w || !h) return;
+
+  const LEFT = PIANO_KEY_WIDTH;
+  const rollW = w - LEFT; // width of the time-axis area
 
   ctx.fillStyle = '#0a0a15';
   ctx.fillRect(0, 0, w, h);
@@ -286,8 +346,9 @@ export function renderPianoRoll(canvas, notes, currentTimeMs) {
     ctx.fillStyle = '#3a3a5c';
     ctx.font = '14px system-ui';
     ctx.textAlign = 'center';
-    ctx.fillText('No notes recorded yet', w / 2, h / 2);
-    setEditorLayout({ msPerPx: 1, minPitch: 21, noteH: 10, h, w }, []);
+    ctx.fillText('No notes recorded yet', LEFT + rollW / 2, h / 2);
+    drawVerticalPiano(ctx, 36, 84, Math.max(4, h / 48), h, new Set());
+    setEditorLayout({ msPerPx: 1, minPitch: 21, noteH: 10, h, w, leftMargin: LEFT }, []);
     return;
   }
 
@@ -297,29 +358,28 @@ export function renderPianoRoll(canvas, notes, currentTimeMs) {
   const noteH = Math.max(4, h / pitchRange);
 
   const maxTime = Math.max(notes.reduce((m, n) => Math.max(m, n.startTime + n.duration), 0), currentTimeMs + 2000);
-  const msPerPx = maxTime / w;
+  const msPerPx = maxTime / rollW;
 
-  // Grid guides
+  // Grid guides (offset by LEFT)
   for (let p = minPitch; p <= maxPitch; p++) {
+    const y = h - (p - minPitch + 1) * noteH;
     if (p % 12 === 0) {
-      const y = h - (p - minPitch + 1) * noteH;
       ctx.strokeStyle = 'rgba(255,255,255,0.06)';
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(0, y);
+      ctx.moveTo(LEFT, y);
       ctx.lineTo(w, y);
       ctx.stroke();
     }
     if (!IS_WHITE[p % 12]) {
-      const y = h - (p - minPitch + 1) * noteH;
       ctx.fillStyle = 'rgba(0,0,0,0.25)';
-      ctx.fillRect(0, y, w, noteH);
+      ctx.fillRect(LEFT, y, rollW, noteH);
     }
   }
 
   // Step-record cursor
   if (state.transport.mode === 'step-recording') {
-    const cx = state.transport.currentTime / msPerPx;
+    const cx = LEFT + state.transport.currentTime / msPerPx;
     ctx.fillStyle = 'rgba(91,192,235,0.15)';
     ctx.fillRect(cx, 0, w - cx, h);
     ctx.strokeStyle = 'rgba(91,192,235,0.9)';
@@ -333,9 +393,10 @@ export function renderPianoRoll(canvas, notes, currentTimeMs) {
   // Build note rects for editor hit-testing
   const noteRects = [];
   const sel = state.ui.editorSelectedNotes;
+  const pitchesWithNotes = new Set(notes.map(n => n.pitch));
 
   for (const note of notes) {
-    const x = note.startTime / msPerPx;
+    const x = LEFT + note.startTime / msPerPx;
     const nw = Math.max(2, note.duration / msPerPx);
     const y = h - (note.pitch - minPitch + 1) * noteH;
     const isSelected = sel.has(note.id);
@@ -360,7 +421,7 @@ export function renderPianoRoll(canvas, notes, currentTimeMs) {
   }
 
   // Playhead
-  const px = currentTimeMs / msPerPx;
+  const px = LEFT + currentTimeMs / msPerPx;
   ctx.strokeStyle = 'rgba(233,69,96,0.85)';
   ctx.lineWidth = 2;
   ctx.beginPath();
@@ -368,17 +429,8 @@ export function renderPianoRoll(canvas, notes, currentTimeMs) {
   ctx.lineTo(px, h);
   ctx.stroke();
 
-  // Pitch labels
-  ctx.fillStyle = 'rgba(200,200,220,0.7)';
-  ctx.font = '10px monospace';
-  ctx.textAlign = 'left';
-  for (let p = minPitch; p <= maxPitch; p++) {
-    if (p % 12 === 0) {
-      const y = h - (p - minPitch) * noteH;
-      const oct = Math.floor(p / 12) - 1;
-      ctx.fillText(`C${oct}`, 2, y - 2);
-    }
-  }
+  // Draw vertical piano strip over the left margin
+  drawVerticalPiano(ctx, minPitch, maxPitch, noteH, h, pitchesWithNotes);
 
-  setEditorLayout({ msPerPx, minPitch, noteH, h, w }, noteRects);
+  setEditorLayout({ msPerPx, minPitch, noteH, h, w, leftMargin: LEFT }, noteRects);
 }
