@@ -27,6 +27,7 @@ const _state = {
     view: 'sheet',          // 'sheet' | 'piano-roll' | 'split'
     trainMode: false,
     metronomeEnabled: false,
+    muted: false,           // master audio mute; audible by default
     quantize: 8,            // grid division (8 = 1/8 note); also the step-record step size
     keySignature: 'C',
     editorSelectedNotes: new Set(), // selected note IDs in piano roll editor

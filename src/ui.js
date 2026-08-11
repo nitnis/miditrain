@@ -5,7 +5,8 @@ import { renderSheet, initSheet, getChordOverlayData, getStaveGeometry } from '.
 import { initPianoRoll, renderPianoRoll } from './pianoroll.js';
 import { saveComposition, listCompositions, deleteComposition } from './storage.js';
 import { startAccuracy, stopAccuracy } from './accuracy.js';
-import { resumeAudioContext, stopMetronome } from './metronome.js';
+import { stopMetronome } from './metronome.js';
+import { resumeAudioContext, setMuted } from './audio.js';
 import { startStepRecord, stopStepRecord, stepInsertRest, stepGoBack } from './step-recorder.js';
 import { initNoteEditor, getSelectedIds } from './note-editor.js';
 import { staffPositionName, midiToNoteWithOctave } from './chords.js';
@@ -180,6 +181,22 @@ function bindToolbar() {
     update('composition.timeSignature', { ...state.composition.timeSignature, denominator: parseInt(e.target.value) });
     scheduleSheetRender();
   };
+
+  const muteBtn = document.getElementById('btn-mute');
+  const applyMute = (muted) => {
+    setMuted(muted);
+    muteBtn.classList.toggle('muted', muted);
+    muteBtn.title = muted ? 'Unmute audio' : 'Mute all audio';
+    document.getElementById('icon-sound-on').classList.toggle('hidden', muted);
+    document.getElementById('icon-sound-off').classList.toggle('hidden', !muted);
+    document.getElementById('mute-label').textContent = muted ? 'Muted' : 'Sound';
+  };
+  muteBtn.onclick = () => {
+    const muted = !state.ui.muted;
+    update('ui.muted', muted);
+    applyMute(muted);
+  };
+  applyMute(state.ui.muted);
 
   document.getElementById('btn-metronome').onclick = () => {
     const enabled = !state.ui.metronomeEnabled;
