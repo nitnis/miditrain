@@ -2,27 +2,28 @@
 import { initMidi } from './midi.js';
 import { initUI } from './ui.js';
 import { on, emit, state } from './state.js';
-import { scheduleNotePreview } from './metronome.js';
+import { noteOn as audioNoteOn, noteOff as audioNoteOff } from './audio.js';
 
 async function boot() {
   // Initialize UI first (draws empty staves)
   initUI();
 
+  // Monitor incoming MIDI in every mode — stopped, live recording and step
+  // recording all sound the key you press. Registered before MIDI init: that
+  // await sits on a permission prompt that can stay pending indefinitely, and
+  // anything registered after it would never attach.
+  on('midi:noteon', ({ pitch, velocity }) => {
+    audioNoteOn(pitch, velocity);
+    emit('ui:activenotes', state.midi.activeNotes);
+  });
+
+  on('midi:noteoff', ({ pitch }) => {
+    audioNoteOff(pitch);
+    emit('ui:activenotes', state.midi.activeNotes);
+  });
+
   // Initialize MIDI (may show warning if unavailable)
   await initMidi();
-
-  // Preview incoming MIDI notes as sound while not recording/playing
-  on('midi:noteon', ({ pitch, velocity }) => {
-    if (state.transport.mode === 'stopped') {
-      scheduleNotePreview(pitch, 500);
-    }
-    // Update keyboard display
-    emit('ui:activenotes', state.midi.activeNotes);
-  });
-
-  on('midi:noteoff', () => {
-    emit('ui:activenotes', state.midi.activeNotes);
-  });
 
   console.log('MidiTrain ready.');
 }
