@@ -159,6 +159,144 @@ function bindTransport() {
   });
 }
 
+function quantizeSelects() {
+  return ['quantize-select', 'step-division-select'].map(id => document.getElementById(id));
+}
+
+function setQuantize(value) {
+  update('ui.quantize', value);
+  for (const sel of quantizeSelects()) sel.value = String(value);
+  scheduleSheetRender();
+}
+
+// Step through the grid values rather than by a fixed amount
+const QUANTIZE_STEPS = [1, 2, 4, 8, 16, 32];
+function nudgeQuantize(direction) {
+  const i = QUANTIZE_STEPS.indexOf(state.ui.quantize);
+  const next = QUANTIZE_STEPS[Math.min(QUANTIZE_STEPS.length - 1, Math.max(0, i + direction))];
+  if (next !== state.ui.quantize) {
+    setQuantize(next);
+    showToast(`Quantize / step 1/${next}`, 1000);
+  }
+}
+
+function setTempo(v) {
+  const bpm = Math.max(20, Math.min(300, parseInt(v) || 120));
+  update('composition.tempo', bpm);
+  document.getElementById('tempo-input').value = bpm;
+  document.getElementById('tempo-slider').value = bpm;
+}
+
+function nudgeTempo(delta) {
+  setTempo(state.composition.tempo + delta);
+  showToast(`${state.composition.tempo} BPM`, 900);
+}
+
+function applyMuteUI(muted) {
+  const btn = document.getElementById('btn-mute');
+  setMuted(muted);
+  btn.classList.toggle('muted', muted);
+  document.getElementById('icon-sound-on').classList.toggle('hidden', muted);
+  document.getElementById('icon-sound-off').classList.toggle('hidden', !muted);
+  document.getElementById('mute-label').textContent = muted ? 'Muted' : 'Sound';
+  // The wording flips with the state, so hand it back to the hint generator
+  // rather than writing the title here and losing the key
+  btn.dataset.baseTitle = muted ? 'Unmute audio' : 'Mute all audio';
+  refreshShortcutHints();
+}
+
+function toggleMute() {
+  const muted = !state.ui.muted;
+  update('ui.muted', muted);
+  applyMuteUI(muted);
+}
+
+function toggleTrainMode() {
+  const active = !state.ui.trainMode;
+  update('ui.trainMode', active);
+  document.getElementById('btn-train-mode').classList.toggle('active', active);
+  document.getElementById('btn-play').title = active ? 'Start Training' : 'Play';
+  showToast(active ? 'Training mode ON — press Play to start' : 'Training mode OFF');
+}
+
+function toggleLoop() {
+  const enabled = !state.transport.loopEnabled;
+  update('transport.loopEnabled', enabled);
+  updateLoopDisplay();
+  showToast(enabled ? 'Loop on' : 'Loop off', 1000);
+}
+
+function setView(view) {
+  update('ui.view', view);
+  document.querySelectorAll('.view-tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.view === view));
+  document.getElementById('panel-sheet').classList.toggle('hidden', view === 'piano-roll');
+  document.getElementById('panel-roll').classList.toggle('hidden', view !== 'piano-roll');
+  scheduleSheetRender();
+}
+
+function toggleView() {
+  setView(state.ui.view === 'piano-roll' ? 'sheet' : 'piano-roll');
+}
+
+function clearAll() {
+  if (confirm('Clear all notes?')) clearAllNotes();
+}
+
+function newComposition() {
+  if (!confirm('Start a new composition? Unsaved changes will be lost.')) return;
+  clearAllNotes();
+  update('composition.name', 'Untitled');
+  update('composition.id', null);
+  document.getElementById('composition-name').textContent = 'Untitled';
+  seekToStart();
+  resetHistory();
+}
+
+async function saveCurrentComposition() {
+  const name = document.getElementById('composition-name').textContent.trim() || 'Untitled';
+  update('composition.name', name);
+  const saved = await saveComposition({ ...state.composition });
+  update('composition.id', saved.id);
+  showToast('Saved!');
+}
+
+function exportComposition() {
+  const name = document.getElementById('composition-name').textContent.trim() || 'Untitled';
+  update('composition.name', name);
+  const json = compositionToJSON(state.composition);
+  const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${fileSafeName(name)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  showToast(`Exported ${a.download}`);
+}
+
+function importComposition() {
+  document.getElementById('import-file').click();
+}
+
+function openMidiInfo() {
+  document.getElementById('midi-info-modal').classList.remove('hidden');
+}
+
+// Esc closes whatever is on top
+function anyModalOpen() {
+  return Boolean(document.querySelector('.modal-overlay:not(.hidden)'));
+}
+
+function closeTopModal() {
+  const open = [...document.querySelectorAll('.modal-overlay:not(.hidden)')];
+  const top = open[open.length - 1];
+  if (!top) return;
+  if (top.id === 'shortcuts-modal') closeShortcutsPanel();
+  else top.classList.add('hidden');
+}
+
 // Every transport action lives here and is called by both the button and the
 // shortcut. Duplicating them is what let R start recording without its
 // count-in while the button honoured it.
@@ -239,13 +377,6 @@ function bindToolbar() {
   const tempoInput = document.getElementById('tempo-input');
   const tempoSlider = document.getElementById('tempo-slider');
 
-  const setTempo = (v) => {
-    const bpm = Math.max(20, Math.min(300, parseInt(v) || 120));
-    update('composition.tempo', bpm);
-    tempoInput.value = bpm;
-    tempoSlider.value = bpm;
-  };
-
   tempoInput.oninput = (e) => setTempo(e.target.value);
   tempoSlider.oninput = (e) => setTempo(e.target.value);
   document.getElementById('btn-tempo-down').onclick = () => setTempo(state.composition.tempo - 1);
@@ -260,21 +391,8 @@ function bindToolbar() {
     scheduleSheetRender();
   };
 
-  const muteBtn = document.getElementById('btn-mute');
-  const applyMute = (muted) => {
-    setMuted(muted);
-    muteBtn.classList.toggle('muted', muted);
-    muteBtn.title = muted ? 'Unmute audio' : 'Mute all audio';
-    document.getElementById('icon-sound-on').classList.toggle('hidden', muted);
-    document.getElementById('icon-sound-off').classList.toggle('hidden', !muted);
-    document.getElementById('mute-label').textContent = muted ? 'Muted' : 'Sound';
-  };
-  muteBtn.onclick = () => {
-    const muted = !state.ui.muted;
-    update('ui.muted', muted);
-    applyMute(muted);
-  };
-  applyMute(state.ui.muted);
+  document.getElementById('btn-mute').onclick = toggleMute;
+  applyMuteUI(state.ui.muted);
 
   const undoBtn = document.getElementById('btn-undo');
   const redoBtn = document.getElementById('btn-redo');
@@ -299,13 +417,7 @@ function bindToolbar() {
     speedValue.textContent = `${pct}%`;
   };
 
-  document.getElementById('btn-train-mode').onclick = () => {
-    const active = !state.ui.trainMode;
-    update('ui.trainMode', active);
-    document.getElementById('btn-train-mode').classList.toggle('active', active);
-    document.getElementById('btn-play').title = active ? 'Start Training' : 'Play';
-    showToast(active ? 'Training mode ON — press Play to start' : 'Training mode OFF');
-  };
+  document.getElementById('btn-train-mode').onclick = toggleTrainMode;
 
   document.getElementById('key-select').onchange = (e) => {
     update('composition.keySignature', e.target.value);
@@ -314,38 +426,21 @@ function bindToolbar() {
   };
 
   // Quantize and step size are one setting, surfaced in two places
-  const quantizeSelects = ['quantize-select', 'step-division-select']
-    .map(id => document.getElementById(id));
-  for (const sel of quantizeSelects) {
+  for (const sel of quantizeSelects()) {
     sel.value = String(state.ui.quantize);
-    sel.onchange = (e) => {
-      const v = parseInt(e.target.value);
-      update('ui.quantize', v);
-      for (const other of quantizeSelects) other.value = String(v);
-      scheduleSheetRender();
-    };
+    sel.onchange = (e) => setQuantize(parseInt(e.target.value));
   }
 
   const legatoToggle = document.getElementById('legato-toggle');
   legatoToggle.checked = state.ui.stepLegato;
   legatoToggle.onchange = (e) => setStepLegato(e.target.checked);
 
-  document.getElementById('btn-clear').onclick = () => {
-    if (confirm('Clear all notes?')) clearAllNotes();
-  };
+  document.getElementById('btn-clear').onclick = clearAll;
 }
 
 function bindViewTabs() {
   document.querySelectorAll('.view-tab').forEach(tab => {
-    tab.onclick = () => {
-      const view = tab.dataset.view;
-      update('ui.view', view);
-      document.querySelectorAll('.view-tab').forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
-      document.getElementById('panel-sheet').classList.toggle('hidden', view === 'piano-roll');
-      document.getElementById('panel-roll').classList.toggle('hidden', view !== 'piano-roll');
-      scheduleSheetRender();
-    };
+    tab.onclick = () => setView(tab.dataset.view);
   });
 }
 
@@ -354,6 +449,7 @@ function bindLoopControls() {
     update('transport.loopEnabled', e.target.checked);
     updateLoopDisplay();
   };
+  // Everything else reaches the same state through toggleLoop()
   document.getElementById('loop-start').onchange = (e) => {
     update('transport.loopStartBar', Math.max(1, parseInt(e.target.value) || 1));
   };
@@ -369,43 +465,13 @@ function fileSafeName(name) {
 }
 
 function bindCompositionControls() {
-  document.getElementById('btn-new').onclick = () => {
-    if (!confirm('Start a new composition? Unsaved changes will be lost.')) return;
-    clearAllNotes();
-    update('composition.name', 'Untitled');
-    update('composition.id', null);
-    document.getElementById('composition-name').textContent = 'Untitled';
-    seekToStart();
-    resetHistory();
-  };
-
-  document.getElementById('btn-save').onclick = async () => {
-    const name = document.getElementById('composition-name').textContent.trim() || 'Untitled';
-    update('composition.name', name);
-    const saved = await saveComposition({ ...state.composition });
-    update('composition.id', saved.id);
-    showToast('Saved!');
-  };
-
+  document.getElementById('btn-new').onclick = newComposition;
+  document.getElementById('btn-save').onclick = saveCurrentComposition;
   document.getElementById('btn-open').onclick = () => openSongBrowser();
 
-  document.getElementById('btn-export').onclick = () => {
-    const name = document.getElementById('composition-name').textContent.trim() || 'Untitled';
-    update('composition.name', name);
-    const json = compositionToJSON(state.composition);
-    const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${fileSafeName(name)}.json`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-    showToast(`Exported ${a.download}`);
-  };
-
+  document.getElementById('btn-export').onclick = exportComposition;
   const importInput = document.getElementById('import-file');
-  document.getElementById('btn-import').onclick = () => importInput.click();
+  document.getElementById('btn-import').onclick = importComposition;
   importInput.onchange = async () => {
     const file = importInput.files?.[0];
     // Reset first, so picking the same file twice still fires a change
@@ -561,6 +627,10 @@ function shortcutActions() {
       section: 'Piano roll editing', label: 'Transpose down an octave',
       defaultBindings: [{ code: 'ArrowDown', shift: true }],
       run: () => transposeNotes(getSelectedIds(), -12) },
+    { id: 'editor-legato', group: 'editor', scope: editing, hint: 'btn-legato',
+      section: 'Piano roll editing', label: 'Extend selection to the next note',
+      defaultBindings: [{ code: 'KeyG' }],
+      run: () => applyLegato(getSelectedIds()) },
 
     // Transport
     { id: 'transport-toggle', group: 'global',
@@ -595,20 +665,64 @@ function shortcutActions() {
       section: 'Transport', label: 'Playhead back a bar',
       defaultBindings: [{ code: 'ArrowLeft', shift: true }],
       run: () => nudgePlayhead(-1, true) },
-    { id: 'to-start', group: 'global',
+    { id: 'pause', group: 'global', hint: 'btn-pause',
+      section: 'Transport', label: 'Pause, holding position',
+      defaultBindings: [{ code: 'KeyP' }],
+      run: () => stop() },
+    { id: 'stop-rewind', group: 'global', hint: 'btn-stop',
+      section: 'Transport', label: 'Stop and rewind',
+      defaultBindings: [{ code: 'Space', shift: true }],
+      run: () => stopAndRewind() },
+    { id: 'to-start', group: 'global', hint: 'btn-to-start',
       section: 'Transport', label: 'Go to the start',
       defaultBindings: [{ code: 'Home' }],
       run: () => seekToStart() },
+    { id: 'to-end', group: 'global', hint: 'btn-to-end',
+      section: 'Transport', label: 'Go to the end',
+      defaultBindings: [{ code: 'End' }],
+      run: () => seekToEnd() },
 
     // Toggles
     { id: 'count-in', group: 'global',
       section: 'Options', label: 'Toggle count-in',
       defaultBindings: [{ code: 'KeyC' }],
       run: () => toggleCountIn() },
-    { id: 'metronome', group: 'global',
+    { id: 'metronome', group: 'global', hint: 'btn-metronome',
       section: 'Options', label: 'Toggle metronome',
       defaultBindings: [{ code: 'KeyM' }],
       run: () => toggleMetronome() },
+    { id: 'mute', group: 'global', hint: 'btn-mute',
+      section: 'Options', label: 'Mute / unmute all audio',
+      defaultBindings: [{ code: 'KeyS' }],
+      run: () => toggleMute() },
+    { id: 'train', group: 'global', hint: 'btn-train-mode',
+      section: 'Options', label: 'Toggle training mode',
+      defaultBindings: [{ code: 'KeyT' }],
+      run: () => toggleTrainMode() },
+    { id: 'loop', group: 'global',
+      section: 'Options', label: 'Toggle loop',
+      defaultBindings: [{ code: 'KeyL', shift: true }],
+      run: () => toggleLoop() },
+    { id: 'tempo-down', group: 'global', hint: 'btn-tempo-down',
+      section: 'Options', label: 'Tempo down 1 BPM',
+      defaultBindings: [{ code: 'BracketLeft' }],
+      run: () => nudgeTempo(-1) },
+    { id: 'tempo-up', group: 'global', hint: 'btn-tempo-up',
+      section: 'Options', label: 'Tempo up 1 BPM',
+      defaultBindings: [{ code: 'BracketRight' }],
+      run: () => nudgeTempo(1) },
+    { id: 'quantize-coarser', group: 'global',
+      section: 'Options', label: 'Coarser quantize / step',
+      defaultBindings: [{ code: 'Minus' }],
+      run: () => nudgeQuantize(-1) },
+    { id: 'quantize-finer', group: 'global',
+      section: 'Options', label: 'Finer quantize / step',
+      defaultBindings: [{ code: 'Equal' }],
+      run: () => nudgeQuantize(1) },
+    { id: 'toggle-view', group: 'global',
+      section: 'Options', label: 'Switch sheet / piano roll',
+      defaultBindings: [{ code: 'KeyV' }],
+      run: () => toggleView() },
 
     // Editing
     { id: 'undo', group: 'global',
@@ -620,7 +734,40 @@ function shortcutActions() {
       defaultBindings: [{ code: 'KeyZ', mod: true, shift: true }, { code: 'KeyY', mod: true }],
       run: () => redo() },
 
-    { id: 'help', group: 'global',
+    { id: 'new', group: 'global', hint: 'btn-new',
+      section: 'File', label: 'New composition',
+      defaultBindings: [{ code: 'KeyN', shift: true }],
+      run: () => newComposition() },
+    { id: 'open', group: 'global', hint: 'btn-open',
+      section: 'File', label: 'Open a composition',
+      defaultBindings: [{ code: 'KeyO', mod: true }],
+      run: () => openSongBrowser() },
+    { id: 'save', group: 'global', hint: 'btn-save',
+      section: 'File', label: 'Save',
+      defaultBindings: [{ code: 'KeyS', mod: true }],
+      run: () => saveCurrentComposition() },
+    { id: 'export', group: 'global', hint: 'btn-export',
+      section: 'File', label: 'Export as JSON',
+      defaultBindings: [{ code: 'KeyE', mod: true }],
+      run: () => exportComposition() },
+    { id: 'import', group: 'global', hint: 'btn-import',
+      section: 'File', label: 'Import from JSON',
+      defaultBindings: [{ code: 'KeyI', mod: true }],
+      run: () => importComposition() },
+    { id: 'clear-all', group: 'global', hint: 'btn-clear',
+      section: 'File', label: 'Clear all notes',
+      defaultBindings: [{ code: 'Backspace', mod: true }],
+      run: () => clearAll() },
+    { id: 'midi-info', group: 'global',
+      section: 'File', label: 'MIDI settings',
+      defaultBindings: [{ code: 'KeyM', mod: true }],
+      run: () => openMidiInfo() },
+
+    { id: 'close-modal', group: 'global', scope: anyModalOpen,
+      section: 'Help', label: 'Close the open dialog',
+      defaultBindings: [{ code: 'Escape' }],
+      run: () => closeTopModal() },
+    { id: 'help', group: 'global', hint: 'btn-shortcuts',
       section: 'Help', label: 'Keyboard shortcuts',
       defaultBindings: [{ code: 'Slash', shift: true }],
       run: () => openShortcutsPanel() },
@@ -629,6 +776,22 @@ function shortcutActions() {
 
 function bindKeyboardShortcuts() {
   initShortcuts(shortcutActions());
+  refreshShortcutHints();
+}
+
+// Buttons show their current key. Generated rather than written into the
+// markup, so a rebound shortcut never leaves a stale tooltip behind.
+function refreshShortcutHints() {
+  for (const action of getActions()) {
+    if (!action.hint) continue;
+    const el = document.getElementById(action.hint);
+    if (!el) continue;
+    if (el.dataset.baseTitle === undefined) {
+      el.dataset.baseTitle = (el.title || action.label).replace(/\s*\([^)]*\)\s*$/, '');
+    }
+    const binding = bindingsFor(action)[0];
+    el.title = binding ? `${el.dataset.baseTitle} (${formatBinding(binding)})` : el.dataset.baseTitle;
+  }
 }
 
 function openShortcutsPanel() {
@@ -642,6 +805,7 @@ function bindShortcutsPanel() {
   document.getElementById('btn-shortcuts-reset').onclick = () => {
     resetAllBindings();
     renderShortcutsList();
+    refreshShortcutHints();
   };
 }
 
@@ -652,7 +816,7 @@ function closeShortcutsPanel() {
 
 // The registry is ordered for dispatch — scoped actions first, so Backspace
 // resolves to the step recorder before the editor. Reading order is different.
-const SECTION_ORDER = ['Transport', 'Options', 'Edit', 'Step recording', 'Piano roll editing', 'Help'];
+const SECTION_ORDER = ['Transport', 'Options', 'Edit', 'File', 'Step recording', 'Piano roll editing', 'Help'];
 
 function renderShortcutsList(warning = '') {
   const list = document.getElementById('shortcuts-list');
@@ -700,7 +864,7 @@ function renderShortcutsList(warning = '') {
     reset.className = 'shortcut-reset';
     reset.textContent = '↺';
     reset.title = 'Restore the default';
-    reset.onclick = () => { resetBinding(action.id); renderShortcutsList(); };
+    reset.onclick = () => { resetBinding(action.id); renderShortcutsList(); refreshShortcutHints(); };
     row.appendChild(reset);
 
     list.appendChild(row);
@@ -734,6 +898,7 @@ function beginRebind(action, keyEl) {
     }
     setBinding(action.id, binding);
     renderShortcutsList();
+    refreshShortcutHints();
   });
 }
 
@@ -843,7 +1008,7 @@ function updateMidiStatus(connected) {
   const text = document.getElementById('midi-text');
   dot.className = 'status-dot ' + (connected ? 'connected' : 'disconnected');
   text.textContent = connected ? `MIDI: ${state.midi.inputs.find(i => i.state === 'connected')?.name || 'Connected'}` : 'No MIDI';
-  dot.onclick = () => document.getElementById('midi-info-modal').classList.remove('hidden');
+  dot.onclick = openMidiInfo;
 }
 
 function updateMidiInputsList(inputs) {
