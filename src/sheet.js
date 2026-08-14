@@ -43,14 +43,19 @@ const TOP_LINE_DIA = { treble: 5 * 7 + 3, bass: 3 * 7 + 5 };
 let _staveGeom = [];
 export function getStaveGeometry() { return _staveGeom; }
 
-function recordStaveGeom(stave, clef) {
+function recordStaveGeom(stave, clef, measure) {
   const topLineY = stave.getYForLine(0);
   const spacing = stave.getYForLine(1) - topLineY;
   if (!spacing) return;
   _staveGeom.push({
     clef,
+    measure,
     x: stave.getX(),
     w: stave.getWidth(),
+    // Where notes actually begin, past any clef and key signature — a click
+    // maps to time across this span, not the whole stave
+    noteStartX: stave.getNoteStartX(),
+    noteEndX: stave.getX() + stave.getWidth() - 10,
     topLineY,
     spacing,
     topLineDia: TOP_LINE_DIA[clef],
@@ -135,8 +140,8 @@ export function renderSheet(notes, composition, currentTimeMs = null) {
     trebleStave.setContext(svgCtx).draw();
     bassStave.setContext(svgCtx).draw();
 
-    recordStaveGeom(trebleStave, 'treble');
-    recordStaveGeom(bassStave, 'bass');
+    recordStaveGeom(trebleStave, 'treble', m);
+    recordStaveGeom(bassStave, 'bass', m);
 
     // Brace + connectors
     try {

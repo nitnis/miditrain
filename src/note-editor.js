@@ -1,9 +1,9 @@
 // Interactive note editor for the piano roll canvas
 import { state, emit } from './state.js';
-import { deleteNotes, transposeNotes, applyLegato } from './transport.js';
+import { deleteNotes, transposeNotes, applyLegato, seekTo } from './transport.js';
 
 // Layout info shared with renderPianoRoll (set each render)
-let _layout = { msPerPx: 1, minPitch: 21, noteH: 10, h: 0, w: 0, leftMargin: 0 };
+let _layout = { msPerPx: 1, minPitch: 21, noteH: 10, h: 0, w: 0, leftMargin: 0, gridX: 0 };
 let _noteRects = []; // [{ id, x, y, w, h }] — set each render
 
 export function setEditorLayout(layout, noteRects) {
@@ -53,6 +53,10 @@ function onMouseDown(e) {
 
   if (!hit) {
     clearSelection();
+    // Empty grid: move the playhead to where the click landed
+    if (state.transport.mode !== 'step-recording') {
+      seekTo(Math.max(0, (pos.x - _layout.gridX) * _layout.msPerPx));
+    }
     return;
   }
 

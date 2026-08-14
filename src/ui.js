@@ -1,13 +1,13 @@
 // UI updates: DOM manipulation, modals, controls
 import { state, update, emit, on } from './state.js';
-import { record, play, stop, stopAndRewind, startCountIn, seekToStart, seekToEnd, clearAllNotes, transposeNotes, applyLegato, deleteNotes } from './transport.js';
+import { record, play, stop, stopAndRewind, startCountIn, seekTo, seekToStart, seekToEnd, clearAllNotes, transposeNotes, applyLegato, deleteNotes } from './transport.js';
 import { renderSheet, initSheet, getChordOverlayData, getStaveGeometry } from './sheet.js';
 import { initPianoRoll, renderPianoRoll } from './pianoroll.js';
 import { saveComposition, listCompositions, deleteComposition, compositionToJSON, compositionFromJSON } from './storage.js';
 import { startAccuracy, stopAccuracy } from './accuracy.js';
-import { stopMetronome } from './metronome.js';
+import { startMetronome, stopMetronome } from './metronome.js';
 import { resumeAudioContext, setMuted } from './audio.js';
-import { startStepRecord, stopStepRecord, stepInsertRest, stepGoBack } from './step-recorder.js';
+import { startStepRecord, stopStepRecord, stepInsertRest, stepGoBack, getStepMs } from './step-recorder.js';
 import { initNoteEditor, getSelectedIds } from './note-editor.js';
 import { staffPositionName, midiToNoteWithOctave } from './chords.js';
 import { initHistory, resetHistory, undo, redo } from './history.js';
@@ -82,17 +82,8 @@ function bindTransport() {
   // Pause holds position; Stop also rewinds to the beginning
   document.getElementById('btn-pause').onclick = () => { modeGuard(); stop(); };
   document.getElementById('btn-stop').onclick = () => { modeGuard(); stopAndRewind(); };
-  document.getElementById('btn-record').onclick = () => {
-    modeGuard();
-    if (state.transport.mode === 'recording' || state.transport.mode === 'count-in') { stop(); return; }
-    if (state.transport.mode === 'step-recording') stopStepRecord();
-    withCountIn(record);
-  };
-  document.getElementById('btn-step-record').onclick = () => {
-    modeGuard();
-    if (state.transport.mode === 'step-recording') stopStepRecord();
-    else { stop(); startStepRecord(); }
-  };
+  document.getElementById('btn-record').onclick = toggleRecord;
+  document.getElementById('btn-step-record').onclick = toggleStepRecord;
   document.getElementById('btn-step-rest').onclick = () => stepInsertRest();
   document.getElementById('btn-step-back').onclick = () => stepGoBack();
   document.getElementById('btn-play').onclick = () => {
@@ -160,6 +151,54 @@ function bindTransport() {
       scheduleSheetRender();
     }
   });
+}
+
+// Every transport action lives here and is called by both the button and the
+// shortcut. Duplicating them is what let R start recording without its
+// count-in while the button honoured it.
+function toggleRecord() {
+  resumeAudioContext();
+  if (state.transport.mode === 'recording' || state.transport.mode === 'count-in') { stop(); return; }
+  if (state.transport.mode === 'step-recording') stopStepRecord();
+  withCountIn(record);
+}
+
+function toggleStepRecord() {
+  resumeAudioContext();
+  if (state.transport.mode === 'step-recording') stopStepRecord();
+  else { stop(); startStepRecord(); }
+}
+
+function toggleCountIn() {
+  const enabled = !state.ui.countInEnabled;
+  update('ui.countInEnabled', enabled);
+  document.getElementById('btn-count-in').classList.toggle('active', enabled);
+  showToast(enabled ? 'Count-in on' : 'Count-in off', 1200);
+}
+
+function toggleMetronome() {
+  const enabled = !state.ui.metronomeEnabled;
+  update('ui.metronomeEnabled', enabled);
+  document.getElementById('btn-metronome').classList.toggle('active', enabled);
+  if (enabled) {
+    // Turning it on mid-take should be audible straight away
+    if (state.transport.mode === 'playing' || state.transport.mode === 'recording') startMetronome(0);
+  } else {
+    stopMetronome();
+  }
+}
+
+// Move the playhead without leaving the current mode. Step recording keeps its
+// cursor on the grid, so it moves a step at a time.
+function nudgePlayhead(direction, wide) {
+  const beatMs = (60 / state.composition.tempo) * 1000;
+  const stepping = state.transport.mode === 'step-recording';
+  const bar = state.composition.timeSignature.numerator * (4 / state.composition.timeSignature.denominator);
+  const delta = stepping ? getStepMs() : beatMs * (wide ? bar : 1);
+  const target = Math.max(0, state.transport.currentTime + direction * delta);
+
+  if (stepping) update('transport.currentTime', target);
+  else seekTo(target);
 }
 
 function setStepControlsVisible(visible) {
@@ -242,18 +281,9 @@ function bindToolbar() {
 
   const countInBtn = document.getElementById('btn-count-in');
   countInBtn.classList.toggle('active', state.ui.countInEnabled);
-  countInBtn.onclick = () => {
-    const enabled = !state.ui.countInEnabled;
-    update('ui.countInEnabled', enabled);
-    countInBtn.classList.toggle('active', enabled);
-  };
+  countInBtn.onclick = toggleCountIn;
 
-  document.getElementById('btn-metronome').onclick = () => {
-    const enabled = !state.ui.metronomeEnabled;
-    update('ui.metronomeEnabled', enabled);
-    document.getElementById('btn-metronome').classList.toggle('active', enabled);
-    if (!enabled) stopMetronome();
-  };
+  document.getElementById('btn-metronome').onclick = toggleMetronome;
 
   const speedSlider = document.getElementById('speed-slider');
   const speedValue = document.getElementById('speed-value');
@@ -479,7 +509,9 @@ function bindModalControls() {
 
 function bindKeyboardShortcuts() {
   document.addEventListener('keydown', (e) => {
-    if (e.target.tagName === 'INPUT' || e.target.contentEditable === 'true') return;
+    const tag = e.target.tagName;
+    // A focused control owns its own keys
+    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || e.target.contentEditable === 'true') return;
 
     // Undo/redo before the plain-key shortcuts, so Ctrl+Z is never read as Z
     if (e.ctrlKey || e.metaKey) {
@@ -526,8 +558,25 @@ function bindKeyboardShortcuts() {
         }
         break;
       case 'KeyR':
-        if (state.transport.mode === 'recording') stop();
-        else record();
+        e.preventDefault();
+        if (e.shiftKey) toggleStepRecord();
+        else toggleRecord();
+        break;
+      case 'KeyC':
+        e.preventDefault();
+        toggleCountIn();
+        break;
+      case 'KeyM':
+        e.preventDefault();
+        toggleMetronome();
+        break;
+      case 'ArrowRight':
+        e.preventDefault();
+        nudgePlayhead(1, e.shiftKey);
+        break;
+      case 'ArrowLeft':
+        e.preventDefault();
+        nudgePlayhead(-1, e.shiftKey);
         break;
       case 'Home':
         seekToStart();
@@ -783,6 +832,17 @@ function buildVoicingCaption(pitches) {
     .join(' · ');
 }
 
+// Which stave the pointer is over, in SVG user units. `ledgerSteps` widens the
+// band past the stave itself so ledger positions (and, for seeking, the gap
+// between the staves) still count.
+function staveUnderPointer(loc, ledgerSteps = 6) {
+  return getStaveGeometry().find((g) => {
+    if (loc.x < g.x || loc.x > g.x + g.w) return false;
+    const pad = (ledgerSteps / 2) * g.spacing;
+    return loc.y >= g.topLineY - pad && loc.y <= g.topLineY + 4 * g.spacing + pad;
+  });
+}
+
 // Hovering a stave names the line or space under the pointer
 function bindStaffHint() {
   const containerEl = document.getElementById('sheet-container');
@@ -796,6 +856,39 @@ function bindStaffHint() {
   }
 
   containerEl.addEventListener('mouseleave', hide);
+
+  // Clicking the score moves the playhead to that point in the bar
+  containerEl.addEventListener('click', (e) => {
+    if (e.target.closest('.chord-label-el, #chord-tooltip')) return;
+    const svg = containerEl.querySelector('#vexflow-output svg');
+    if (!svg || !svg.getScreenCTM) return;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return;
+
+    const pt = svg.createSVGPoint();
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    const loc = pt.matrixTransform(ctm.inverse());
+
+    // Anywhere in the system counts, including the gap between the staves
+    const stave = staveUnderPointer(loc, 14);
+    if (!stave) return;
+
+    const bar = state.composition.timeSignature.numerator *
+                (4 / state.composition.timeSignature.denominator);
+    const span = Math.max(1, stave.noteEndX - stave.noteStartX);
+    const frac = Math.min(1, Math.max(0, (loc.x - stave.noteStartX) / span));
+    const beat = stave.measure * bar + frac * bar;
+    const ms = beat * (60 / state.composition.tempo) * 1000;
+
+    if (state.transport.mode === 'step-recording') {
+      // Keep the step cursor on the grid it writes to
+      const step = getStepMs();
+      update('transport.currentTime', Math.max(0, Math.round(ms / step) * step));
+    } else {
+      seekTo(ms);
+    }
+  });
 
   containerEl.addEventListener('mousemove', (e) => {
     // Chord labels have their own tooltip; don't compete with it
@@ -814,12 +907,7 @@ function bindStaffHint() {
     const loc = pt.matrixTransform(ctm.inverse());
 
     // Reach a few positions past each stave so ledger lines are still named
-    const LEDGER_STEPS = 6;
-    const stave = geom.find((g) => {
-      if (loc.x < g.x || loc.x > g.x + g.w) return false;
-      const pad = (LEDGER_STEPS / 2) * g.spacing;
-      return loc.y >= g.topLineY - pad && loc.y <= g.topLineY + 4 * g.spacing + pad;
-    });
+    const stave = staveUnderPointer(loc);
     if (!stave) return hide();
 
     // Each half-spacing is one diatonic step, counted downward from the top line
