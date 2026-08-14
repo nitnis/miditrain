@@ -1,6 +1,6 @@
 // VexFlow 4.x sheet music renderer (grand staff)
 import { state } from './state.js';
-import { quantizeNotes, groupByMeasure, groupIntoChords, fillWithRests, findBestDuration } from './quantizer.js';
+import { quantizeNotes, groupByMeasure, groupIntoChords, fillWithRests, findBestDuration, splitAcrossBarlines } from './quantizer.js';
 import { detectChordRuns, keyUsesFlats } from './chords.js';
 
 function VF() { return window.Vex?.Flow; }
@@ -77,7 +77,13 @@ export function renderSheet(notes, composition, currentTimeMs = null) {
   const beatsPerMeasure = timeSignature.numerator * (4 / timeSignature.denominator);
 
   const quantized = quantizeNotes(notes, tempo, timeSignature, state.ui.quantize);
-  const { measures } = groupByMeasure(quantized, timeSignature);
+  // A note is written as one piece per bar it spans, tied together
+  const segments = splitAcrossBarlines(quantized, beatsPerMeasure);
+  const { measures } = groupByMeasure(segments, timeSignature);
+
+  // Where each written piece ended up, so the ties can be drawn once every
+  // measure has been laid out and has real positions
+  const segmentPlacement = new Map();
 
   // Keep drawing measures far enough to hold the step cursor, so stepping past
   // the last recorded note still has somewhere to show
@@ -147,8 +153,8 @@ export function renderSheet(notes, composition, currentTimeMs = null) {
     const trebleNotes  = measureNotes.filter(n => n.pitch >= 60);
     const bassNotes    = measureNotes.filter(n => n.pitch <  60);
 
-    const trebleTicks = buildTickables(trebleNotes, beatsPerMeasure, 'treble', useFlats);
-    const bassTicks   = buildTickables(bassNotes,   beatsPerMeasure, 'bass',   useFlats);
+    const trebleTicks = buildTickables(trebleNotes, beatsPerMeasure, 'treble', useFlats, segmentPlacement, line);
+    const bassTicks   = buildTickables(bassNotes,   beatsPerMeasure, 'bass',   useFlats, segmentPlacement, line);
 
     const beatPositions = drawSystem(
       [{ tickables: trebleTicks, stave: trebleStave, clef: 'treble' },
@@ -168,9 +174,57 @@ export function renderSheet(notes, composition, currentTimeMs = null) {
       drawPlayhead(currentTimeMs, m, trebleStave, bassStave, tempo, beatsPerMeasure);
     }
   }
+
+  drawTies(segments, segmentPlacement);
 }
 
-function buildTickables(staveNotes, beatsPerMeasure, clef, useFlats) {
+// Ties are drawn last: they need both ends to already have laid-out positions.
+function drawTies(segments, placement) {
+  const { StaveTie } = VF();
+  if (!StaveTie) return;
+
+  // One tie per pair of notes, carrying every notehead that continues
+  const pairs = new Map();
+
+  for (const seg of segments) {
+    if (!seg.tiedToNext) continue;
+    const from = placement.get(`${seg.id}:${seg.segmentIndex}`);
+    const to   = placement.get(`${seg.id}:${seg.segmentIndex + 1}`);
+    if (!from || !to) continue;
+
+    const key = `${from.line}:${to.line}:${from.note.getAttribute('id')}:${to.note.getAttribute('id')}`;
+    if (!pairs.has(key)) pairs.set(key, { from, to, firstIndices: [], lastIndices: [] });
+    const pair = pairs.get(key);
+    pair.firstIndices.push(from.keyIndex);
+    pair.lastIndices.push(to.keyIndex);
+  }
+
+  for (const { from, to, firstIndices, lastIndices } of pairs.values()) {
+    try {
+      if (from.line === to.line) {
+        new StaveTie({
+          first_note: from.note, last_note: to.note,
+          first_indices: firstIndices, last_indices: lastIndices,
+        }).setContext(svgCtx).draw();
+      } else {
+        // Across a system break the tie is drawn as two halves: out to the end
+        // of one line, and in from the start of the next
+        new StaveTie({
+          first_note: from.note, last_note: null,
+          first_indices: firstIndices, last_indices: firstIndices,
+        }).setContext(svgCtx).draw();
+        new StaveTie({
+          first_note: null, last_note: to.note,
+          first_indices: lastIndices, last_indices: lastIndices,
+        }).setContext(svgCtx).draw();
+      }
+    } catch (e) {
+      console.warn('Tie draw:', e.message);
+    }
+  }
+}
+
+function buildTickables(staveNotes, beatsPerMeasure, clef, useFlats, segmentPlacement, line) {
   const { StaveNote } = VF();
   const chordGroups = groupIntoChords(staveNotes);
   const filled = fillWithRests(chordGroups, beatsPerMeasure);
@@ -190,7 +244,9 @@ function buildTickables(staveNotes, beatsPerMeasure, clef, useFlats) {
         }
       }
     } else {
-      const group = item.group;
+      // Sorted by pitch so a key's index is stable — ties address noteheads
+      // by index into this array
+      const group = [...item.group].sort((a, b) => a.pitch - b.pitch);
       const keys = group.map(n => midiToVexKey(n.pitch, useFlats));
       const { vexDuration } = findBestDuration(group[0].durationBeats);
       try {
@@ -199,6 +255,12 @@ function buildTickables(staveNotes, beatsPerMeasure, clef, useFlats) {
         // modifier and has to be attached to be drawn
         if (vexDuration.includes('d')) VF().Dot.buildAndAttach([note], { all: true });
         tickables.push(note);
+
+        if (segmentPlacement) {
+          group.forEach((seg, keyIndex) => {
+            segmentPlacement.set(`${seg.id}:${seg.segmentIndex}`, { note, keyIndex, line });
+          });
+        }
       } catch (e) {
         console.warn('StaveNote error:', keys, vexDuration, e.message);
       }
@@ -269,11 +331,14 @@ function drawChordLabels(measureNotes, trebleStave, beatsPerMeasure, useFlats, b
   const svgRect = svgEl ? svgEl.getBoundingClientRect() : null;
   const containerRect = container.getBoundingClientRect();
 
-  // One event per attack, so a run of them can be tested as a single chord
-  const events = chordGroups.map(g => ({
-    beat: g[0].beatInMeasure,
-    pitches: g.map(n => n.pitch),
-  }));
+  // One event per attack, so a run of them can be tested as a single chord.
+  // The tail of a tie is the same note still sounding, not a new attack.
+  const events = chordGroups
+    .map(g => ({
+      beat: g[0].beatInMeasure,
+      pitches: g.filter(n => !n.tiedFromPrev).map(n => n.pitch),
+    }))
+    .filter(e => e.pitches.length);
 
   const svgY = trebleStave.getY() - 4;
   const offsetX = svgRect ? (svgRect.left - containerRect.left) : 0;

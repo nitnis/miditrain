@@ -59,8 +59,10 @@ export function quantizeNotes(rawNotes, tempo, timeSignature, gridDivision = 8) 
   return rawNotes.map(note => {
     const startBeats = snapToGrid(msToBeats(note.startTime, tempo), gridSize);
     const rawDurBeats = msToBeats(note.duration, tempo);
-    const durBeats = Math.max(gridSize, snapToGrid(rawDurBeats, gridSize));
-    const { durationBeats, vexDuration } = findBestDuration(durBeats);
+    // Keep the true snapped length. Rounding to a single notatable value here
+    // would silently shorten anything longer than a dotted whole; splitting
+    // into tied pieces is the notation layer's job.
+    const durationBeats = Math.max(gridSize, snapToGrid(rawDurBeats, gridSize));
 
     const measure = Math.floor(startBeats / beatsPerMeasure);
     const beatInMeasure = startBeats - measure * beatsPerMeasure;
@@ -69,11 +71,68 @@ export function quantizeNotes(rawNotes, tempo, timeSignature, gridDivision = 8) 
       ...note,
       startBeats,
       durationBeats,
-      vexDuration,
       measure,
       beatInMeasure,
     };
   }).sort((a, b) => a.startBeats - b.startBeats);
+}
+
+// Greedy split of a duration into values that can actually be notated.
+// 2.5 beats has no single symbol, so it becomes a half plus an eighth.
+export function splitIntoNoteValues(beats) {
+  const parts = [];
+  let rem = beats;
+  while (rem > 0.02) {
+    const fit = DURATIONS.find(([b]) => b <= rem + 0.01);
+    if (!fit) break;
+    parts.push(fit[0]);
+    rem -= fit[0];
+  }
+  return parts.length ? parts : [DURATIONS[DURATIONS.length - 1][0]];
+}
+
+// Expand each note into the pieces it is actually written as: one per measure
+// it spans, then one per notatable value within that measure. Consecutive
+// pieces of the same note are tied, which is how a note longer than the room
+// left in its bar gets notated at all.
+export function splitAcrossBarlines(quantizedNotes, beatsPerMeasure) {
+  const segments = [];
+
+  for (const note of quantizedNotes) {
+    const pieces = [];
+    let cursor = note.startBeats;
+    let remaining = note.durationBeats;
+
+    while (remaining > 0.02) {
+      const measure = Math.floor(cursor / beatsPerMeasure + 1e-6);
+      const beatInMeasure = cursor - measure * beatsPerMeasure;
+      const room = beatsPerMeasure - beatInMeasure;
+      const inThisBar = Math.min(remaining, room);
+
+      for (const value of splitIntoNoteValues(inThisBar)) {
+        pieces.push({
+          measure,
+          beatInMeasure: cursor - measure * beatsPerMeasure,
+          startBeats: cursor,
+          durationBeats: value,
+        });
+        cursor += value;
+      }
+      remaining -= inThisBar;
+    }
+
+    pieces.forEach((piece, i) => {
+      segments.push({
+        ...note,
+        ...piece,
+        segmentIndex: i,
+        tiedFromPrev: i > 0,
+        tiedToNext: i < pieces.length - 1,
+      });
+    });
+  }
+
+  return segments.sort((a, b) => a.startBeats - b.startBeats);
 }
 
 // Group quantized notes into measures Map<measureIdx, note[]>
