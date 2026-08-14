@@ -496,10 +496,20 @@ function bindKeyboardShortcuts() {
     switch (e.code) {
       case 'Space':
         e.preventDefault();
-        // In step mode Space is the rest key: write a silent step and advance
-        if (state.transport.mode === 'step-recording') stepInsertRest();
-        else if (state.transport.mode === 'playing') stop();
+        // Space belongs to the transport in every mode: it ends whatever is
+        // running — playback, a take, a count-in, a step session — and starts
+        // playback when nothing is
+        if (state.transport.mode !== 'stopped') stop();
+        else if (state.ui.trainMode) startTrainingSession();
         else play();
+        break;
+      case 'Period':
+      case 'NumpadDecimal':
+        // Step forward, writing a rest
+        if (state.transport.mode === 'step-recording') {
+          e.preventDefault();
+          stepInsertRest();
+        }
         break;
       case 'KeyL':
         // Legato is a step-recording setting, so the key only acts there
