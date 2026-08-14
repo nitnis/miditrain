@@ -758,6 +758,11 @@ select:focus { outline: 1px solid var(--accent); }
   transform: translateY(-100%);
 }
 .chord-label-el:hover { background: rgba(91,192,235,0.2); }
+/* Spelled out over several notes rather than struck together */
+.chord-label-el.arp {
+  font-style: italic;
+  border-style: dashed;
+}
 
 #chord-tooltip {
   position: absolute;
