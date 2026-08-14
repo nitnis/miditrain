@@ -91,14 +91,17 @@ export function formatBinding(binding) {
   return parts.join(isMac ? '' : '+');
 }
 
-// A key is free if nothing that could be active at the same time already uses
-// it. Same group, or either side global, means they overlap.
+// A key is free unless something that can be active at the same time already
+// holds it. Two actions in the same group collide, and two global ones collide.
+// A context action sharing a key with a global one is not a collision: the
+// context is matched first and deliberately shadows it — Space retries while
+// the results are up, and drives the transport everywhere else.
 export function findConflict(actionId, binding) {
   const target = actions.find(a => a.id === actionId);
   if (!target) return null;
   return actions.find(a =>
     a.id !== actionId &&
-    (a.group === target.group || a.group === 'global' || target.group === 'global') &&
+    a.group === target.group &&
     bindingsFor(a).some(b => sameBinding(b, binding))
   ) || null;
 }

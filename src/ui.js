@@ -1,10 +1,10 @@
 // UI updates: DOM manipulation, modals, controls
 import { state, update, emit, on } from './state.js';
-import { record, play, stop, stopAndRewind, startCountIn, seekTo, seekToStart, seekToEnd, clearAllNotes, transposeNotes, applyLegato, deleteNotes } from './transport.js';
+import { record, play, stop, stopAndRewind, startCountIn, playRange, seekTo, seekToStart, seekToEnd, clearAllNotes, transposeNotes, applyLegato, deleteNotes } from './transport.js';
 import { renderSheet, initSheet, getChordOverlayData, getStaveGeometry } from './sheet.js';
-import { initPianoRoll, renderPianoRoll } from './pianoroll.js';
+import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects } from './pianoroll.js';
 import { saveComposition, listCompositions, deleteComposition, compositionToJSON, compositionFromJSON } from './storage.js';
-import { startAccuracy, stopAccuracy } from './accuracy.js';
+import { startAccuracy, stopAccuracy, getWorstSection } from './accuracy.js';
 import { startMetronome, stopMetronome } from './metronome.js';
 import { resumeAudioContext, setMuted } from './audio.js';
 import { startStepRecord, stopStepRecord, stepInsertRest, stepGoBack, getStepMs } from './step-recorder.js';
@@ -66,7 +66,13 @@ export function initUI() {
   on('midi:unavailable', ({ reason }) => showMidiWarning(reason));
   on('midi:statechange', () => {});
 
-  // Accuracy
+  // Accuracy: key effects land where the hand is, the gauge tracks the run
+  on('accuracy:note', ({ pitch, grade }) => {
+    if (grade === 'perfect') spawnKeyEffect(pitch, 'perfect');
+    else if (grade === 'good') spawnKeyEffect(pitch, 'good');
+  });
+  on('accuracy:wrong', ({ pitch }) => spawnKeyEffect(pitch, 'wrong'));
+  on('accuracy:progress', (p) => updateGauge(p));
   on('accuracy:complete', (results) => showAccuracyResults(results));
 
   updateMidiStatus(false);
@@ -131,6 +137,8 @@ function bindTransport() {
     updatePositionDisplay(state.transport.currentTime);
     if (state.ui.trainMode && state.accuracy.active) {
       stopAccuracy();
+    } else if (!state.accuracy.active) {
+      showGauge(false);
     }
   });
 
@@ -362,15 +370,55 @@ function withCountIn(start) {
   else start();
 }
 
-function startTrainingSession() {
+// The stretch the last session covered, so Try Again repeats the same thing
+let lastTrainingRange = null;
+
+function startTrainingSession(range = null) {
   if (!state.composition.notes.length) {
     showToast('Record something first to train with');
     return;
   }
+  document.getElementById('accuracy-modal').classList.add('hidden');
+  lastTrainingRange = range;
+  clearKeyEffects();
+  showGauge(true);
+  update('transport.currentTime', range ? range.startMs : 0);
+
   withCountIn(() => {
-    startAccuracy(state.composition);
-    play();
+    startAccuracy(state.composition, range);
+    if (range) playRange(range.startMs, range.endMs + (range.tailMs || 0));
+    else play();
   });
+}
+
+function retryTraining() {
+  startTrainingSession(lastTrainingRange);
+}
+
+// ── Live gauge ───────────────────────────────────────────────────────────────
+
+function showGauge(visible) {
+  document.getElementById('accuracy-gauge').classList.toggle('hidden', !visible);
+  if (visible) updateGauge({ played: 0, total: 0, wrong: 0, score: 100 });
+}
+
+function updateGauge({ played, total, wrong, score }) {
+  const fill = document.getElementById('gauge-fill');
+  const scoreEl = document.getElementById('gauge-score');
+  const meta = document.getElementById('gauge-meta');
+
+  // Nothing played yet reads as empty and neutral — a red bar before the first
+  // note would be judging a run that has not started
+  const shown = played ? score : 0;
+  fill.style.height = `${shown}%`;
+  const colour = !played ? 'var(--muted)'
+    : shown >= 85 ? 'var(--green)'
+    : shown >= 60 ? 'var(--yellow)'
+    : 'var(--accent2)';
+  fill.style.background = colour;
+  scoreEl.textContent = played ? `${score}%` : '—';
+  scoreEl.style.color = colour;
+  meta.textContent = wrong ? `${played}/${total} · ${wrong}✗` : `${played}/${total}`;
 }
 
 function bindToolbar() {
@@ -561,12 +609,9 @@ function bindModalControls() {
   };
   document.getElementById('btn-close-accuracy').onclick = () => {
     document.getElementById('accuracy-modal').classList.add('hidden');
+    lastTrainingRange = null;
   };
-  document.getElementById('btn-train-again').onclick = () => {
-    document.getElementById('accuracy-modal').classList.add('hidden');
-    seekToStart();
-    startTrainingSession();
-  };
+  document.getElementById('btn-train-again').onclick = retryTraining;
   document.getElementById('btn-close-midi-info').onclick = () => {
     document.getElementById('midi-info-modal').classList.add('hidden');
   };
@@ -591,7 +636,24 @@ function shortcutActions() {
     state.transport.mode !== 'step-recording' &&
     state.ui.editorSelectedNotes.size > 0;
 
+  const resultsUp = () => !document.getElementById('accuracy-modal').classList.contains('hidden');
+
   return [
+    // While the results are up Space repeats the run rather than driving the
+    // transport — a context binding, matched before the global one
+    { id: 'retry-training', group: 'results', scope: resultsUp,
+      section: 'Training', label: 'Try the same passage again',
+      defaultBindings: [{ code: 'Space' }],
+      run: () => retryTraining() },
+    { id: 'retry-section', group: 'results', scope: resultsUp,
+      section: 'Training', label: 'Practise the roughest bars',
+      defaultBindings: [{ code: 'KeyW' }],
+      run: () => {
+        const worst = getWorstSection(state.composition);
+        if (worst) startTrainingSession(worst);
+        else showToast('Nothing stood out to practise', 1500);
+      } },
+
     // Step recording first: while stepping, Backspace belongs to the recorder
     { id: 'step-forward', group: 'step', scope: stepping,
       section: 'Step recording', label: 'Step forward (write a rest)',
@@ -816,7 +878,7 @@ function closeShortcutsPanel() {
 
 // The registry is ordered for dispatch — scoped actions first, so Backspace
 // resolves to the step recorder before the editor. Reading order is different.
-const SECTION_ORDER = ['Transport', 'Options', 'Edit', 'File', 'Step recording', 'Piano roll editing', 'Help'];
+const SECTION_ORDER = ['Transport', 'Options', 'Edit', 'File', 'Step recording', 'Piano roll editing', 'Training', 'Help'];
 
 function renderShortcutsList(warning = '') {
   const list = document.getElementById('shortcuts-list');
@@ -1303,10 +1365,13 @@ function updateChordOverlay() {
 
 function showAccuracyResults(results) {
   const modal = document.getElementById('accuracy-modal');
-  const { score, correct, missed, extra, avgLatencyMs } = results;
+  const { score, perfect, good, almost, missed, extra, avgLatencyMs } = results;
 
+  showGauge(false);
   document.getElementById('score-pct').textContent = score;
-  document.getElementById('stat-correct').textContent = correct;
+  document.getElementById('stat-perfect').textContent = perfect;
+  document.getElementById('stat-almost').textContent = almost;
+  document.getElementById('stat-correct').textContent = good;
   document.getElementById('stat-missed').textContent = missed;
   document.getElementById('stat-extra').textContent = extra;
   document.getElementById('stat-timing').textContent = `±${avgLatencyMs}ms`;
@@ -1318,6 +1383,19 @@ function showAccuracyResults(results) {
     const progress = score / 100;
     arc.style.strokeDasharray = `${circumference * progress} ${circumference}`;
     arc.style.stroke = score >= 80 ? '#2ecc71' : score >= 50 ? '#f1c40f' : '#e74c3c';
+  }
+
+  // Offer the roughest couple of bars, when there is one worth repeating
+  const worst = getWorstSection(state.composition);
+  const sectionBtn = document.getElementById('btn-train-section');
+  if (worst) {
+    sectionBtn.hidden = false;
+    sectionBtn.textContent = worst.startBar === worst.endBar
+      ? `Practise bar ${worst.startBar}`
+      : `Practise bars ${worst.startBar}–${worst.endBar}`;
+    sectionBtn.onclick = () => startTrainingSession(worst);
+  } else {
+    sectionBtn.hidden = true;
   }
 
   modal.classList.remove('hidden');

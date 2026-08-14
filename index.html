@@ -288,6 +288,11 @@
   <div id="piano-section">
     <div id="falling-notes-container">
       <canvas id="falling-canvas"></canvas>
+      <div id="accuracy-gauge" class="accuracy-gauge hidden">
+        <div class="gauge-score" id="gauge-score">—</div>
+        <div class="gauge-track"><div class="gauge-fill" id="gauge-fill"></div></div>
+        <div class="gauge-meta" id="gauge-meta">0 / 0</div>
+      </div>
     </div>
     <div id="piano-keyboard-container">
       <div id="piano-keyboard"></div>
@@ -311,8 +316,16 @@
       </div>
       <div class="accuracy-stats">
         <div class="stat-item">
-          <span class="stat-label">Correct</span>
+          <span class="stat-label">Perfect</span>
+          <span class="stat-value perfect" id="stat-perfect">0</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Good</span>
           <span class="stat-value correct" id="stat-correct">0</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Almost</span>
+          <span class="stat-value almost" id="stat-almost">0</span>
         </div>
         <div class="stat-item">
           <span class="stat-label">Missed</span>
@@ -327,7 +340,9 @@
           <span class="stat-value timing" id="stat-timing">±0ms</span>
         </div>
       </div>
+      <p class="retry-hint" id="retry-hint">Press <kbd class="kbd-hint">Space</kbd> to try again</p>
       <div class="modal-actions">
+        <button class="modal-btn" id="btn-train-section" hidden>Practise bars 1–2</button>
         <button class="modal-btn" id="btn-train-again">Try Again</button>
         <button class="modal-btn primary" id="btn-close-accuracy">Done</button>
       </div>

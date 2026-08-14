@@ -8,6 +8,7 @@ let rafId = null;
 let perfStart = 0;   // performance.now() when transport was (re)started
 let posStart = 0;    // composition time (ms) when transport was (re)started
 let activeRecordNotes = new Map(); // pitch -> {startTime, velocity}
+let stopAtMs = null; // set when playing a bounded section
 
 function currentPosition() {
   return posStart + (performance.now() - perfStart) * state.transport.speed;
@@ -48,8 +49,12 @@ function loop() {
 
   // Auto-stop at end in play mode
   if (state.transport.mode === 'playing') {
+    if (stopAtMs !== null && t > stopAtMs) {
+      stop();
+      return;
+    }
     const duration = getCompositionDuration();
-    if (duration > 0 && t > duration + 500) {
+    if (stopAtMs === null && duration > 0 && t > duration + 500) {
       stop();
       return;
     }
@@ -80,6 +85,7 @@ export function record() {
 export function play() {
   if (state.transport.mode === 'playing') return;
   stop();
+  stopAtMs = null;
   update('transport.mode', 'playing');
   perfStart = performance.now();
   posStart = state.transport.currentTime;
@@ -126,9 +132,18 @@ export function stop() {
 
   stopMetronome();
   stopPlaybackAudio();
+  stopAtMs = null;
   if (state.transport.mode === 'stopped') return; // idempotent: no event when already stopped
   update('transport.mode', 'stopped');
   emit('transport:stop');
+}
+
+// Play a bounded stretch and stop at the end of it, for practising a section
+export function playRange(startMs, endMs) {
+  stop();
+  update('transport.currentTime', Math.max(0, startMs));
+  play();
+  stopAtMs = endMs;
 }
 
 // Halt and return to the beginning. This is what the Stop button does.

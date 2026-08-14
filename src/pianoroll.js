@@ -12,12 +12,21 @@ const TOTAL_KEYS = MIDI_MAX - MIDI_MIN + 1;
 const IS_WHITE = [true, false, true, false, true, true, false, true, false, true, false, true];
 // C, C#, D, D#, E, F, F#, G, G#, A, A#, B
 
-// Pitch-class colors for falling notes
+// Pitch-class colors, used by the piano roll grid
 const PC_COLORS = [
   '#e74c3c', '#e67e22', '#f1c40f', '#2ecc71',
   '#1abc9c', '#3498db', '#9b59b6', '#e91e63',
   '#ff5722', '#00bcd4', '#8bc34a', '#ff9800',
 ];
+
+// Falling notes read as two families rather than twelve: which hand shape the
+// note belongs to matters more here than which pitch class it is.
+const WHITE_NOTE = '#3d8bfd';
+const BLACK_NOTE = '#7c3aed';
+// Grades colour the note as it falls
+const GRADE_COLORS = { perfect: '#2ecc71', good: '#2ecc71', almost: '#f1c40f' };
+// Black-key notes are drawn narrower still, so the two rows read apart
+const BLACK_NOTE_WIDTH = 0.72;
 
 let fallingCanvas = null;
 let kbCanvas = null;
@@ -131,12 +140,103 @@ export function drawKeyboard(activeNotes = null) {
       kbCtx.fillRect(key.x, 0, key.w, key.h);
     }
   }
+
+  if (effects.length) drawEffects(performance.now());
+}
+
+// ── Key effects ──────────────────────────────────────────────────────────────
+// Short-lived marks drawn over the keyboard so feedback lands where the hand
+// is, rather than only on the falling note that has already gone past.
+
+const EFFECT_MS = { perfect: 620, wrong: 700, good: 380 };
+let effects = []; // { midi, kind, born }
+
+export function spawnKeyEffect(midi, kind) {
+  effects.push({ midi, kind, born: performance.now() });
+  // Bounded so a held-down wrong note cannot pile up unboundedly
+  if (effects.length > 60) effects.splice(0, effects.length - 60);
+}
+
+export function clearKeyEffects() {
+  effects = [];
+}
+
+function drawEffects(now) {
+  effects = effects.filter(fx => now - fx.born < (EFFECT_MS[fx.kind] || 400));
+
+  for (const fx of effects) {
+    const key = keyMap.get(fx.midi);
+    if (!key) continue;
+    const life = (now - fx.born) / (EFFECT_MS[fx.kind] || 400);
+    const cx = key.x + key.w / 2;
+
+    if (fx.kind === 'perfect') drawFirework(cx, key, life);
+    else if (fx.kind === 'wrong') drawSmoke(cx, key, life);
+    else if (fx.kind === 'good') drawGoodFlash(key, life);
+  }
+}
+
+// A ring of sparks thrown from the key
+const SPARKS = 9;
+function drawFirework(cx, key, life) {
+  const cy = key.h * 0.35;
+  const reach = 6 + life * 26;
+  const fade = 1 - life;
+
+  kbCtx.save();
+  kbCtx.globalAlpha = Math.max(0, fade);
+  kbCtx.fillStyle = '#3ee87a';
+  kbCtx.shadowColor = '#3ee87a';
+  kbCtx.shadowBlur = 8;
+  for (let i = 0; i < SPARKS; i++) {
+    const angle = (i / SPARKS) * Math.PI * 2 - Math.PI / 2;
+    const r = Math.max(1.2, 3 * fade);
+    kbCtx.beginPath();
+    kbCtx.arc(cx + Math.cos(angle) * reach, cy + Math.sin(angle) * reach * 0.8, r, 0, Math.PI * 2);
+    kbCtx.fill();
+  }
+  kbCtx.shadowBlur = 0;
+  kbCtx.globalAlpha = Math.max(0, fade * 0.5);
+  kbCtx.fillStyle = '#eaffea';
+  kbCtx.beginPath();
+  kbCtx.arc(cx, cy, Math.max(1, 6 * fade), 0, Math.PI * 2);
+  kbCtx.fill();
+  kbCtx.restore();
+}
+
+// Grey puffs drifting up off a key that should not have been played
+const PUFFS = 4;
+function drawSmoke(cx, key, life) {
+  kbCtx.save();
+  kbCtx.globalAlpha = Math.max(0, 0.55 * (1 - life));
+  kbCtx.fillStyle = '#9aa0ad';
+  for (let i = 0; i < PUFFS; i++) {
+    const t = life + i * 0.16;
+    if (t > 1) continue;
+    const drift = Math.sin((i * 1.7) + life * 4) * 5;
+    kbCtx.beginPath();
+    kbCtx.arc(cx + drift, key.h * 0.5 - t * 34, 4 + t * 9, 0, Math.PI * 2);
+    kbCtx.fill();
+  }
+  kbCtx.restore();
+}
+
+function drawGoodFlash(key, life) {
+  kbCtx.save();
+  kbCtx.globalAlpha = Math.max(0, 0.5 * (1 - life));
+  kbCtx.fillStyle = '#2ecc71';
+  kbCtx.fillRect(key.x, 0, key.w - (key.isWhite ? 1 : 0), key.h);
+  kbCtx.restore();
 }
 
 function getKeyX(midi) {
   const key = keyMap.get(midi);
   if (!key) return null;
   return key.x + key.w / 2;
+}
+
+function fallingColor(midi) {
+  return IS_WHITE[midi % 12] ? WHITE_NOTE : BLACK_NOTE;
 }
 
 function getNoteColor(midi, alpha = 1) {
@@ -209,24 +309,18 @@ export function drawFallingNotes(notes, composition, currentTimeMs, accuracyResu
 
     if (visibleBottom < 0 || visibleTop > ch) continue;
 
-    // Color based on accuracy in train mode
-    let color;
+    // Graded notes recolour as they are played; a miss keeps its own colour so
+    // the eye is drawn to what did happen rather than what did not
+    let color = fallingColor(note.pitch);
     if (trainMode && accuracyResults) {
       const result = accuracyResults.find(r => r.noteId === note.id);
-      if (result) {
-        color = result.hit ? '#2ecc71' : '#e74c3c';
-      } else if (note.startTime < currentTimeMs) {
-        color = '#e67e22'; // missed (past, not hit)
-      } else {
-        color = getNoteColor(note.pitch, 0.85);
-      }
-    } else {
-      const isActive = note.startTime <= currentTimeMs && note.startTime + note.duration >= currentTimeMs;
-      color = getNoteColor(note.pitch, isActive ? 1 : 0.8);
+      if (result && GRADE_COLORS[result.grade]) color = GRADE_COLORS[result.grade];
     }
 
-    const x = keyInfo.x;
-    const w = Math.max(keyInfo.w - 2, 4);
+    const isBlack = !IS_WHITE[note.pitch % 12];
+    const fullW = Math.max(keyInfo.w - 2, 4);
+    const w = isBlack ? Math.max(4, fullW * BLACK_NOTE_WIDTH) : fullW;
+    const x = keyInfo.x + (fullW - w) / 2;
     const noteH = Math.max(6, visibleBottom - visibleTop);
 
     // Glow effect
@@ -234,13 +328,13 @@ export function drawFallingNotes(notes, composition, currentTimeMs, accuracyResu
     fallingCtx.shadowBlur = 8;
     fallingCtx.fillStyle = color;
     fallingCtx.beginPath();
-    fallingCtx.roundRect(x + 1, visibleTop, w - 2, noteH, 3);
+    fallingCtx.roundRect(x + 1, visibleTop, Math.max(2, w - 2), noteH, 3);
     fallingCtx.fill();
     fallingCtx.shadowBlur = 0;
 
     // Highlight top edge
     fallingCtx.fillStyle = 'rgba(255,255,255,0.3)';
-    fallingCtx.fillRect(x + 2, visibleTop, w - 4, 2);
+    fallingCtx.fillRect(x + 2, visibleTop, Math.max(1, w - 4), 2);
   }
 
   // Draw active notes "glow" at the hit line
@@ -249,7 +343,7 @@ export function drawFallingNotes(notes, composition, currentTimeMs, accuracyResu
     if (!keyInfo) continue;
     const x = keyInfo.x + keyInfo.w / 2;
     const grad2 = fallingCtx.createRadialGradient(x, ch, 0, x, ch, 40);
-    grad2.addColorStop(0, getNoteColor(midi, 0.7));
+    grad2.addColorStop(0, fallingColor(midi));
     grad2.addColorStop(1, 'transparent');
     fallingCtx.fillStyle = grad2;
     fallingCtx.fillRect(keyInfo.x - 5, ch - 50, keyInfo.w + 10, 50);

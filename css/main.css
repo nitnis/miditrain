@@ -503,6 +503,55 @@ select:focus { outline: 1px solid var(--accent); }
   flex: 1;
   overflow: hidden;
   min-height: 0;
+  position: relative;
+}
+
+/* Live accuracy gauge, shown only while training */
+.accuracy-gauge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  bottom: 10px;
+  width: 58px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 6px;
+  background: rgba(13, 13, 26, 0.72);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  pointer-events: none;
+  backdrop-filter: blur(3px);
+}
+.accuracy-gauge.hidden { display: none; }
+.gauge-score {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--green);
+  font-variant-numeric: tabular-nums;
+}
+.gauge-track {
+  flex: 1;
+  width: 14px;
+  border-radius: 7px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  display: flex;
+  align-items: flex-end;
+}
+.gauge-fill {
+  width: 100%;
+  height: 100%;
+  border-radius: 6px;
+  background: linear-gradient(180deg, var(--green), #7cfc00);
+  transition: height 0.25s ease, background 0.25s ease;
+}
+.gauge-meta {
+  font-size: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
 #falling-canvas {
@@ -690,6 +739,14 @@ select:focus { outline: 1px solid var(--accent); }
   white-space: nowrap;
 }
 .toast.hidden { display: none; }
+
+.stat-value.perfect { color: #3ee87a; }
+.stat-value.almost { color: var(--yellow); }
+.retry-hint {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 10px 0 -2px;
+}
 
 /* Keyboard shortcuts panel */
 .shortcuts-box {
