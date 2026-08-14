@@ -42,6 +42,59 @@ export function detectChord(midiPitches, useFlats = false) {
   return null;
 }
 
+// Find chords across *consecutive* events so an arpeggio reads as one chord.
+// `events` is time-ordered: [{ beat, pitches }], where one event is a set of
+// notes struck together (a single note is just an event of one).
+//
+// Longest run wins, so C-E-G-C is one chord rather than a triad plus a
+// leftover. A run of several events needs three distinct pitch classes before
+// it counts — two notes spread over time are too ambiguous to name, though a
+// genuinely simultaneous dyad is still labelled as it was before.
+export function detectChordRuns(events, useFlats = false, maxSpanBeats = 4, maxEvents = 8) {
+  const runs = [];
+  let i = 0;
+
+  while (i < events.length) {
+    const last = Math.min(events.length - 1, i + maxEvents - 1);
+    const seen = new Set();
+    const pitches = [];
+    let found = null;
+
+    for (let j = i; j <= last; j++) {
+      if (events[j].beat - events[i].beat > maxSpanBeats + 1e-6) break;
+
+      // An event that adds no new pitch class means the chord is already
+      // spelled out — anything after it belongs to the next one. Without this
+      // the scan runs on and swallows the head of the following chord.
+      const addsNew = events[j].pitches.some(p => !seen.has(pitchClass(p)));
+      if (j > i && !addsNew) break;
+
+      for (const p of events[j].pitches) {
+        seen.add(pitchClass(p));
+        pitches.push(p);
+      }
+
+      // Two notes spread over time are too ambiguous to name; a genuinely
+      // simultaneous dyad is still labelled as it was before
+      if (seen.size < (j === i ? 2 : 3)) continue;
+
+      const label = detectChord(pitches, useFlats);
+      // Keep extending: the longer reading is the better one (Am7 over Am)
+      if (label) {
+        found = { beat: events[i].beat, endIndex: j, pitches: [...pitches], label, arpeggiated: j > i };
+      }
+    }
+
+    if (found) {
+      runs.push(found);
+      i = found.endIndex + 1;
+    } else {
+      i++;
+    }
+  }
+  return runs;
+}
+
 export function midiToNoteName(midi, useFlats = false) {
   const names = useFlats ? NOTE_NAMES_FLAT : NOTE_NAMES_SHARP;
   return names[midi % 12];
