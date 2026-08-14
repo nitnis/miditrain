@@ -29,3 +29,82 @@ export async function listCompositions() {
 export async function deleteComposition(id) {
   await getStore().removeItem(id);
 }
+
+// ── JSON export / import ─────────────────────────────────────────────────────
+// Browser storage is per-origin and browsers evict it, so a composition needs
+// a way out of the app that the user actually holds.
+
+const FILE_FORMAT = 'miditrain.composition';
+const FILE_VERSION = 1;
+
+export function compositionToJSON(composition) {
+  const { name, tempo, timeSignature, keySignature, notes } = composition;
+  return JSON.stringify({
+    format: FILE_FORMAT,
+    version: FILE_VERSION,
+    exportedAt: new Date().toISOString(),
+    composition: {
+      name: name || 'Untitled',
+      tempo,
+      timeSignature,
+      keySignature,
+      notes: notes.map(n => ({
+        id: n.id,
+        pitch: n.pitch,
+        velocity: n.velocity,
+        startTime: n.startTime,
+        duration: n.duration,
+      })),
+    },
+  }, null, 2);
+}
+
+const isFiniteNumber = (v) => typeof v === 'number' && Number.isFinite(v);
+
+// Throws with a message worth showing the user. Never returns a partly-valid
+// composition — a malformed file must not be able to half-load over their work.
+export function compositionFromJSON(text) {
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error('Not a valid JSON file');
+  }
+
+  const src = parsed && parsed.composition ? parsed.composition : parsed;
+  if (!src || typeof src !== 'object') throw new Error('No composition in this file');
+  if (parsed.format && parsed.format !== FILE_FORMAT) {
+    throw new Error('This JSON is not a MidiTrain composition');
+  }
+  if (!Array.isArray(src.notes)) throw new Error('No notes in this file');
+
+  const notes = src.notes
+    .filter(n => n && isFiniteNumber(n.pitch) && isFiniteNumber(n.startTime) && isFiniteNumber(n.duration))
+    .map(n => ({
+      id: typeof n.id === 'string' ? n.id : crypto.randomUUID(),
+      pitch: Math.round(Math.min(108, Math.max(21, n.pitch))),
+      velocity: isFiniteNumber(n.velocity) ? Math.round(Math.min(127, Math.max(1, n.velocity))) : 90,
+      startTime: Math.max(0, n.startTime),
+      duration: Math.max(1, n.duration),
+    }))
+    .sort((a, b) => a.startTime - b.startTime);
+
+  if (src.notes.length && !notes.length) throw new Error('No usable notes in this file');
+
+  const num = src.timeSignature?.numerator;
+  const den = src.timeSignature?.denominator;
+
+  return {
+    // No id: an imported file lands as a new composition rather than
+    // overwriting whatever it was exported from
+    id: null,
+    name: typeof src.name === 'string' && src.name.trim() ? src.name.trim() : 'Imported',
+    tempo: isFiniteNumber(src.tempo) ? Math.min(300, Math.max(20, Math.round(src.tempo))) : 120,
+    timeSignature: {
+      numerator: isFiniteNumber(num) ? num : 4,
+      denominator: isFiniteNumber(den) ? den : 4,
+    },
+    keySignature: typeof src.keySignature === 'string' ? src.keySignature : 'C',
+    notes,
+  };
+}
