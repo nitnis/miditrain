@@ -751,8 +751,9 @@ function updateChordOverlay() {
     // The overlay is positioned absolutely inside #sheet-container
     for (const item of data) {
       const el = document.createElement('span');
-      el.className = 'chord-label-el';
+      el.className = 'chord-label-el' + (item.arpeggiated ? ' arp' : '');
       el.textContent = item.label;
+      if (item.arpeggiated) el.title = 'Arpeggiated chord';
       el.style.left = item.x + 'px';
       el.style.top = item.y + 'px';
       el.addEventListener('mouseenter', (e) => {

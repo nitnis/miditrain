@@ -1,7 +1,7 @@
 // VexFlow 4.x sheet music renderer (grand staff)
 import { state } from './state.js';
 import { quantizeNotes, groupByMeasure, groupIntoChords, fillWithRests, findBestDuration } from './quantizer.js';
-import { detectChord, keyUsesFlats } from './chords.js';
+import { detectChordRuns, keyUsesFlats } from './chords.js';
 
 function VF() { return window.Vex?.Flow; }
 
@@ -158,7 +158,7 @@ export function renderSheet(notes, composition, currentTimeMs = null) {
 
     // Chord labels
     if (measureNotes.length > 0) {
-      drawChordLabels(measureNotes, trebleStave, beatsPerMeasure, useFlats);
+      drawChordLabels(measureNotes, trebleStave, beatsPerMeasure, useFlats, beatPositions);
     }
 
     // Step cursor takes the place of the playhead while step recording
@@ -256,7 +256,7 @@ function drawSystem(parts, timeSignature, Formatter, Voice, Accidental, Beam, ke
   }
 }
 
-function drawChordLabels(measureNotes, trebleStave, beatsPerMeasure, useFlats) {
+function drawChordLabels(measureNotes, trebleStave, beatsPerMeasure, useFlats, beatPositions) {
   const chordGroups = groupIntoChords(measureNotes);
   const noteStartX = trebleStave.getNoteStartX();
   const noteEndX   = trebleStave.getX() + trebleStave.getWidth() - 10;
@@ -265,24 +265,26 @@ function drawChordLabels(measureNotes, trebleStave, beatsPerMeasure, useFlats) {
   const svgRect = svgEl ? svgEl.getBoundingClientRect() : null;
   const containerRect = container.getBoundingClientRect();
 
-  for (const group of chordGroups) {
-    if (group.length < 2) continue;
-    const label = detectChord(group.map(n => n.pitch), useFlats);
-    if (!label) continue;
+  // One event per attack, so a run of them can be tested as a single chord
+  const events = chordGroups.map(g => ({
+    beat: g[0].beatInMeasure,
+    pitches: g.map(n => n.pitch),
+  }));
 
-    const frac = group[0].beatInMeasure / beatsPerMeasure;
-    // SVG internal coordinate
-    const svgX = noteStartX + frac * availW;
-    const svgY = trebleStave.getY() - 4;
+  const svgY = trebleStave.getY() - 4;
+  const offsetX = svgRect ? (svgRect.left - containerRect.left) : 0;
+  const offsetY = svgRect ? (svgRect.top  - containerRect.top)  : 0;
 
-    // Convert SVG coordinate → container-relative pixel position
-    // VexFlow renders at 1:1 by default so SVG user units ≈ px
-    const offsetX = svgRect ? (svgRect.left - containerRect.left) : 0;
-    const offsetY = svgRect ? (svgRect.top  - containerRect.top)  : 0;
+  for (const run of detectChordRuns(events, useFlats, beatsPerMeasure)) {
+    // Sit over the actual note column where one exists, since VexFlow does not
+    // space time evenly; otherwise fall back to a linear estimate
+    const hit = beatPositions && beatPositions.find(p => p.beat >= run.beat - 1e-6);
+    const svgX = hit ? hit.x : noteStartX + (run.beat / beatsPerMeasure) * availW;
 
     _chordOverlayData.push({
-      label,
-      pitches: group.map(n => n.pitch),
+      label: run.label,
+      pitches: run.pitches,
+      arpeggiated: run.arpeggiated,
       x: svgX + offsetX,
       y: svgY + offsetY,
     });
