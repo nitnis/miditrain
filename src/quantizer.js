@@ -2,11 +2,19 @@
 
 // Duration entries: [beats, vexflow_duration]
 // beats are in quarter-note units (quarter = 1, half = 2, whole = 4)
+// Descending. Dotted values matter for legato step writing, which is the only
+// way to produce a note longer than one step: without them a dotted quarter
+// notates as a half and the measure overflows.
 const DURATIONS = [
+  [6.0, 'wd'],
   [4.0, 'w'],
+  [3.0, 'hd'],
   [2.0, 'h'],
+  [1.5, 'qd'],
   [1.0, 'q'],
+  [0.75, '8d'],
   [0.5, '8'],
+  [0.375, '16d'],
   [0.25, '16'],
   [0.125, '32'],
 ];
@@ -31,9 +39,12 @@ export function gridSizeFromDivision(division) {
 export function findBestDuration(beats) {
   let best = DURATIONS[0];
   let bestDiff = Infinity;
+  // `<=` over a descending list breaks ties toward the shorter value. A note
+  // notated longer than it is overflows its measure; shorter just leaves a gap
+  // that fillWithRests covers.
   for (const [b, d] of DURATIONS) {
     const diff = Math.abs(beats - b);
-    if (diff < bestDiff) { bestDiff = diff; best = [b, d]; }
+    if (diff <= bestDiff) { bestDiff = diff; best = [b, d]; }
   }
   return { durationBeats: best[0], vexDuration: best[1] };
 }
