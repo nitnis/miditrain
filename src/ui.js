@@ -1,6 +1,6 @@
 // UI updates: DOM manipulation, modals, controls
 import { state, update, emit, on } from './state.js';
-import { record, play, stop, seekToStart, seekToEnd, clearAllNotes, transposeNotes, applyLegato, deleteNotes } from './transport.js';
+import { record, play, stop, stopAndRewind, startCountIn, seekToStart, seekToEnd, clearAllNotes, transposeNotes, applyLegato, deleteNotes } from './transport.js';
 import { renderSheet, initSheet, getChordOverlayData, getStaveGeometry } from './sheet.js';
 import { initPianoRoll, renderPianoRoll } from './pianoroll.js';
 import { saveComposition, listCompositions, deleteComposition } from './storage.js';
@@ -77,15 +77,14 @@ function bindTransport() {
   const modeGuard = () => resumeAudioContext();
 
   document.getElementById('btn-to-start').onclick = () => { modeGuard(); seekToStart(); };
-  document.getElementById('btn-stop').onclick = () => {
-    modeGuard();
-    if (state.transport.mode === 'step-recording') stopStepRecord();
-    else stop();
-  };
+  // Pause holds position; Stop also rewinds to the beginning
+  document.getElementById('btn-pause').onclick = () => { modeGuard(); stop(); };
+  document.getElementById('btn-stop').onclick = () => { modeGuard(); stopAndRewind(); };
   document.getElementById('btn-record').onclick = () => {
     modeGuard();
-    if (state.transport.mode === 'recording') stop();
-    else { if (state.transport.mode === 'step-recording') stopStepRecord(); record(); }
+    if (state.transport.mode === 'recording' || state.transport.mode === 'count-in') { stop(); return; }
+    if (state.transport.mode === 'step-recording') stopStepRecord();
+    withCountIn(record);
   };
   document.getElementById('btn-step-record').onclick = () => {
     modeGuard();
@@ -96,9 +95,10 @@ function bindTransport() {
   document.getElementById('btn-step-back').onclick = () => stepGoBack();
   document.getElementById('btn-play').onclick = () => {
     modeGuard();
-    if (state.transport.mode === 'playing') stop();
-    else if (state.ui.trainMode) startTrainingSession();
-    else { if (state.transport.mode === 'step-recording') stopStepRecord(); play(); }
+    if (state.transport.mode === 'playing' || state.transport.mode === 'count-in') { stop(); return; }
+    if (state.ui.trainMode) { startTrainingSession(); return; }
+    if (state.transport.mode === 'step-recording') stopStepRecord();
+    play();
   };
   document.getElementById('btn-to-end').onclick = () => { modeGuard(); seekToEnd?.(); };
 
@@ -135,6 +135,22 @@ function bindTransport() {
     }
   });
 
+  // Count-in countdown
+  const countOverlay = document.getElementById('count-in-overlay');
+  const countNumber = document.getElementById('count-in-number');
+  on('transport:countin-start', ({ total }) => {
+    countNumber.textContent = String(total);
+    countOverlay.classList.remove('hidden');
+  });
+  on('transport:countin', ({ beat }) => {
+    countNumber.textContent = String(beat);
+    // Restart the pulse animation on each beat
+    countNumber.style.animation = 'none';
+    void countNumber.offsetWidth;
+    countNumber.style.animation = '';
+  });
+  on('transport:countin-end', () => countOverlay.classList.add('hidden'));
+
   // Keep position display live during step recording
   on('change:transport.currentTime', ({ value }) => {
     if (state.transport.mode === 'step-recording') {
@@ -148,13 +164,21 @@ function setStepControlsVisible(visible) {
   document.getElementById('step-controls').classList.toggle('hidden', !visible);
 }
 
+// Run `start` after a one-bar count-in when the option is on
+function withCountIn(start) {
+  if (state.ui.countInEnabled) startCountIn(start);
+  else start();
+}
+
 function startTrainingSession() {
   if (!state.composition.notes.length) {
     showToast('Record something first to train with');
     return;
   }
-  startAccuracy(state.composition);
-  play();
+  withCountIn(() => {
+    startAccuracy(state.composition);
+    play();
+  });
 }
 
 function bindToolbar() {
@@ -197,6 +221,14 @@ function bindToolbar() {
     applyMute(muted);
   };
   applyMute(state.ui.muted);
+
+  const countInBtn = document.getElementById('btn-count-in');
+  countInBtn.classList.toggle('active', state.ui.countInEnabled);
+  countInBtn.onclick = () => {
+    const enabled = !state.ui.countInEnabled;
+    update('ui.countInEnabled', enabled);
+    countInBtn.classList.toggle('active', enabled);
+  };
 
   document.getElementById('btn-metronome').onclick = () => {
     const enabled = !state.ui.metronomeEnabled;

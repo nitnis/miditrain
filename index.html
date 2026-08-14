@@ -48,7 +48,8 @@
       <!-- Transport -->
       <div class="tool-group transport-group">
         <button class="transport-btn" id="btn-to-start" title="Go to start (Home)">&#9664;&#9664;</button>
-        <button class="transport-btn" id="btn-stop" title="Stop">&#9632;</button>
+        <button class="transport-btn" id="btn-stop" title="Stop and rewind to the beginning">&#9632;</button>
+        <button class="transport-btn" id="btn-pause" title="Pause — hold position">&#10073;&#10073;</button>
         <button class="transport-btn record-btn" id="btn-record" title="Record (R)">&#9679;</button>
         <button class="transport-btn step-btn" id="btn-step-record" title="Step Record — write one note/chord per step">&#9655;&#9679;</button>
         <button class="transport-btn play-btn" id="btn-play" title="Play/Pause (Space)">&#9654;</button>
@@ -127,6 +128,17 @@
             <line x1="22" y1="9" x2="16" y2="15"/>
           </svg>
           <span id="mute-label">Sound</span>
+        </button>
+      </div>
+
+      <!-- Count-in -->
+      <div class="tool-group">
+        <button class="toggle-btn" id="btn-count-in" title="Count one bar in before recording and training">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="9"/>
+            <polyline points="12 7 12 12 15 14"/>
+          </svg>
+          Count-in
         </button>
       </div>
 
@@ -327,6 +339,11 @@
         <button class="modal-btn primary" id="btn-close-midi-info">OK</button>
       </div>
     </div>
+  </div>
+
+  <!-- Count-in countdown -->
+  <div id="count-in-overlay" class="count-in-overlay hidden">
+    <span id="count-in-number">1</span>
   </div>
 
   <!-- Toast notification -->

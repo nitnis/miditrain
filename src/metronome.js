@@ -61,3 +61,21 @@ export function stopMetronome() {
   clearInterval(schedulerTimer);
   schedulerTimer = null;
 }
+
+// Exactly `beats` clicks for a count-in, independent of the metronome toggle —
+// the count-in has to be audible even with the metronome off. Returns the lead
+// time in seconds before the first click, so the caller can line its countdown
+// up with the audio.
+export function scheduleCountInClicks(beats, tempo, timeSignature) {
+  const ctx = getAudioCtx();
+  if (ctx.state === 'suspended') ctx.resume();
+
+  const lead = 0.12;
+  const interval = 60 / tempo;
+  const perBar = Math.max(1, timeSignature.numerator);
+
+  for (let i = 0; i < beats; i++) {
+    scheduleClick(ctx.currentTime + lead + i * interval, i % perBar === 0);
+  }
+  return lead;
+}
