@@ -392,7 +392,7 @@ export function renderPianoRoll(canvas, notes, currentTimeMs) {
     ctx.textAlign = 'center';
     ctx.fillText('No notes recorded yet', GRID_X + rollW / 2, h / 2);
     drawVerticalPiano(ctx, minPitch, maxPitch, noteH, h, new Set());
-    setEditorLayout({ msPerPx: 1, minPitch, noteH, h, w, leftMargin: LEFT }, []);
+    setEditorLayout({ msPerPx: 1, minPitch, noteH, h, w, leftMargin: LEFT, gridX: LEFT + ROLL_GUTTER }, []);
     return;
   }
 
@@ -480,5 +480,5 @@ export function renderPianoRoll(canvas, notes, currentTimeMs) {
   // The key strip owns the left margin outright
   drawVerticalPiano(ctx, minPitch, maxPitch, noteH, h, pitchesWithNotes);
 
-  setEditorLayout({ msPerPx, minPitch, noteH, h, w, leftMargin: LEFT }, noteRects);
+  setEditorLayout({ msPerPx, minPitch, noteH, h, w, leftMargin: LEFT, gridX: GRID_X }, noteRects);
 }
