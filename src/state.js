@@ -28,6 +28,7 @@ const _state = {
     trainMode: false,
     metronomeEnabled: false,
     muted: false,           // master audio mute; audible by default
+    countInEnabled: true,   // click one bar before live recording and training
     quantize: 8,            // grid division (8 = 1/8 note); also the step-record step size
     keySignature: 'C',
     editorSelectedNotes: new Set(), // selected note IDs in piano roll editor

@@ -1,6 +1,6 @@
 // Transport engine: record, play, stop, seek
 import { state, update, emit, on } from './state.js';
-import { startMetronome, stopMetronome } from './metronome.js';
+import { startMetronome, stopMetronome, scheduleCountInClicks } from './metronome.js';
 import { startPlaybackAudio, stopPlaybackAudio, stopAllAudio } from './audio.js';
 import { barStartMs } from './quantizer.js';
 
@@ -91,7 +91,18 @@ export function play() {
   emit('transport:play');
 }
 
+// Halt where we are. This is what the Pause button does, and what everything
+// internally means by "stop" — record(), play() and seekTo() all rely on it
+// leaving the position alone.
 export function stop() {
+  if (state.transport.mode === 'count-in') {
+    cancelCountIn();
+    update('transport.mode', 'stopped');
+    emit('transport:countin-end');
+    emit('transport:stop');
+    return;
+  }
+
   // step-recording mode: just transition; step-recorder cleans up via mode-change listener
   if (state.transport.mode === 'step-recording') {
     stopAllAudio();
@@ -118,6 +129,55 @@ export function stop() {
   if (state.transport.mode === 'stopped') return; // idempotent: no event when already stopped
   update('transport.mode', 'stopped');
   emit('transport:stop');
+}
+
+// Halt and return to the beginning. This is what the Stop button does.
+export function stopAndRewind() {
+  stop();
+  update('transport.currentTime', 0);
+  emit('transport:stop');
+}
+
+// ── Count-in ─────────────────────────────────────────────────────────────────
+
+let countInTimers = [];
+
+function cancelCountIn() {
+  countInTimers.forEach(clearTimeout);
+  countInTimers = [];
+}
+
+// Click out one bar, then hand over to `onComplete`. The clicks are scheduled
+// on the audio clock; the timers only drive the on-screen count, so a late
+// timer cannot shift where recording actually begins.
+export function startCountIn(onComplete) {
+  cancelCountIn();
+  stop();
+
+  const { tempo, timeSignature } = state.composition;
+  const beats = Math.max(1, timeSignature.numerator);
+  const beatMs = (60 / tempo) * 1000;
+  const leadMs = scheduleCountInClicks(beats, tempo, timeSignature) * 1000;
+
+  update('transport.mode', 'count-in');
+  emit('transport:countin-start', { total: beats });
+
+  for (let i = 0; i < beats; i++) {
+    countInTimers.push(setTimeout(
+      () => emit('transport:countin', { beat: i + 1, total: beats }),
+      leadMs + i * beatMs
+    ));
+  }
+
+  countInTimers.push(setTimeout(() => {
+    cancelCountIn();
+    // Leave count-in mode first. record()/play() begin by calling stop(), and
+    // from count-in that emits transport:stop — which would tear down the
+    // accuracy session training had just started.
+    update('transport.mode', 'stopped');
+    emit('transport:countin-end');
+    onComplete();
+  }, leadMs + beats * beatMs));
 }
 
 export function seekTo(ms) {
