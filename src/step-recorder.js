@@ -4,6 +4,7 @@ import { beatsToMs } from './quantizer.js';
 
 let cleanupFns = [];
 let pendingNotes = new Map(); // pitch -> velocity
+let lastChord = [];           // notes from the previous step, for legato holding
 let chordTimer = null;
 const CHORD_WINDOW_MS = 80; // collect simultaneous notes into one chord
 
@@ -19,6 +20,7 @@ export function startStepRecord() {
   cleanupFns.forEach(fn => fn());
   cleanupFns = [];
   pendingNotes.clear();
+  lastChord = [];
   update('transport.mode', 'step-recording');
   // Entering step mode from an arbitrary playback position would write every
   // step off the grid, so square the cursor up to the nearest step boundary.
@@ -35,6 +37,7 @@ export function stopStepRecord() {
   clearTimeout(chordTimer);
   chordTimer = null;
   pendingNotes.clear();
+  lastChord = [];
   cleanupFns.forEach(fn => fn());
   cleanupFns = [];
   if (state.transport.mode === 'step-recording') {
@@ -57,6 +60,13 @@ export function stepGoBack() {
   state.composition.notes = state.composition.notes.filter(
     n => !(n.startTime >= prevPos - 1 && n.startTime < pos)
   );
+  // A legato note started earlier and was stretched over this step; pull it back
+  for (const note of state.composition.notes) {
+    if (note.startTime < prevPos && note.startTime + note.duration > prevPos) {
+      note.duration = Math.max(stepMs, prevPos - note.startTime);
+    }
+  }
+  lastChord = lastChord.filter(n => state.composition.notes.includes(n));
   update('transport.currentTime', prevPos);
   emit('transport:noteschanged', state.composition.notes);
 }
@@ -83,20 +93,37 @@ function commitChord() {
   const stepMs = getStepMs();
   const stepPos = state.transport.currentTime;
 
+  const committed = [];
   for (const [pitch, velocity] of pendingNotes) {
-    state.composition.notes.push({
+    const note = {
       id: crypto.randomUUID(),
       pitch,
       velocity,
       startTime: stepPos,
       duration: stepMs,
-    });
+    };
+    state.composition.notes.push(note);
+    committed.push(note);
   }
+  lastChord = committed;
   pendingNotes.clear();
   emit('transport:noteschanged', state.composition.notes);
   advanceStep();
 }
 
 function advanceStep() {
-  update('transport.currentTime', state.transport.currentTime + getStepMs());
+  const stepMs = getStepMs();
+  const next = state.transport.currentTime + stepMs;
+
+  // Legato: the note you wrote keeps sounding through the steps you skip, so
+  // advancing lengthens it rather than leaving a rest behind. This is how a
+  // note longer than one step gets written at all.
+  if (state.ui.stepLegato && lastChord.length) {
+    for (const note of lastChord) {
+      note.duration = Math.max(stepMs, next - note.startTime);
+    }
+    emit('transport:noteschanged', state.composition.notes);
+  }
+
+  update('transport.currentTime', next);
 }

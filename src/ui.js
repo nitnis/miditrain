@@ -164,6 +164,13 @@ function bindTransport() {
 
 function setStepControlsVisible(visible) {
   document.getElementById('step-controls').classList.toggle('hidden', !visible);
+  // Legato writing only means anything while stepping
+  document.getElementById('legato-switch').classList.toggle('hidden', !visible);
+}
+
+function setStepLegato(on) {
+  update('ui.stepLegato', on);
+  document.getElementById('legato-toggle').checked = on;
 }
 
 // Run `start` after a one-bar count-in when the option is on
@@ -282,6 +289,10 @@ function bindToolbar() {
       scheduleSheetRender();
     };
   }
+
+  const legatoToggle = document.getElementById('legato-toggle');
+  legatoToggle.checked = state.ui.stepLegato;
+  legatoToggle.onchange = (e) => setStepLegato(e.target.checked);
 
   document.getElementById('btn-clear').onclick = () => {
     if (confirm('Clear all notes?')) clearAllNotes();
@@ -489,6 +500,13 @@ function bindKeyboardShortcuts() {
         if (state.transport.mode === 'step-recording') stepInsertRest();
         else if (state.transport.mode === 'playing') stop();
         else play();
+        break;
+      case 'KeyL':
+        // Legato is a step-recording setting, so the key only acts there
+        if (state.transport.mode === 'step-recording') {
+          e.preventDefault();
+          setStepLegato(!state.ui.stepLegato);
+        }
         break;
       case 'Backspace':
         // Step back over the last entry; otherwise let the browser have it

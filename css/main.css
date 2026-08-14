@@ -737,6 +737,47 @@ select:focus { outline: 1px solid var(--accent); }
 .step-controls { transition: opacity 0.2s; }
 .step-controls.hidden { display: none; }
 
+/* Legato switch — only shown while step recording */
+.legato-switch {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: 14px;
+  cursor: pointer;
+  user-select: none;
+}
+.legato-switch.hidden { display: none; }
+.legato-switch input { position: absolute; opacity: 0; pointer-events: none; }
+.legato-track {
+  position: relative;
+  width: 34px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  transition: background 0.15s, border-color 0.15s;
+}
+.legato-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform 0.15s, background 0.15s;
+}
+.legato-switch input:checked + .legato-track {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.legato-switch input:checked + .legato-track .legato-knob {
+  transform: translateX(16px);
+  background: var(--bg);
+}
+.legato-label { font-size: 12px; color: var(--muted); }
+.legato-switch input:checked ~ .legato-label { color: var(--accent); font-weight: 600; }
+
 /* ── CHORD LABELS OVERLAY ── */
 #sheet-container { position: relative; }
 
