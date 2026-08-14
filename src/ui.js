@@ -10,6 +10,7 @@ import { resumeAudioContext, setMuted } from './audio.js';
 import { startStepRecord, stopStepRecord, stepInsertRest, stepGoBack } from './step-recorder.js';
 import { initNoteEditor, getSelectedIds } from './note-editor.js';
 import { staffPositionName, midiToNoteWithOctave } from './chords.js';
+import { initHistory, resetHistory, undo, redo } from './history.js';
 
 let sheetContainer = null;
 let renderDebounce = null;
@@ -34,6 +35,7 @@ export function initUI() {
   bindChordOverlay();
   bindStaffHint();
   bindPianoResizer();
+  initHistory();
 
   // The piano roll canvas is sized from its viewport, so re-render whenever
   // that viewport changes (window resize, or dragging the piano resizer).
@@ -222,6 +224,15 @@ function bindToolbar() {
   };
   applyMute(state.ui.muted);
 
+  const undoBtn = document.getElementById('btn-undo');
+  const redoBtn = document.getElementById('btn-redo');
+  undoBtn.onclick = () => undo();
+  redoBtn.onclick = () => redo();
+  on('history:changed', ({ canUndo, canRedo }) => {
+    undoBtn.disabled = !canUndo;
+    redoBtn.disabled = !canRedo;
+  });
+
   const countInBtn = document.getElementById('btn-count-in');
   countInBtn.classList.toggle('active', state.ui.countInEnabled);
   countInBtn.onclick = () => {
@@ -312,6 +323,7 @@ function bindCompositionControls() {
     update('composition.id', null);
     document.getElementById('composition-name').textContent = 'Untitled';
     seekToStart();
+    resetHistory();
   };
 
   document.getElementById('btn-save').onclick = async () => {
@@ -385,6 +397,7 @@ function loadComposition(song) {
     document.getElementById('key-select').value = song.keySignature;
   }
   seekToStart();
+  resetHistory();
   scheduleSheetRender();
   showToast(`Opened: ${song.name}`);
 }
@@ -416,6 +429,19 @@ function bindModalControls() {
 function bindKeyboardShortcuts() {
   document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT' || e.target.contentEditable === 'true') return;
+
+    // Undo/redo before the plain-key shortcuts, so Ctrl+Z is never read as Z
+    if (e.ctrlKey || e.metaKey) {
+      if (e.code === 'KeyZ') {
+        e.preventDefault();
+        if (e.shiftKey) redo(); else undo();
+      } else if (e.code === 'KeyY') {
+        e.preventDefault();
+        redo();
+      }
+      return;
+    }
+
     switch (e.code) {
       case 'Space':
         e.preventDefault();

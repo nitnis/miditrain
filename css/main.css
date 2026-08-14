@@ -181,6 +181,13 @@ html, body {
 }
 .transport-btn:hover { background: var(--border); }
 .transport-btn:active { transform: scale(0.94); }
+.transport-btn .icon { width: 18px; height: 18px; }
+.transport-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.transport-btn:disabled:hover { background: var(--surface); }
+.transport-btn:disabled:active { transform: none; }
 .transport-btn.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
 
 .record-btn { color: var(--red); }
