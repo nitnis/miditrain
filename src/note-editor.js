@@ -1,6 +1,6 @@
 // Interactive note editor for the piano roll canvas
 import { state, emit } from './state.js';
-import { deleteNotes, transposeNotes, applyLegato, seekTo } from './transport.js';
+import { seekTo } from './transport.js';
 
 // Layout info shared with renderPianoRoll (set each render)
 let _layout = { msPerPx: 1, minPitch: 21, noteH: 10, h: 0, w: 0, leftMargin: 0, gridX: 0 };
@@ -20,7 +20,7 @@ export function initNoteEditor(canvasEl) {
   canvas.addEventListener('mousemove', onMouseMove);
   canvas.addEventListener('mouseup', onMouseUp);
   canvas.addEventListener('mouseleave', onMouseUp);
-  document.addEventListener('keydown', onKeyDown);
+  // Editing shortcuts live in the shortcut registry, not here
 }
 
 function getPos(e) {
@@ -125,29 +125,6 @@ function onMouseUp() {
     dragState = null;
     canvas.style.cursor = 'default';
     emit('transport:noteschanged', state.composition.notes);
-  }
-}
-
-function onKeyDown(e) {
-  // Only act when piano roll is visible and we have a selection
-  if (state.ui.view !== 'piano-roll') return;
-  // While stepping, Backspace belongs to the step recorder
-  if (state.transport.mode === 'step-recording') return;
-  const sel = state.ui.editorSelectedNotes;
-  if (!sel.size) return;
-  if (e.target.tagName === 'INPUT' || e.target.contentEditable === 'true') return;
-
-  if (e.key === 'Delete' || e.key === 'Backspace') {
-    e.preventDefault();
-    deleteNotes(sel);
-    sel.clear();
-    emit('editor:selection', sel);
-  } else if (e.key === 'ArrowUp') {
-    e.preventDefault();
-    transposeNotes(sel, e.shiftKey ? 12 : 1);
-  } else if (e.key === 'ArrowDown') {
-    e.preventDefault();
-    transposeNotes(sel, e.shiftKey ? -12 : -1);
   }
 }
 
