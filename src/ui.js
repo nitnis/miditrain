@@ -3,7 +3,7 @@ import { state, update, emit, on } from './state.js';
 import { record, play, stop, stopAndRewind, startCountIn, seekToStart, seekToEnd, clearAllNotes, transposeNotes, applyLegato, deleteNotes } from './transport.js';
 import { renderSheet, initSheet, getChordOverlayData, getStaveGeometry } from './sheet.js';
 import { initPianoRoll, renderPianoRoll } from './pianoroll.js';
-import { saveComposition, listCompositions, deleteComposition } from './storage.js';
+import { saveComposition, listCompositions, deleteComposition, compositionToJSON, compositionFromJSON } from './storage.js';
 import { startAccuracy, stopAccuracy } from './accuracy.js';
 import { stopMetronome } from './metronome.js';
 import { resumeAudioContext, setMuted } from './audio.js';
@@ -315,6 +315,12 @@ function bindLoopControls() {
   };
 }
 
+// Keep the download name recognisable but safe for any filesystem
+function fileSafeName(name) {
+  const cleaned = name.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-');
+  return cleaned || 'composition';
+}
+
 function bindCompositionControls() {
   document.getElementById('btn-new').onclick = () => {
     if (!confirm('Start a new composition? Unsaved changes will be lost.')) return;
@@ -335,6 +341,40 @@ function bindCompositionControls() {
   };
 
   document.getElementById('btn-open').onclick = () => openSongBrowser();
+
+  document.getElementById('btn-export').onclick = () => {
+    const name = document.getElementById('composition-name').textContent.trim() || 'Untitled';
+    update('composition.name', name);
+    const json = compositionToJSON(state.composition);
+    const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${fileSafeName(name)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    showToast(`Exported ${a.download}`);
+  };
+
+  const importInput = document.getElementById('import-file');
+  document.getElementById('btn-import').onclick = () => importInput.click();
+  importInput.onchange = async () => {
+    const file = importInput.files?.[0];
+    // Reset first, so picking the same file twice still fires a change
+    importInput.value = '';
+    if (!file) return;
+    try {
+      const imported = compositionFromJSON(await file.text());
+      if (state.composition.notes.length &&
+          !confirm('Replace the current composition with the imported one?')) return;
+      loadComposition(imported);
+      const n = imported.notes.length;
+      showToast(`Imported "${imported.name}" — ${n} note${n === 1 ? '' : 's'}`);
+    } catch (err) {
+      showToast(`Import failed: ${err.message}`, 4000);
+    }
+  };
 
   document.getElementById('composition-name').addEventListener('blur', () => {
     update('composition.name', document.getElementById('composition-name').textContent.trim() || 'Untitled');
