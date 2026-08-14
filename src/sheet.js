@@ -176,6 +176,96 @@ export function renderSheet(notes, composition, currentTimeMs = null) {
   }
 
   drawTies(segments, segmentPlacement);
+  drawSlurs(notes, segmentPlacement);
+}
+
+// ── Slurs ────────────────────────────────────────────────────────────────────
+// A slur marks notes played without separation. That is exactly what overlap
+// in the raw timing means, so it is read from there — quantizing snaps each
+// duration to the grid and erases the overlap, so this cannot wait until after.
+
+const ATTACK_TOLERANCE_MS = 30; // notes struck together
+// Legato writing overlaps by at least 40ms at ordinary grids, while notes a
+// player merely failed to separate cleanly overlap by less than this
+const OVERLAP_MIN_MS = 20;
+
+function groupAttacks(notes) {
+  const attacks = [];
+  for (const note of [...notes].sort((a, b) => a.startTime - b.startTime)) {
+    const last = attacks[attacks.length - 1];
+    if (last && note.startTime - last.startTime <= ATTACK_TOLERANCE_MS) last.notes.push(note);
+    else attacks.push({ startTime: note.startTime, notes: [note] });
+  }
+  return attacks;
+}
+
+// Maximal runs of two or more attacks where each sounds into the next
+function findSlurRuns(notes) {
+  const attacks = groupAttacks(notes);
+  const runs = [];
+  let run = null;
+
+  for (let i = 0; i < attacks.length - 1; i++) {
+    const current = attacks[i];
+    const next = attacks[i + 1];
+    const soundsUntil = Math.max(...current.notes.map(n => n.startTime + n.duration));
+
+    if (soundsUntil - next.startTime > OVERLAP_MIN_MS) {
+      if (!run) { run = [current]; runs.push(run); }
+      run.push(next);
+    } else {
+      run = null;
+    }
+  }
+  return runs;
+}
+
+// The last written piece of a note, which is where a slur ending on it lands
+function lastPieceOf(noteId, placement) {
+  let found = null;
+  for (let i = 0; ; i++) {
+    const piece = placement.get(`${noteId}:${i}`);
+    if (!piece) return found;
+    found = piece;
+  }
+}
+
+function drawSlurs(rawNotes, placement) {
+  const { Curve } = VF();
+  if (!Curve || !rawNotes.length) return;
+
+  // Each stave carries its own slurs, and a run is only meaningful within one
+  for (const clefNotes of [rawNotes.filter(n => n.pitch >= 60), rawNotes.filter(n => n.pitch < 60)]) {
+    for (const run of findSlurRuns(clefNotes)) {
+      const placed = run
+        .map(attack => {
+          const id = attack.notes[0].id;
+          return { head: placement.get(`${id}:0`), tail: lastPieceOf(id, placement) };
+        })
+        .filter(p => p.head && p.tail);
+
+      // A run crossing a system break becomes one slur per line rather than a
+      // curve stretched between two systems
+      let segment = [];
+      const flush = () => {
+        if (segment.length >= 2) {
+          try {
+            new Curve(segment[0].head.note, segment[segment.length - 1].tail.note, {})
+              .setContext(svgCtx).draw();
+          } catch (e) {
+            console.warn('Slur draw:', e.message);
+          }
+        }
+        segment = [];
+      };
+
+      for (const p of placed) {
+        if (segment.length && p.head.line !== segment[0].head.line) flush();
+        segment.push(p);
+      }
+      flush();
+    }
+  }
 }
 
 // Ties are drawn last: they need both ends to already have laid-out positions.

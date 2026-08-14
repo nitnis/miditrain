@@ -8,6 +8,27 @@ let lastChord = [];           // notes from the previous step, for legato holdin
 let chordTimer = null;
 const CHORD_WINDOW_MS = 80; // collect simultaneous notes into one chord
 
+// How much of its step a note actually sounds for. Filling the step exactly
+// leaves nothing for legato to extend — with one note per step the switch made
+// no difference at all — so notes are written slightly detached by default and
+// overrun the next attack under legato, which is what makes them blend.
+const DETACHED_GATE = 0.8;
+const LEGATO_OVERLAP_RATIO = 0.3;
+const LEGATO_OVERLAP_MIN_MS = 40;
+
+// Capped below half a step so quantizing always rounds the overlap back off.
+// Past that the written note would gain a step and pick up a spurious tie.
+function legatoOverlap(stepMs) {
+  return Math.min(stepMs * 0.45, Math.max(LEGATO_OVERLAP_MIN_MS, stepMs * LEGATO_OVERLAP_RATIO));
+}
+
+// Sounding length for a note occupying `spanMs` of written time. Quantizing
+// snaps both back to the same written value, so this changes articulation
+// without changing the notation.
+function soundingDuration(spanMs, stepMs) {
+  return state.ui.stepLegato ? spanMs + legatoOverlap(stepMs) : spanMs * DETACHED_GATE;
+}
+
 // Step size is the quantize value, so recorded steps always land on the grid
 // the notation is snapped to.
 export function getStepMs() {
@@ -63,7 +84,7 @@ export function stepGoBack() {
   // A legato note started earlier and was stretched over this step; pull it back
   for (const note of state.composition.notes) {
     if (note.startTime < prevPos && note.startTime + note.duration > prevPos) {
-      note.duration = Math.max(stepMs, prevPos - note.startTime);
+      note.duration = soundingDuration(Math.max(stepMs, prevPos - note.startTime), stepMs);
     }
   }
   lastChord = lastChord.filter(n => state.composition.notes.includes(n));
@@ -100,7 +121,7 @@ function commitChord() {
       pitch,
       velocity,
       startTime: stepPos,
-      duration: stepMs,
+      duration: soundingDuration(stepMs, stepMs),
     };
     state.composition.notes.push(note);
     committed.push(note);
@@ -120,7 +141,7 @@ function advanceStep() {
   // note longer than one step gets written at all.
   if (state.ui.stepLegato && lastChord.length) {
     for (const note of lastChord) {
-      note.duration = Math.max(stepMs, next - note.startTime);
+      note.duration = soundingDuration(Math.max(stepMs, next - note.startTime), stepMs);
     }
     emit('transport:noteschanged', state.composition.notes);
   }
