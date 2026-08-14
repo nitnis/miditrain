@@ -37,6 +37,7 @@
       <button class="hdr-btn" id="btn-export" title="Download this composition as a JSON file">Export</button>
       <button class="hdr-btn" id="btn-import" title="Load a composition from a JSON file">Import</button>
       <input type="file" id="import-file" accept="application/json,.json" hidden>
+      <button class="hdr-btn" id="btn-shortcuts" title="Keyboard shortcuts (?)">⌨</button>
       <div class="midi-status" id="midi-status" title="Click for MIDI settings">
         <div class="status-dot disconnected" id="midi-dot"></div>
         <span id="midi-text">No MIDI</span>
@@ -362,6 +363,19 @@
       </div>
       <div class="modal-actions">
         <button class="modal-btn primary" id="btn-close-midi-info">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Keyboard Shortcuts -->
+  <div class="modal-overlay hidden" id="shortcuts-modal">
+    <div class="modal-box shortcuts-box">
+      <h2>Keyboard Shortcuts</h2>
+      <p class="shortcuts-hint">Click a shortcut to change it, then press the new key. Esc cancels.</p>
+      <div id="shortcuts-list"></div>
+      <div class="modal-actions">
+        <button class="modal-btn" id="btn-shortcuts-reset">Reset all</button>
+        <button class="modal-btn primary" id="btn-close-shortcuts">Done</button>
       </div>
     </div>
   </div>

@@ -691,6 +691,78 @@ select:focus { outline: 1px solid var(--accent); }
 }
 .toast.hidden { display: none; }
 
+/* Keyboard shortcuts panel */
+.shortcuts-box {
+  max-width: 620px;
+  width: 92vw;
+  text-align: left;
+}
+.shortcuts-hint {
+  font-size: 12px;
+  color: var(--muted);
+  margin: -4px 0 12px;
+}
+#shortcuts-list {
+  max-height: 55vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.shortcut-section {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 14px 0 6px;
+}
+.shortcut-section:first-child { margin-top: 0; }
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 6px;
+  border-radius: 5px;
+}
+.shortcut-row:hover { background: var(--surface); }
+.shortcut-label { flex: 1; font-size: 13px; color: var(--text); }
+.shortcut-keys { display: flex; gap: 5px; align-items: center; }
+.shortcut-key {
+  min-width: 34px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  text-align: center;
+  cursor: pointer;
+}
+.shortcut-key:hover { border-color: var(--accent); color: var(--accent); }
+.shortcut-key.listening {
+  border-color: var(--accent2);
+  color: var(--accent2);
+  animation: count-in-pulse 0.4s ease-out infinite alternate;
+}
+.shortcut-key.alt { opacity: 0.55; cursor: default; }
+.shortcut-key.alt:hover { border-color: var(--border); color: var(--text); }
+.shortcut-reset {
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+  visibility: hidden;
+}
+.shortcut-row.custom .shortcut-reset { visibility: visible; }
+.shortcut-reset:hover { color: var(--accent2); }
+.shortcut-warning {
+  font-size: 12px;
+  color: var(--accent2);
+  min-height: 16px;
+  margin-top: 8px;
+}
+
 /* Count-in countdown */
 .count-in-overlay {
   position: fixed;
