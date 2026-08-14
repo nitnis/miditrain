@@ -8,9 +8,14 @@ import { startAccuracy, stopAccuracy } from './accuracy.js';
 import { startMetronome, stopMetronome } from './metronome.js';
 import { resumeAudioContext, setMuted } from './audio.js';
 import { startStepRecord, stopStepRecord, stepInsertRest, stepGoBack, getStepMs } from './step-recorder.js';
-import { initNoteEditor, getSelectedIds } from './note-editor.js';
+import { initNoteEditor, getSelectedIds, clearSelection } from './note-editor.js';
 import { staffPositionName, midiToNoteWithOctave } from './chords.js';
 import { initHistory, resetHistory, undo, redo } from './history.js';
+import {
+  initShortcuts, getActions, bindingsFor, formatBinding, setBinding,
+  resetBinding, resetAllBindings, findConflict, startCapture, cancelCapture,
+  isCustomised,
+} from './shortcuts.js';
 
 let sheetContainer = null;
 let renderDebounce = null;
@@ -35,6 +40,7 @@ export function initUI() {
   bindChordOverlay();
   bindStaffHint();
   bindPianoResizer();
+  bindShortcutsPanel();
   initHistory();
 
   // The piano roll canvas is sized from its viewport, so re-render whenever
@@ -507,81 +513,227 @@ function bindModalControls() {
   });
 }
 
-function bindKeyboardShortcuts() {
-  document.addEventListener('keydown', (e) => {
-    const tag = e.target.tagName;
-    // A focused control owns its own keys
-    if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || e.target.contentEditable === 'true') return;
+// Every shortcut in the app, in one list. The help panel renders from this and
+// the dispatcher reads from it, so what is shown is always what is bound.
+//
+// group decides which actions may share a key: two actions only collide if
+// they could be active together.
+function shortcutActions() {
+  const stepping = () => state.transport.mode === 'step-recording';
+  const editing = () =>
+    state.ui.view === 'piano-roll' &&
+    state.transport.mode !== 'step-recording' &&
+    state.ui.editorSelectedNotes.size > 0;
 
-    // Undo/redo before the plain-key shortcuts, so Ctrl+Z is never read as Z
-    if (e.ctrlKey || e.metaKey) {
-      if (e.code === 'KeyZ') {
-        e.preventDefault();
-        if (e.shiftKey) redo(); else undo();
-      } else if (e.code === 'KeyY') {
-        e.preventDefault();
-        redo();
-      }
-      return;
-    }
+  return [
+    // Step recording first: while stepping, Backspace belongs to the recorder
+    { id: 'step-forward', group: 'step', scope: stepping,
+      section: 'Step recording', label: 'Step forward (write a rest)',
+      defaultBindings: [{ code: 'Period' }, { code: 'NumpadDecimal' }],
+      run: () => stepInsertRest() },
+    { id: 'step-back', group: 'step', scope: stepping,
+      section: 'Step recording', label: 'Delete last step and go back',
+      defaultBindings: [{ code: 'Backspace' }],
+      run: () => stepGoBack() },
+    { id: 'step-legato', group: 'step', scope: stepping,
+      section: 'Step recording', label: 'Toggle legato writing',
+      defaultBindings: [{ code: 'KeyL' }],
+      run: () => setStepLegato(!state.ui.stepLegato) },
 
-    switch (e.code) {
-      case 'Space':
-        e.preventDefault();
-        // Space belongs to the transport in every mode: it ends whatever is
-        // running — playback, a take, a count-in, a step session — and starts
-        // playback when nothing is
+    // Piano roll editing, only with a selection
+    { id: 'editor-delete', group: 'editor', scope: editing,
+      section: 'Piano roll editing', label: 'Delete selected notes',
+      defaultBindings: [{ code: 'Delete' }, { code: 'Backspace' }],
+      run: () => { deleteNotes(getSelectedIds()); clearSelection(); } },
+    { id: 'editor-up', group: 'editor', scope: editing,
+      section: 'Piano roll editing', label: 'Transpose up a semitone',
+      defaultBindings: [{ code: 'ArrowUp' }],
+      run: () => transposeNotes(getSelectedIds(), 1) },
+    { id: 'editor-down', group: 'editor', scope: editing,
+      section: 'Piano roll editing', label: 'Transpose down a semitone',
+      defaultBindings: [{ code: 'ArrowDown' }],
+      run: () => transposeNotes(getSelectedIds(), -1) },
+    { id: 'editor-oct-up', group: 'editor', scope: editing,
+      section: 'Piano roll editing', label: 'Transpose up an octave',
+      defaultBindings: [{ code: 'ArrowUp', shift: true }],
+      run: () => transposeNotes(getSelectedIds(), 12) },
+    { id: 'editor-oct-down', group: 'editor', scope: editing,
+      section: 'Piano roll editing', label: 'Transpose down an octave',
+      defaultBindings: [{ code: 'ArrowDown', shift: true }],
+      run: () => transposeNotes(getSelectedIds(), -12) },
+
+    // Transport
+    { id: 'transport-toggle', group: 'global',
+      section: 'Transport', label: 'Play, or stop whatever is running',
+      defaultBindings: [{ code: 'Space' }],
+      run: () => {
         if (state.transport.mode !== 'stopped') stop();
         else if (state.ui.trainMode) startTrainingSession();
         else play();
-        break;
-      case 'Period':
-      case 'NumpadDecimal':
-        // Step forward, writing a rest
-        if (state.transport.mode === 'step-recording') {
-          e.preventDefault();
-          stepInsertRest();
-        }
-        break;
-      case 'KeyL':
-        // Legato is a step-recording setting, so the key only acts there
-        if (state.transport.mode === 'step-recording') {
-          e.preventDefault();
-          setStepLegato(!state.ui.stepLegato);
-        }
-        break;
-      case 'Backspace':
-        // Step back over the last entry; otherwise let the browser have it
-        if (state.transport.mode === 'step-recording') {
-          e.preventDefault();
-          stepGoBack();
-        }
-        break;
-      case 'KeyR':
-        e.preventDefault();
-        if (e.shiftKey) toggleStepRecord();
-        else toggleRecord();
-        break;
-      case 'KeyC':
-        e.preventDefault();
-        toggleCountIn();
-        break;
-      case 'KeyM':
-        e.preventDefault();
-        toggleMetronome();
-        break;
-      case 'ArrowRight':
-        e.preventDefault();
-        nudgePlayhead(1, e.shiftKey);
-        break;
-      case 'ArrowLeft':
-        e.preventDefault();
-        nudgePlayhead(-1, e.shiftKey);
-        break;
-      case 'Home':
-        seekToStart();
-        break;
+      } },
+    { id: 'record', group: 'global',
+      section: 'Transport', label: 'Record',
+      defaultBindings: [{ code: 'KeyR' }],
+      run: () => toggleRecord() },
+    { id: 'step-record', group: 'global',
+      section: 'Transport', label: 'Step record',
+      defaultBindings: [{ code: 'KeyR', shift: true }],
+      run: () => toggleStepRecord() },
+    { id: 'playhead-forward', group: 'global',
+      section: 'Transport', label: 'Playhead forward a beat',
+      defaultBindings: [{ code: 'ArrowRight' }],
+      run: () => nudgePlayhead(1, false) },
+    { id: 'playhead-back', group: 'global',
+      section: 'Transport', label: 'Playhead back a beat',
+      defaultBindings: [{ code: 'ArrowLeft' }],
+      run: () => nudgePlayhead(-1, false) },
+    { id: 'playhead-forward-bar', group: 'global',
+      section: 'Transport', label: 'Playhead forward a bar',
+      defaultBindings: [{ code: 'ArrowRight', shift: true }],
+      run: () => nudgePlayhead(1, true) },
+    { id: 'playhead-back-bar', group: 'global',
+      section: 'Transport', label: 'Playhead back a bar',
+      defaultBindings: [{ code: 'ArrowLeft', shift: true }],
+      run: () => nudgePlayhead(-1, true) },
+    { id: 'to-start', group: 'global',
+      section: 'Transport', label: 'Go to the start',
+      defaultBindings: [{ code: 'Home' }],
+      run: () => seekToStart() },
+
+    // Toggles
+    { id: 'count-in', group: 'global',
+      section: 'Options', label: 'Toggle count-in',
+      defaultBindings: [{ code: 'KeyC' }],
+      run: () => toggleCountIn() },
+    { id: 'metronome', group: 'global',
+      section: 'Options', label: 'Toggle metronome',
+      defaultBindings: [{ code: 'KeyM' }],
+      run: () => toggleMetronome() },
+
+    // Editing
+    { id: 'undo', group: 'global',
+      section: 'Edit', label: 'Undo',
+      defaultBindings: [{ code: 'KeyZ', mod: true }],
+      run: () => undo() },
+    { id: 'redo', group: 'global',
+      section: 'Edit', label: 'Redo',
+      defaultBindings: [{ code: 'KeyZ', mod: true, shift: true }, { code: 'KeyY', mod: true }],
+      run: () => redo() },
+
+    { id: 'help', group: 'global',
+      section: 'Help', label: 'Keyboard shortcuts',
+      defaultBindings: [{ code: 'Slash', shift: true }],
+      run: () => openShortcutsPanel() },
+  ];
+}
+
+function bindKeyboardShortcuts() {
+  initShortcuts(shortcutActions());
+}
+
+function openShortcutsPanel() {
+  renderShortcutsList();
+  document.getElementById('shortcuts-modal').classList.remove('hidden');
+}
+
+function bindShortcutsPanel() {
+  document.getElementById('btn-shortcuts').onclick = openShortcutsPanel;
+  document.getElementById('btn-close-shortcuts').onclick = closeShortcutsPanel;
+  document.getElementById('btn-shortcuts-reset').onclick = () => {
+    resetAllBindings();
+    renderShortcutsList();
+  };
+}
+
+function closeShortcutsPanel() {
+  cancelCapture();
+  document.getElementById('shortcuts-modal').classList.add('hidden');
+}
+
+// The registry is ordered for dispatch — scoped actions first, so Backspace
+// resolves to the step recorder before the editor. Reading order is different.
+const SECTION_ORDER = ['Transport', 'Options', 'Edit', 'Step recording', 'Piano roll editing', 'Help'];
+
+function renderShortcutsList(warning = '') {
+  const list = document.getElementById('shortcuts-list');
+  list.innerHTML = '';
+  let section = null;
+
+  const ordered = [...getActions()].sort(
+    (a, b) => SECTION_ORDER.indexOf(a.section) - SECTION_ORDER.indexOf(b.section)
+  );
+
+  for (const action of ordered) {
+    if (action.section !== section) {
+      section = action.section;
+      const head = document.createElement('div');
+      head.className = 'shortcut-section';
+      head.textContent = section;
+      list.appendChild(head);
     }
+
+    const row = document.createElement('div');
+    row.className = 'shortcut-row' + (isCustomised(action.id) ? ' custom' : '');
+
+    const label = document.createElement('span');
+    label.className = 'shortcut-label';
+    label.textContent = action.label;
+    row.appendChild(label);
+
+    const keys = document.createElement('span');
+    keys.className = 'shortcut-keys';
+    bindingsFor(action).forEach((binding, i) => {
+      const key = document.createElement('button');
+      // Only the first is editable; the rest are built-in alternates
+      key.className = 'shortcut-key' + (i > 0 ? ' alt' : '');
+      key.textContent = formatBinding(binding);
+      if (i === 0) {
+        key.onclick = () => beginRebind(action, key);
+      } else {
+        key.title = 'Alternate';
+      }
+      keys.appendChild(key);
+    });
+    row.appendChild(keys);
+
+    const reset = document.createElement('button');
+    reset.className = 'shortcut-reset';
+    reset.textContent = '↺';
+    reset.title = 'Restore the default';
+    reset.onclick = () => { resetBinding(action.id); renderShortcutsList(); };
+    row.appendChild(reset);
+
+    list.appendChild(row);
+  }
+
+  const note = document.createElement('div');
+  note.className = 'shortcut-warning';
+  note.textContent = warning;
+  list.appendChild(note);
+}
+
+function beginRebind(action, keyEl) {
+  cancelCapture();
+  renderShortcutsList();
+  // The row was rebuilt, so find the button again
+  const fresh = [...document.querySelectorAll('.shortcut-row')]
+    .find(r => r.querySelector('.shortcut-label').textContent === action.label)
+    ?.querySelector('.shortcut-key');
+  if (!fresh) return;
+
+  fresh.classList.add('listening');
+  fresh.textContent = 'Press a key…';
+
+  startCapture((binding) => {
+    if (!binding) { renderShortcutsList(); return; }
+
+    const clash = findConflict(action.id, binding);
+    if (clash) {
+      renderShortcutsList(`${formatBinding(binding)} is already "${clash.label}"`);
+      return;
+    }
+    setBinding(action.id, binding);
+    renderShortcutsList();
   });
 }
 
