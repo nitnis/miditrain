@@ -683,6 +683,31 @@ select:focus { outline: 1px solid var(--accent); }
   white-space: nowrap;
 }
 .toast.hidden { display: none; }
+
+/* Count-in countdown */
+.count-in-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  background: rgba(13, 13, 26, 0.35);
+}
+.count-in-overlay.hidden { display: none; }
+#count-in-number {
+  font-size: 140px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--accent);
+  text-shadow: 0 6px 30px rgba(0, 0, 0, 0.7);
+  animation: count-in-pulse 0.28s ease-out;
+}
+@keyframes count-in-pulse {
+  from { transform: scale(1.5); opacity: 0.25; }
+  to   { transform: scale(1);   opacity: 1; }
+}
 .toast.fade-out { opacity: 0; }
 
 /* ── SCROLLBARS ── */
