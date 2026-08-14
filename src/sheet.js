@@ -194,7 +194,11 @@ function buildTickables(staveNotes, beatsPerMeasure, clef, useFlats) {
       const keys = group.map(n => midiToVexKey(n.pitch, useFlats));
       const { vexDuration } = findBestDuration(group[0].durationBeats);
       try {
-        tickables.push(new StaveNote({ keys, duration: vexDuration, clef }));
+        const note = new StaveNote({ keys, duration: vexDuration, clef });
+        // The 'd' suffix already carries the tick count; the dot itself is a
+        // modifier and has to be attached to be drawn
+        if (vexDuration.includes('d')) VF().Dot.buildAndAttach([note], { all: true });
+        tickables.push(note);
       } catch (e) {
         console.warn('StaveNote error:', keys, vexDuration, e.message);
       }
