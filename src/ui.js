@@ -6,7 +6,7 @@ import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects } from 
 import { saveComposition, listCompositions, deleteComposition, compositionToJSON, compositionFromJSON } from './storage.js';
 import { startAccuracy, stopAccuracy, getWorstSection } from './accuracy.js';
 import { startMetronome, stopMetronome } from './metronome.js';
-import { resumeAudioContext, setMuted } from './audio.js';
+import { resumeAudioContext, applyOutputLevel, applyClicksOnly } from './audio.js';
 import { startStepRecord, stopStepRecord, stepInsertRest, stepGoBack, getStepMs } from './step-recorder.js';
 import { initNoteEditor, getSelectedIds, clearSelection } from './note-editor.js';
 import { staffPositionName, midiToNoteWithOctave } from './chords.js';
@@ -209,7 +209,7 @@ function nudgeTempo(delta) {
 
 function applyMuteUI(muted) {
   const btn = document.getElementById('btn-mute');
-  setMuted(muted);
+  applyOutputLevel();
   btn.classList.toggle('muted', muted);
   document.getElementById('icon-sound-on').classList.toggle('hidden', muted);
   document.getElementById('icon-sound-off').classList.toggle('hidden', !muted);
@@ -224,6 +224,44 @@ function toggleMute() {
   const muted = !state.ui.muted;
   update('ui.muted', muted);
   applyMuteUI(muted);
+}
+
+// ── Volume ───────────────────────────────────────────────────────────────────
+
+const VOLUME_STEP = 10; // percent
+
+function setVolume(percent) {
+  const clamped = Math.max(0, Math.min(100, Math.round(Number(percent))));
+  if (!Number.isFinite(clamped)) return;
+  update('ui.volume', clamped / 100);
+  applyOutputLevel();
+  document.getElementById('volume-slider').value = clamped;
+  document.getElementById('volume-value').textContent = `${clamped}%`;
+}
+
+function nudgeVolume(direction) {
+  const before = Math.round(state.ui.volume * 100);
+  setVolume(before + direction * VOLUME_STEP);
+  const after = Math.round(state.ui.volume * 100);
+  // Turning it up while muted would be silently ignored, so lift the mute
+  if (state.ui.muted && after > 0) toggleMute();
+  showToast(`Volume ${after}%`, 900);
+}
+
+// ── Clicks only ──────────────────────────────────────────────────────────────
+// Practising against the click without hearing the notes: the note bus closes,
+// the metronome and count-in keep their own path to the output.
+
+function toggleClicksOnly() {
+  const on = !state.ui.clicksOnly;
+  update('ui.clicksOnly', on);
+  applyClicksOnly();
+  document.getElementById('btn-clicks-only').classList.toggle('active', on);
+
+  if (!on) { showToast('Notes audible again', 1000); return; }
+  showToast(state.ui.metronomeEnabled
+    ? 'Clicks only — notes are silent'
+    : 'Clicks only — turn the metronome on to hear anything but the count-in', 1800);
 }
 
 function toggleTrainMode() {
@@ -502,6 +540,8 @@ function bindToolbar() {
 
   document.getElementById('btn-mute').onclick = toggleMute;
   applyMuteUI(state.ui.muted);
+  document.getElementById('volume-slider').oninput = (e) => setVolume(e.target.value);
+  setVolume(state.ui.volume * 100);
 
   const undoBtn = document.getElementById('btn-undo');
   const redoBtn = document.getElementById('btn-redo');
@@ -517,6 +557,7 @@ function bindToolbar() {
   countInBtn.onclick = toggleCountIn;
 
   document.getElementById('btn-metronome').onclick = toggleMetronome;
+  document.getElementById('btn-clicks-only').onclick = toggleClicksOnly;
 
   const speedSlider = document.getElementById('speed-slider');
   const speedValue = document.getElementById('speed-value');
@@ -825,10 +866,23 @@ function shortcutActions() {
       section: 'Options', label: 'Toggle metronome',
       defaultBindings: [{ code: 'KeyM' }],
       run: () => toggleMetronome() },
+    { id: 'clicks-only', group: 'global', hint: 'btn-clicks-only',
+      section: 'Options', label: 'Hear only the metronome and count-in',
+      defaultBindings: [{ code: 'KeyK' }],
+      run: () => toggleClicksOnly() },
     { id: 'mute', group: 'global', hint: 'btn-mute',
       section: 'Options', label: 'Mute / unmute all audio',
       defaultBindings: [{ code: 'KeyS' }],
       run: () => toggleMute() },
+    // Shift on the quantize keys, the way [ and ] carry the tempo
+    { id: 'volume-down', group: 'global',
+      section: 'Options', label: 'Volume down 10%',
+      defaultBindings: [{ code: 'Minus', shift: true }],
+      run: () => nudgeVolume(-1) },
+    { id: 'volume-up', group: 'global',
+      section: 'Options', label: 'Volume up 10%',
+      defaultBindings: [{ code: 'Equal', shift: true }],
+      run: () => nudgeVolume(1) },
     { id: 'train', group: 'global', hint: 'btn-train-mode',
       section: 'Options', label: 'Toggle training mode',
       defaultBindings: [{ code: 'KeyT' }],

@@ -1,9 +1,17 @@
 // Web Audio output: live note monitoring and scheduled playback.
-// Everything routes through one master gain so mute is a single switch.
+//
+//   notes  → noteBus  ─┐
+//   clicks → clickBus ─┴→ master → compressor → destination
+//
+// Two buses rather than one, so each switch is a single gain: the master
+// carries volume and mute, and the note bus is what "clicks only" silences —
+// leaving the metronome and the count-in audible through their own path.
 import { state } from './state.js';
 
 let ctx = null;
 let master = null;
+let noteBus = null;
+let clickBus = null;
 
 // Currently sounding voices, so stop() can cut them
 let liveVoices = new Map();   // pitch → voice (held MIDI input)
@@ -20,11 +28,21 @@ const RELEASE_S = 0.220;
 const SUSTAIN_RATIO = 0.65;
 const MIN_GAIN = 0.0001; // exponential ramps cannot reach zero
 
+// What the master gain should sit at: the volume, or nothing when muted
+function outputLevel() {
+  return state.ui.muted ? 0 : state.ui.volume;
+}
+
 export function getAudioContext() {
   if (!ctx) {
     ctx = new (window.AudioContext || window.webkitAudioContext)();
     master = ctx.createGain();
-    master.gain.value = state.ui.muted ? 0 : 1;
+    master.gain.value = outputLevel();
+
+    noteBus = ctx.createGain();
+    noteBus.gain.value = state.ui.clicksOnly ? 0 : 1;
+    clickBus = ctx.createGain();
+    clickBus.gain.value = 1;
 
     // Keeps a dense chord from summing into the clipping ceiling, the other
     // half of what made playback sound harsh
@@ -35,23 +53,35 @@ export function getAudioContext() {
     comp.attack.value = 0.004;
     comp.release.value = 0.25;
 
+    noteBus.connect(master);
+    clickBus.connect(master);
     master.connect(comp);
     comp.connect(ctx.destination);
 
     // A silent source keeps the graph rendering. Without something pulling it,
     // gain automation stalls while nothing is playing, so a mute fade would
-    // only resume — and audibly leak — once the next note started.
+    // only resume — and audibly leak — once the next note started. It feeds
+    // the head of the chain rather than the master, so the note bus is pulled
+    // too and "clicks only" takes effect the moment it is switched.
+    // It also feeds the master directly, so closing the note bus cannot stall
+    // the master's own automation on the way through.
     const keepAlive = ctx.createConstantSource();
     keepAlive.offset.value = 0;
+    keepAlive.connect(noteBus);
     keepAlive.connect(master);
     keepAlive.start();
   }
   return ctx;
 }
 
-export function getMasterGain() {
+export function getNoteBus() {
   getAudioContext();
-  return master;
+  return noteBus;
+}
+
+export function getClickBus() {
+  getAudioContext();
+  return clickBus;
 }
 
 export function resumeAudioContext() {
@@ -59,13 +89,23 @@ export function resumeAudioContext() {
   if (c.state === 'suspended') c.resume();
 }
 
-export function setMuted(muted) {
-  // Don't force the context into existence before a user gesture — it is
-  // created with the current mute state anyway
+// Ramp rather than jump, so a change mid-note doesn't click. Both of these
+// read the state they follow — the context is built from that same state, so
+// there is nothing to do before a user gesture has created it.
+function rampTo(param, value) {
   if (!ctx) return;
-  // Ramp rather than jump, so muting mid-note doesn't click
-  master.gain.cancelScheduledValues(ctx.currentTime);
-  master.gain.setTargetAtTime(muted ? 0 : 1, ctx.currentTime, 0.008);
+  param.cancelScheduledValues(ctx.currentTime);
+  param.setTargetAtTime(value, ctx.currentTime, 0.008);
+}
+
+// Volume and mute meet at the master gain
+export function applyOutputLevel() {
+  rampTo(master?.gain, outputLevel());
+}
+
+// "Clicks only" closes the note bus and leaves the click bus open
+export function applyClicksOnly() {
+  rampTo(noteBus?.gain, state.ui.clicksOnly ? 0 : 1);
 }
 
 function midiToFreq(pitch) {
@@ -96,7 +136,7 @@ function createVoice(pitch, velocity, when) {
 
   osc.connect(filter);
   filter.connect(gain);
-  gain.connect(getMasterGain());
+  gain.connect(getNoteBus());
 
   const voice = { osc, gain, filter, peak: peakFor(velocity) };
   osc.addEventListener('ended', () => {

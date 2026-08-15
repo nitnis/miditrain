@@ -1,6 +1,6 @@
 // Web Audio API metronome with look-ahead scheduling
 import { state } from './state.js';
-import { getAudioContext, getMasterGain } from './audio.js';
+import { getAudioContext, getClickBus } from './audio.js';
 
 let schedulerTimer = null;
 let nextBeatTime = 0;
@@ -9,7 +9,8 @@ let beatCount = 0;
 const LOOKAHEAD_MS = 100;
 const SCHEDULE_INTERVAL_MS = 25;
 
-// Shared with note output so the mute switch covers the click too
+// Clicks run on their own bus under the same master, so mute and volume cover
+// them while "clicks only" — which closes the note bus — leaves them audible
 function getAudioCtx() { return getAudioContext(); }
 
 function scheduleClick(time, isDownbeat) {
@@ -18,7 +19,7 @@ function scheduleClick(time, isDownbeat) {
   const gain = ctx.createGain();
 
   osc.connect(gain);
-  gain.connect(getMasterGain());
+  gain.connect(getClickBus());
 
   osc.frequency.value = isDownbeat ? 1200 : 800;
   gain.gain.setValueAtTime(0.3, time);
