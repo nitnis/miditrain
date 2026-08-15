@@ -76,9 +76,11 @@ export function initUI() {
   on('accuracy:wrong', ({ pitch }) => spawnKeyEffect(pitch, 'wrong'));
 
   // Learn: the highlighted keys are the instruction, so they follow the state
-  on('transport:learn', ({ total }) => {
+  on('transport:learn', ({ total, looping, startBar, endBar }) => {
     showLearnStatus(true);
-    showToast(`Learn mode — ${total} note${total === 1 ? '' : 's'} to play`, 1600);
+    showToast(looping
+      ? `Learn — bars ${startBar}–${endBar}, looping until you play it clean`
+      : `Learn mode — ${total} note${total === 1 ? '' : 's'} to play`, 2000);
   });
   on('learn:waiting', (info) => {
     if (info.pitches.length) updateLearnStatus(info);
@@ -86,7 +88,17 @@ export function initUI() {
   });
   on('learn:hit', ({ pitch }) => spawnKeyEffect(pitch, 'good'));
   on('learn:wrong', ({ pitch }) => spawnKeyEffect(pitch, 'wrong'));
-  on('learn:complete', ({ total }) => showToast(`Learn complete — ${total} played`, 2200));
+  // Only a looping session reports the pass it just finished; a straight
+  // run-through has nothing to say until it is complete
+  on('learn:pass', ({ pass, slips, clean }) => {
+    if (clean) return;
+    showToast(`${slips} slip${slips === 1 ? '' : 's'} on pass ${pass} — from the top`, 1800);
+  });
+  on('learn:complete', ({ total, passes, looping }) => {
+    showToast(looping
+      ? `Clean pass — ${total} played in ${passes} attempt${passes === 1 ? '' : 's'}`
+      : `Learn complete — ${total} played`, 2400);
+  });
 
   on('accuracy:progress', (p) => updateGauge(p));
   on('accuracy:complete', (results) => showAccuracyResults(results));
@@ -297,6 +309,11 @@ function setPracticeMode(mode) {
   document.getElementById('btn-learn-mode').classList.toggle('active', mode === 'learn');
   document.getElementById('btn-play').title =
     mode === 'train' ? 'Start Training' : mode === 'learn' ? 'Start Learning' : 'Play';
+  // The loop range doubles as the section learn mode drills, so say so while
+  // that is what it will do
+  document.getElementById('loop-enabled').title = mode === 'learn'
+    ? 'Loop the bar range — in learn mode, repeat it until you play it clean'
+    : 'Loop the bar range during playback';
 }
 
 function toggleTrainMode() {
@@ -329,12 +346,20 @@ function showLearnStatus(visible) {
   if (!visible) setWaitingPitches([]);
 }
 
-function updateLearnStatus({ pitches, done, total }) {
+function updateLearnStatus({ pitches, done, total, looping, pass, slips }) {
   setWaitingPitches(pitches);
   document.getElementById('learn-count').textContent = `${done + 1} / ${total}`;
   document.getElementById('learn-hint').textContent = pitches.length === 1
     ? 'Play the highlighted key'
     : `Play the ${pitches.length} highlighted keys`;
+
+  const passEl = document.getElementById('learn-pass');
+  passEl.classList.toggle('hidden', !looping);
+  if (!looping) return;
+  passEl.classList.toggle('dirty', slips > 0);
+  passEl.textContent = slips
+    ? `pass ${pass} · ${slips} slip${slips === 1 ? '' : 's'}`
+    : `pass ${pass} · clean`;
 }
 
 function toggleLoop() {

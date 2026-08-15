@@ -10,6 +10,7 @@
 // way the step recorder does.
 import { state, update, emit, on } from './state.js';
 import { noteOn, noteOff, resumeAudioContext } from './audio.js';
+import { barStartMs } from './quantizer.js';
 
 // Notes struck this close together are one thing to play, so they are waited
 // on together. Matches the tolerance the slur renderer uses for "same attack".
@@ -30,6 +31,25 @@ let perfStart = 0;
 let posStart = 0;
 let targetMs = 0;
 let cleanupFns = [];
+
+// Section practice. The loop range is already the app's way of naming a
+// stretch of bars, so learn mode reads the same one — with loop on it repeats
+// the section until you get through it without a wrong note, rather than
+// looping forever the way playback does.
+let sectionStartMs = 0;
+let looping = false;
+let pass = 1;
+let slips = 0;          // wrong notes in the current pass
+
+function sectionRange() {
+  const { loopEnabled, loopStartBar, loopEndBar } = state.transport;
+  if (!loopEnabled) return null;
+  const { tempo, timeSignature } = state.composition;
+  return {
+    startMs: barStartMs(loopStartBar - 1, tempo, timeSignature),
+    endMs: barStartMs(loopEndBar, tempo, timeSignature),
+  };
+}
 
 // One entry per attack, in time order
 export function groupAttacks(notes) {
@@ -57,13 +77,20 @@ export function groupAttacks(notes) {
 
 export function startLearn() {
   if (state.transport.mode === 'learning') return false;
-  groups = groupAttacks(state.composition.notes);
+
+  const section = sectionRange();
+  looping = Boolean(section);
+  sectionStartMs = section ? section.startMs : 0;
+  groups = groupAttacks(state.composition.notes)
+    .filter(g => !section || (g.startMs >= section.startMs && g.startMs < section.endMs));
   if (!groups.length) return false;
 
   resumeAudioContext();
   releaseListeners();
   index = -1;
-  update('transport.currentTime', 0);
+  pass = 1;
+  slips = 0;
+  update('transport.currentTime', sectionStartMs);
   update('transport.mode', 'learning');
   // Registered after the mode change, so entering the mode cannot trip the
   // listener that exists to notice something else leaving it
@@ -71,7 +98,12 @@ export function startLearn() {
     on('midi:noteon', handleNoteOn),
     on('change:transport.mode', ({ value }) => { if (value !== 'learning') finish(false); }),
   ];
-  emit('transport:learn', { total: groups.length });
+  emit('transport:learn', {
+    total: groups.length,
+    looping,
+    startBar: looping ? state.transport.loopStartBar : null,
+    endBar: looping ? state.transport.loopEndBar : null,
+  });
   goTo(0);
   return true;
 }
@@ -82,7 +114,7 @@ export function stopLearn() {
 
 export function getLearnProgress() {
   if (!groups.length || index < 0) return null;
-  return { done: index, total: groups.length, pending: [...pending] };
+  return { done: index, total: groups.length, pending: [...pending], looping, pass, slips };
 }
 
 function releaseListeners() {
@@ -96,8 +128,11 @@ function finish(completed) {
   clearPrompt();
   releaseListeners();
   pending.clear();
-  emit('learn:waiting', { pitches: [], done: index, total: groups.length });
-  if (completed) emit('learn:complete', { total: groups.length });
+  emit('learn:waiting', { pitches: [], done: index, total: groups.length, looping, pass, slips });
+  if (completed) {
+    emit('learn:pass', { pass, slips, clean: slips === 0, total: groups.length });
+    emit('learn:complete', { total: groups.length, passes: pass, looping });
+  }
   // Already out of the mode when something else stopped us — saying so twice
   // would bounce back through the mode listener
   if (state.transport.mode === 'learning') {
@@ -107,8 +142,16 @@ function finish(completed) {
 }
 
 function goTo(i) {
+  // End of the section. Looping means going again until a pass is clean —
+  // "correctly" can only mean without a wrong note, since learn mode will not
+  // move past a note until the right one is played anyway.
+  if (i >= groups.length) {
+    if (looping && slips > 0) { restartPass(); return; }
+    finish(true);
+    return;
+  }
+
   index = i;
-  if (i >= groups.length) { finish(true); return; }
 
   pending = new Set(groups[i].pitches);
   targetMs = groups[i].startMs;
@@ -136,8 +179,20 @@ function arrive() {
   announce();
 }
 
+function restartPass() {
+  clearPrompt();
+  emit('learn:pass', { pass, slips, clean: false, total: groups.length });
+  pass += 1;
+  slips = 0;
+  index = -1;
+  update('transport.currentTime', sectionStartMs);
+  goTo(0);
+}
+
 function announce() {
-  emit('learn:waiting', { pitches: [...pending], done: index, total: groups.length });
+  emit('learn:waiting', {
+    pitches: [...pending], done: index, total: groups.length, looping, pass, slips,
+  });
 }
 
 function playPrompt(group) {
@@ -166,7 +221,9 @@ function handleNoteOn({ pitch }) {
   if (state.transport.mode !== 'learning' || rafId !== null) return;
 
   if (!pending.has(pitch)) {
-    emit('learn:wrong', { pitch });
+    slips += 1;
+    emit('learn:wrong', { pitch, slips });
+    if (looping) announce();
     return;
   }
 
