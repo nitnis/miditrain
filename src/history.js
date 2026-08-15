@@ -5,27 +5,34 @@
 // recording, recording and Clear All without each having to remember to
 // register an inverse operation. Compositions are small enough that copying
 // the note list is cheaper than the bookkeeping a command log would need.
-import { state, emit, on } from './state.js';
+import { state, update, emit, on } from './state.js';
 
 const MAX_ENTRIES = 100;
 // Long enough that a drag or a fast chord lands as one entry, short enough
 // that consecutive edits stay separate
 const COALESCE_MS = 250;
 
-let stack = [[]];
+let stack = [{ tempo: 120, notes: [] }];
 let index = 0;
 let applying = false;   // suppress capture while restoring a snapshot
 let pending = null;
 
-function clone(notes) {
-  return notes.map(n => ({ ...n }));
+// The tempo rides along with the notes: changing it rescales every note time,
+// so a snapshot of the notes alone would restore old timings under a new
+// tempo and land the music off the beat.
+function snapshot() {
+  return {
+    tempo: state.composition.tempo,
+    notes: state.composition.notes.map(n => ({ ...n })),
+  };
 }
 
-function matchesCurrentEntry(notes) {
+function matchesCurrentEntry(snap) {
   const entry = stack[index];
-  if (entry.length !== notes.length) return false;
-  for (let i = 0; i < notes.length; i++) {
-    const a = entry[i], b = notes[i];
+  if (entry.tempo !== snap.tempo) return false;
+  if (entry.notes.length !== snap.notes.length) return false;
+  for (let i = 0; i < snap.notes.length; i++) {
+    const a = entry.notes[i], b = snap.notes[i];
     if (a.id !== b.id || a.pitch !== b.pitch || a.startTime !== b.startTime ||
         a.duration !== b.duration || a.velocity !== b.velocity) return false;
   }
@@ -43,7 +50,7 @@ function capture() {
   clearTimeout(pending);
   pending = null;
 
-  const snap = clone(state.composition.notes);
+  const snap = snapshot();
   if (matchesCurrentEntry(snap)) return;
 
   stack = stack.slice(0, index + 1);
@@ -60,7 +67,8 @@ function schedule() {
 
 function apply(snap) {
   applying = true;
-  state.composition.notes = clone(snap);
+  state.composition.notes = snap.notes.map(n => ({ ...n }));
+  update('composition.tempo', snap.tempo);
 
   // Selections can outlive the notes they point at
   const live = new Set(state.composition.notes.map(n => n.id));
@@ -97,7 +105,7 @@ export function redo() {
 export function resetHistory() {
   clearTimeout(pending);
   pending = null;
-  stack = [clone(state.composition.notes)];
+  stack = [snapshot()];
   index = 0;
   emit('history:changed', status());
 }

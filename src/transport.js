@@ -138,6 +138,43 @@ export function stop() {
   emit('transport:stop');
 }
 
+// Change the tempo and take the music with it.
+//
+// Notes are stored in milliseconds, so leaving them alone while the tempo
+// moves would re-notate the piece (a 500ms note is a quarter at 120 BPM and an
+// eighth at 60) without playing back any faster. Scaling every time by the
+// inverse ratio keeps each note on the beat it was written on and makes the
+// tempo do what a tempo should: change how fast it goes by.
+export function changeTempo(bpm) {
+  const previous = state.composition.tempo;
+  const parsed = parseFloat(bpm);
+  if (!Number.isFinite(parsed)) return previous; // an empty field keeps the tempo
+  const clamped = Math.max(20, Math.min(300, Math.round(parsed)));
+  if (clamped === previous) return clamped;
+
+  const ratio = previous / clamped; // > 1 when slowing down
+  for (const note of state.composition.notes) {
+    note.startTime *= ratio;
+    note.duration *= ratio;
+  }
+  // A take in progress holds its notes outside the composition
+  for (const info of activeRecordNotes.values()) info.startTime *= ratio;
+
+  const running = rafId !== null;
+  const position = (running ? currentPosition() : state.transport.currentTime) * ratio;
+  if (stopAtMs !== null) stopAtMs *= ratio;
+
+  update('composition.tempo', clamped);
+  emit('transport:noteschanged', state.composition.notes);
+
+  // Re-anchor whatever is already rolling: the audio and the metronome were
+  // scheduled against the old timings
+  if (running) restartAt(position);
+  else update('transport.currentTime', Math.max(0, position));
+
+  return clamped;
+}
+
 // Play a bounded stretch and stop at the end of it, for practising a section
 export function playRange(startMs, endMs) {
   stop();

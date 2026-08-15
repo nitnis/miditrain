@@ -200,16 +200,12 @@ export function getWorstSection(composition) {
 
   if (bestScore <= 0) return null; // nothing went wrong worth repeating
 
-  const endBar = Math.min(barCount, bestStart + SECTION_BARS);
+  // Bars, not milliseconds: the tempo can move between the run that produced
+  // this section and the retry that practises it, and the section has to
+  // follow the music rather than the clock.
   return {
     startBar: bestStart + 1,
-    endBar,
-    startMs: bestStart * barMs,
-    // The grading boundary is the barline itself. Playback runs a little past
-    // it separately, so the last note can still be played without the next
-    // bar's first note being pulled into the section.
-    endMs: endBar * barMs,
-    tailMs: beatMs,
+    endBar: Math.min(barCount, bestStart + SECTION_BARS),
     errors: bestScore,
   };
 }
