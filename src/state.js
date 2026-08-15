@@ -28,6 +28,8 @@ const _state = {
     trainMode: false,
     metronomeEnabled: false,
     muted: false,           // master audio mute; audible by default
+    volume: 1,              // 0..1, applied at the master gain
+    clicksOnly: false,      // silence the notes, keep the metronome and count-in
     countInEnabled: true,   // click one bar before live recording and training
     stepLegato: false,      // step recording holds each note until the next one
     quantize: 8,            // grid division (8 = 1/8 note); also the step-record step size

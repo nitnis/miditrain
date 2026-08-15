@@ -133,6 +133,8 @@
           </svg>
           <span id="mute-label">Sound</span>
         </button>
+        <input type="range" id="volume-slider" class="volume-slider" min="0" max="100" value="100">
+        <span class="volume-value" id="volume-value">100%</span>
       </div>
 
       <!-- Undo / Redo -->
@@ -170,6 +172,15 @@
             <line x1="12" y1="20" x2="12" y2="8" stroke-width="1.5" opacity="0.5"/>
           </svg>
           Metro
+        </button>
+        <button class="toggle-btn" id="btn-clicks-only" title="Hear only the metronome and count-in">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 17V5l10-2v12"/>
+            <circle cx="6" cy="17" r="3"/>
+            <circle cx="16" cy="15" r="3"/>
+            <line x1="3" y1="21" x2="21" y2="3"/>
+          </svg>
+          Clicks only
         </button>
       </div>
 
