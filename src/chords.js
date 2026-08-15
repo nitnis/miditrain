@@ -20,9 +20,52 @@ const CHORD_PATTERNS = [
 
 function pitchClass(midi) { return midi % 12; }
 
-export function detectChord(midiPitches, useFlats = false) {
+// ── Spelling by key ──────────────────────────────────────────────────────────
+// "Does this key use flats" is too coarse a question. It puts every sharp key
+// in one bucket, so a B-flat chord came out as "A#" in C major and no chord
+// changed its name between C, G, D and A. A key sits at a position on the
+// circle of fifths, and the right spelling of a pitch is the one nearest it.
+
+const KEY_FIFTHS = {
+  C: 0, G: 1, D: 2, A: 3, E: 4, B: 5, 'F#': 6, 'C#': 7,
+  F: -1, Bb: -2, Eb: -3, Ab: -4, Db: -5, Gb: -6, Cb: -7,
+};
+const LETTER_FIFTHS = { F: -1, C: 0, G: 1, D: 2, A: 3, E: 4, B: 5 };
+const LETTER_PC = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+
+// Every single-accidental spelling, with where each sits on the circle. Double
+// accidentals are left out: no chord is ever labelled F-double-sharp.
+const SPELLINGS = [];
+for (const [letter, letterFifths] of Object.entries(LETTER_FIFTHS)) {
+  for (const [accidental, offset] of [['b', -1], ['', 0], ['#', 1]]) {
+    SPELLINGS.push({
+      pc: (((LETTER_PC[letter] + offset) % 12) + 12) % 12,
+      letter,
+      accidental,
+      name: letter + accidental,
+      fifths: letterFifths + offset * 7,
+    });
+  }
+}
+
+export function spellPitchClass(pc, keySignature = 'C') {
+  const home = KEY_FIFTHS[keySignature] ?? 0;
+  let best = null;
+  for (const spelling of SPELLINGS) {
+    if (spelling.pc !== pc) continue;
+    const distance = Math.abs(spelling.fifths - home);
+    // A tie goes the way the key leans: D# in A major, E-flat in E-flat
+    const wins = !best || distance < best.distance ||
+      (distance === best.distance &&
+       (home >= 0 ? spelling.fifths > best.fifths : spelling.fifths < best.fifths));
+    if (wins) best = { ...spelling, distance };
+  }
+  return best || { name: NOTE_NAMES_SHARP[pc], letter: 'C', accidental: '' };
+}
+
+export function detectChord(midiPitches, keySignature = 'C') {
   if (midiPitches.length < 2) return null;
-  const names = useFlats ? NOTE_NAMES_FLAT : NOTE_NAMES_SHARP;
+  const nameFor = (pc) => spellPitchClass(pc, keySignature).name;
   const pcs = [...new Set(midiPitches.map(pitchClass))].sort((a, b) => a - b);
   // The lowest sounding note decides the inversion
   const bass = pitchClass(Math.min(...midiPitches));
@@ -33,9 +76,9 @@ export function detectChord(midiPitches, useFlats = false) {
     for (const { name, intervals: pattern } of CHORD_PATTERNS) {
       if (intervals.length === pattern.length &&
           intervals.every((v, i) => v === pattern[i])) {
-        const rootName = names[root];
+        const rootName = nameFor(root);
         const label = name === 'maj' ? rootName : `${rootName}${name}`;
-        return bass === root ? label : `${label}/${names[bass]}`;
+        return bass === root ? label : `${label}/${nameFor(bass)}`;
       }
     }
   }
@@ -50,7 +93,7 @@ export function detectChord(midiPitches, useFlats = false) {
 // leftover. A run of several events needs three distinct pitch classes before
 // it counts — two notes spread over time are too ambiguous to name, though a
 // genuinely simultaneous dyad is still labelled as it was before.
-export function detectChordRuns(events, useFlats = false, maxSpanBeats = 4, maxEvents = 8) {
+export function detectChordRuns(events, keySignature = 'C', maxSpanBeats = 4, maxEvents = 8) {
   const runs = [];
   let i = 0;
 
@@ -78,7 +121,7 @@ export function detectChordRuns(events, useFlats = false, maxSpanBeats = 4, maxE
       // simultaneous dyad is still labelled as it was before
       if (seen.size < (j === i ? 2 : 3)) continue;
 
-      const label = detectChord(pitches, useFlats);
+      const label = detectChord(pitches, keySignature);
       // Keep extending: the longer reading is the better one (Am7 over Am)
       if (label) {
         found = { beat: events[i].beat, endIndex: j, pitches: [...pitches], label, arpeggiated: j > i };

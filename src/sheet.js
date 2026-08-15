@@ -1,17 +1,19 @@
 // VexFlow 4.x sheet music renderer (grand staff)
 import { state } from './state.js';
 import { quantizeNotes, groupByMeasure, groupIntoChords, fillWithRests, findBestDuration, splitAcrossBarlines } from './quantizer.js';
-import { detectChordRuns, keyUsesFlats } from './chords.js';
+import { detectChordRuns, spellPitchClass } from './chords.js';
 
 function VF() { return window.Vex?.Flow; }
 
-// MIDI note → VexFlow "note/octave" string
-const NOTE_SHARP = ['c', 'c#', 'd', 'd#', 'e', 'f', 'f#', 'g', 'g#', 'a', 'a#', 'b'];
-const NOTE_FLAT  = ['c', 'db', 'd', 'eb', 'e', 'f', 'gb', 'g', 'ab', 'a', 'bb', 'b'];
-
-function midiToVexKey(midi, useFlats) {
-  const names = useFlats ? NOTE_FLAT : NOTE_SHARP;
-  return `${names[midi % 12]}/${Math.floor(midi / 12) - 1}`;
+// MIDI note → VexFlow "note/octave" string, spelled for the key
+function midiToVexKey(midi, keySignature) {
+  const spelling = spellPitchClass(midi % 12, keySignature);
+  let octave = Math.floor(midi / 12) - 1;
+  // C-flat belongs to the octave above the pitch it sounds, B-sharp the one
+  // below — without this they would be written a whole octave out of place
+  if (spelling.letter === 'C' && spelling.accidental === 'b') octave += 1;
+  else if (spelling.letter === 'B' && spelling.accidental === '#') octave -= 1;
+  return `${spelling.name.toLowerCase()}/${octave}`;
 }
 
 // Split a rest duration into clean note values (no dotted for simplicity)
@@ -79,7 +81,6 @@ export function renderSheet(notes, composition, currentTimeMs = null) {
   } = VF();
 
   const { tempo, timeSignature, keySignature } = composition;
-  const useFlats = keyUsesFlats(keySignature);
   const beatsPerMeasure = timeSignature.numerator * (4 / timeSignature.denominator);
 
   const quantized = quantizeNotes(notes, tempo, timeSignature, state.ui.quantize);
@@ -159,8 +160,8 @@ export function renderSheet(notes, composition, currentTimeMs = null) {
     const trebleNotes  = measureNotes.filter(n => n.pitch >= 60);
     const bassNotes    = measureNotes.filter(n => n.pitch <  60);
 
-    const trebleTicks = buildTickables(trebleNotes, beatsPerMeasure, 'treble', useFlats, segmentPlacement, line);
-    const bassTicks   = buildTickables(bassNotes,   beatsPerMeasure, 'bass',   useFlats, segmentPlacement, line);
+    const trebleTicks = buildTickables(trebleNotes, beatsPerMeasure, 'treble', keySignature, segmentPlacement, line);
+    const bassTicks   = buildTickables(bassNotes,   beatsPerMeasure, 'bass',   keySignature, segmentPlacement, line);
 
     const beatPositions = drawSystem(
       [{ tickables: trebleTicks, stave: trebleStave, clef: 'treble' },
@@ -170,7 +171,7 @@ export function renderSheet(notes, composition, currentTimeMs = null) {
 
     // Chord labels
     if (measureNotes.length > 0) {
-      drawChordLabels(measureNotes, trebleStave, beatsPerMeasure, useFlats, beatPositions);
+      drawChordLabels(measureNotes, trebleStave, beatsPerMeasure, keySignature, beatPositions);
     }
 
     // Step cursor takes the place of the playhead while step recording. The
@@ -363,7 +364,7 @@ function drawTies(segments, placement) {
   }
 }
 
-function buildTickables(staveNotes, beatsPerMeasure, clef, useFlats, segmentPlacement, line) {
+function buildTickables(staveNotes, beatsPerMeasure, clef, keySignature, segmentPlacement, line) {
   const { StaveNote } = VF();
   const chordGroups = groupIntoChords(staveNotes);
   const filled = fillWithRests(chordGroups, beatsPerMeasure);
@@ -386,7 +387,7 @@ function buildTickables(staveNotes, beatsPerMeasure, clef, useFlats, segmentPlac
       // Sorted by pitch so a key's index is stable — ties address noteheads
       // by index into this array
       const group = [...item.group].sort((a, b) => a.pitch - b.pitch);
-      const keys = group.map(n => midiToVexKey(n.pitch, useFlats));
+      const keys = group.map(n => midiToVexKey(n.pitch, keySignature));
       const { vexDuration } = findBestDuration(group[0].durationBeats);
       try {
         const note = new StaveNote({ keys, duration: vexDuration, clef });
@@ -461,7 +462,7 @@ function drawSystem(parts, timeSignature, Formatter, Voice, Accidental, Beam, ke
   }
 }
 
-function drawChordLabels(measureNotes, trebleStave, beatsPerMeasure, useFlats, beatPositions) {
+function drawChordLabels(measureNotes, trebleStave, beatsPerMeasure, keySignature, beatPositions) {
   const chordGroups = groupIntoChords(measureNotes);
   const noteStartX = trebleStave.getNoteStartX();
   const noteEndX   = trebleStave.getX() + trebleStave.getWidth() - 10;
@@ -483,7 +484,7 @@ function drawChordLabels(measureNotes, trebleStave, beatsPerMeasure, useFlats, b
   const offsetX = svgRect ? (svgRect.left - containerRect.left) : 0;
   const offsetY = svgRect ? (svgRect.top  - containerRect.top)  : 0;
 
-  for (const run of detectChordRuns(events, useFlats, beatsPerMeasure)) {
+  for (const run of detectChordRuns(events, keySignature, beatsPerMeasure)) {
     // Sit over the actual note column where one exists, since VexFlow does not
     // space time evenly; otherwise fall back to a linear estimate
     const hit = beatPositions && beatPositions.find(p => p.beat >= run.beat - 1e-6);
