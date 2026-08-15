@@ -748,6 +748,40 @@ select:focus { outline: 1px solid var(--accent); }
   margin: 10px 0 -2px;
 }
 
+/* Take the same passage again a notch slower or faster */
+.retry-tempo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+.retry-tempo-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+.retry-tempo-btn {
+  min-width: 52px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.retry-tempo-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.retry-tempo-value {
+  min-width: 68px;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Keyboard shortcuts panel */
 .shortcuts-box {
   max-width: 620px;

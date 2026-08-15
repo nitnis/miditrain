@@ -1,6 +1,6 @@
 // UI updates: DOM manipulation, modals, controls
 import { state, update, emit, on } from './state.js';
-import { record, play, stop, stopAndRewind, startCountIn, playRange, seekTo, seekToStart, seekToEnd, clearAllNotes, transposeNotes, applyLegato, deleteNotes } from './transport.js';
+import { record, play, stop, stopAndRewind, startCountIn, playRange, seekTo, seekToStart, seekToEnd, clearAllNotes, transposeNotes, applyLegato, deleteNotes, changeTempo } from './transport.js';
 import { renderSheet, initSheet, getChordOverlayData, getStaveGeometry } from './sheet.js';
 import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects } from './pianoroll.js';
 import { saveComposition, listCompositions, deleteComposition, compositionToJSON, compositionFromJSON } from './storage.js';
@@ -61,6 +61,7 @@ export function initUI() {
   });
 
   // MIDI status updates
+  on('change:composition.tempo', () => { syncTempoControls(); scheduleSheetRender(); });
   on('change:midi.connected', ({ value }) => updateMidiStatus(value));
   on('change:midi.inputs', ({ value }) => updateMidiInputsList(value));
   on('midi:unavailable', ({ reason }) => showMidiWarning(reason));
@@ -189,10 +190,16 @@ function nudgeQuantize(direction) {
 }
 
 function setTempo(v) {
-  const bpm = Math.max(20, Math.min(300, parseInt(v) || 120));
-  update('composition.tempo', bpm);
+  changeTempo(v);
+}
+
+// Undo can move the tempo too, so the controls follow the state rather than
+// being written by whoever changed it
+function syncTempoControls() {
+  const bpm = state.composition.tempo;
   document.getElementById('tempo-input').value = bpm;
   document.getElementById('tempo-slider').value = bpm;
+  updateRetryTempoLabel();
 }
 
 function nudgeTempo(delta) {
@@ -370,29 +377,81 @@ function withCountIn(start) {
   else start();
 }
 
-// The stretch the last session covered, so Try Again repeats the same thing
-let lastTrainingRange = null;
+// The bars the last session covered, so Try Again repeats the same passage —
+// at whatever the tempo happens to be by then
+let lastTrainingBars = null;
 
-function startTrainingSession(range = null) {
+// Bar numbers are 1-based and inclusive of `startBar`, exclusive past `endBar`
+function rangeForBars({ startBar, endBar }) {
+  const { tempo, timeSignature } = state.composition;
+  const beatMs = (60 / tempo) * 1000;
+  const barMs = timeSignature.numerator * (4 / timeSignature.denominator) * beatMs;
+  return {
+    startMs: (startBar - 1) * barMs,
+    // The grading boundary is the barline itself. Playback runs a little past
+    // it separately, so the last note can still be played without the next
+    // bar's first note being pulled into the section.
+    endMs: endBar * barMs,
+    tailMs: beatMs,
+  };
+}
+
+function startTrainingSession(bars = null) {
   if (!state.composition.notes.length) {
     showToast('Record something first to train with');
     return;
   }
   document.getElementById('accuracy-modal').classList.add('hidden');
-  lastTrainingRange = range;
+  lastTrainingBars = bars ? { startBar: bars.startBar, endBar: bars.endBar } : null;
   clearKeyEffects();
   showGauge(true);
+
+  const range = lastTrainingBars ? rangeForBars(lastTrainingBars) : null;
   update('transport.currentTime', range ? range.startMs : 0);
 
   withCountIn(() => {
     startAccuracy(state.composition, range);
-    if (range) playRange(range.startMs, range.endMs + (range.tailMs || 0));
+    if (range) playRange(range.startMs, range.endMs + range.tailMs);
     else play();
   });
 }
 
 function retryTraining() {
-  startTrainingSession(lastTrainingRange);
+  startTrainingSession(lastTrainingBars);
+}
+
+// ── Retry tempo ──────────────────────────────────────────────────────────────
+// A passage that keeps going wrong is usually just too fast. The results screen
+// offers the same passage a notch slower (or faster) before you go again.
+
+const RETRY_TEMPO_STEP = 10; // percent
+
+// Steps are counted off the tempo the run was played at, rather than compounded
+// on each other, so down-then-up lands back where it started
+let retryTempoBase = 120;
+let retryTempoSteps = 0;
+
+function nudgeRetryTempo(direction) {
+  const before = state.composition.tempo;
+  const steps = retryTempoSteps + direction;
+  setTempo(Math.round(retryTempoBase * (1 + steps * RETRY_TEMPO_STEP / 100)));
+
+  if (state.composition.tempo === before) {
+    showToast(direction < 0 ? 'Already as slow as it goes' : 'Already as fast as it goes', 1400);
+    return;
+  }
+  retryTempoSteps = steps;
+  updateRetryTempoLabel();
+  showToast(`Retry at ${state.composition.tempo} BPM`, 1200);
+}
+
+function updateRetryTempoLabel() {
+  const el = document.getElementById('retry-tempo-value');
+  if (!el) return;
+  const percent = retryTempoSteps * RETRY_TEMPO_STEP;
+  el.textContent = percent
+    ? `${state.composition.tempo} BPM (${percent > 0 ? '+' : ''}${percent}%)`
+    : `${state.composition.tempo} BPM`;
 }
 
 // ── Live gauge ───────────────────────────────────────────────────────────────
@@ -425,7 +484,9 @@ function bindToolbar() {
   const tempoInput = document.getElementById('tempo-input');
   const tempoSlider = document.getElementById('tempo-slider');
 
-  tempoInput.oninput = (e) => setTempo(e.target.value);
+  // Committed value only: a tempo change now rescales the whole piece, and
+  // typing "120" would otherwise pass through 1 and 12 on the way
+  tempoInput.onchange = (e) => setTempo(e.target.value);
   tempoSlider.oninput = (e) => setTempo(e.target.value);
   document.getElementById('btn-tempo-down').onclick = () => setTempo(state.composition.tempo - 1);
   document.getElementById('btn-tempo-up').onclick = () => setTempo(state.composition.tempo + 1);
@@ -589,8 +650,7 @@ function loadComposition(song) {
   stop();
   Object.assign(state.composition, song);
   document.getElementById('composition-name').textContent = song.name || 'Untitled';
-  document.getElementById('tempo-input').value = song.tempo;
-  document.getElementById('tempo-slider').value = song.tempo;
+  syncTempoControls();
   const [num, den] = [song.timeSignature.numerator, song.timeSignature.denominator];
   document.getElementById('ts-num').value = num;
   document.getElementById('ts-den').value = den;
@@ -609,9 +669,11 @@ function bindModalControls() {
   };
   document.getElementById('btn-close-accuracy').onclick = () => {
     document.getElementById('accuracy-modal').classList.add('hidden');
-    lastTrainingRange = null;
+    lastTrainingBars = null;
   };
   document.getElementById('btn-train-again').onclick = retryTraining;
+  document.getElementById('btn-retry-slower').onclick = () => nudgeRetryTempo(-1);
+  document.getElementById('btn-retry-faster').onclick = () => nudgeRetryTempo(1);
   document.getElementById('btn-close-midi-info').onclick = () => {
     document.getElementById('midi-info-modal').classList.add('hidden');
   };
@@ -653,6 +715,16 @@ function shortcutActions() {
         if (worst) startTrainingSession(worst);
         else showToast('Nothing stood out to practise', 1500);
       } },
+    // Same keys as the global tempo nudge, deliberately: with the results up
+    // they move the tempo by a useful practice step instead of 1 BPM
+    { id: 'retry-slower', group: 'results', scope: resultsUp, hint: 'btn-retry-slower',
+      section: 'Training', label: 'Retry 10% slower',
+      defaultBindings: [{ code: 'BracketLeft' }],
+      run: () => nudgeRetryTempo(-1) },
+    { id: 'retry-faster', group: 'results', scope: resultsUp, hint: 'btn-retry-faster',
+      section: 'Training', label: 'Retry 10% faster',
+      defaultBindings: [{ code: 'BracketRight' }],
+      run: () => nudgeRetryTempo(1) },
 
     // Step recording first: while stepping, Backspace belongs to the recorder
     { id: 'step-forward', group: 'step', scope: stepping,
@@ -1368,6 +1440,10 @@ function showAccuracyResults(results) {
   const { score, perfect, good, almost, missed, extra, avgLatencyMs } = results;
 
   showGauge(false);
+  // Each results screen re-bases the retry steps on the tempo just played
+  retryTempoBase = state.composition.tempo;
+  retryTempoSteps = 0;
+  updateRetryTempoLabel();
   document.getElementById('score-pct').textContent = score;
   document.getElementById('stat-perfect').textContent = perfect;
   document.getElementById('stat-almost').textContent = almost;
