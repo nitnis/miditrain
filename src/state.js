@@ -10,7 +10,7 @@ const _state = {
     notes: [], // NoteEvent[]
   },
   transport: {
-    mode: 'stopped', // 'stopped' | 'playing' | 'recording' | 'step-recording'
+    mode: 'stopped', // 'stopped' | 'playing' | 'recording' | 'step-recording' | 'count-in' | 'learning'
     currentTime: 0,  // ms from composition start
     loopEnabled: false,
     loopStartBar: 1,
@@ -26,6 +26,7 @@ const _state = {
   ui: {
     view: 'sheet',          // 'sheet' | 'piano-roll' | 'split'
     trainMode: false,
+    learnMode: false,       // wait at each note until it is played
     metronomeEnabled: false,
     muted: false,           // master audio mute; audible by default
     volume: 1,              // 0..1, applied at the master gain

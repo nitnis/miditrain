@@ -109,8 +109,9 @@ export function stop() {
     return;
   }
 
-  // step-recording mode: just transition; step-recorder cleans up via mode-change listener
-  if (state.transport.mode === 'step-recording') {
+  // Input-driven modes run their own clock; they clean up via the mode-change
+  // listener, so all that is needed here is the transition
+  if (state.transport.mode === 'step-recording' || state.transport.mode === 'learning') {
     stopAllAudio();
     update('transport.mode', 'stopped');
     emit('transport:stop');
