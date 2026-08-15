@@ -10,7 +10,7 @@
 // way the step recorder does.
 import { state, update, emit, on } from './state.js';
 import { noteOn, noteOff, resumeAudioContext } from './audio.js';
-import { barStartMs } from './quantizer.js';
+import { barRangeMs } from './quantizer.js';
 
 // Notes struck this close together are one thing to play, so they are waited
 // on together. Matches the tolerance the slur renderer uses for "same attack".
@@ -41,14 +41,11 @@ let looping = false;
 let pass = 1;
 let slips = 0;          // wrong notes in the current pass
 
-function sectionRange() {
+function loopRange() {
   const { loopEnabled, loopStartBar, loopEndBar } = state.transport;
   if (!loopEnabled) return null;
   const { tempo, timeSignature } = state.composition;
-  return {
-    startMs: barStartMs(loopStartBar - 1, tempo, timeSignature),
-    endMs: barStartMs(loopEndBar, tempo, timeSignature),
-  };
+  return barRangeMs(loopStartBar, loopEndBar, tempo, timeSignature);
 }
 
 // One entry per attack, in time order
@@ -75,11 +72,17 @@ export function groupAttacks(notes) {
   return out;
 }
 
-export function startLearn() {
+// `bars` walks just that stretch and leaves the repeat-until-clean behaviour
+// off — the section walk offers its own choice at the end of each one. With no
+// bars given it falls back to the loop range, which is the standalone drill.
+export function startLearn(bars = null) {
   if (state.transport.mode === 'learning') return false;
 
-  const section = sectionRange();
-  looping = Boolean(section);
+  const { tempo, timeSignature } = state.composition;
+  const section = bars
+    ? barRangeMs(bars.startBar, bars.endBar, tempo, timeSignature)
+    : loopRange();
+  looping = Boolean(section) && !bars;
   sectionStartMs = section ? section.startMs : 0;
   groups = groupAttacks(state.composition.notes)
     .filter(g => !section || (g.startMs >= section.startMs && g.startMs < section.endMs));
@@ -101,8 +104,9 @@ export function startLearn() {
   emit('transport:learn', {
     total: groups.length,
     looping,
-    startBar: looping ? state.transport.loopStartBar : null,
-    endBar: looping ? state.transport.loopEndBar : null,
+    startBar: bars ? bars.startBar : (looping ? state.transport.loopStartBar : null),
+    endBar: bars ? bars.endBar : (looping ? state.transport.loopEndBar : null),
+    walking: Boolean(bars),
   });
   goTo(0);
   return true;

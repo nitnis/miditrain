@@ -4,6 +4,10 @@ import { record, play, stop, stopAndRewind, startCountIn, playRange, seekTo, see
 import { renderSheet, initSheet, getChordOverlayData, getStaveGeometry, movePlayhead } from './sheet.js';
 import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWaitingPitches } from './pianoroll.js';
 import { startLearn, stopLearn } from './learn.js';
+import {
+  startSectionWalk, stopSectionWalk, repeatSection, advanceSection,
+  handOverForTraining, isWalking,
+} from './section-learn.js';
 import { saveComposition, listCompositions, deleteComposition, compositionToJSON, compositionFromJSON } from './storage.js';
 import { compositionToMidi, midiToComposition } from './midi-file.js';
 import { startAccuracy, stopAccuracy, getWorstSection, EXTRA_PENALTY_PCT } from './accuracy.js';
@@ -12,6 +16,7 @@ import { resumeAudioContext, applyOutputLevel, applyClicksOnly } from './audio.j
 import { startStepRecord, stopStepRecord, stepInsertRest, stepGoBack, getStepMs } from './step-recorder.js';
 import { initNoteEditor, getSelectedIds, clearSelection } from './note-editor.js';
 import { staffPositionName, midiToNoteWithOctave } from './chords.js';
+import { barRangeMs } from './quantizer.js';
 import { initHistory, resetHistory, undo, redo } from './history.js';
 import {
   initShortcuts, getActions, bindingsFor, formatBinding, setBinding,
@@ -44,6 +49,7 @@ export function initUI() {
   bindStaffHint();
   bindPianoResizer();
   bindShortcutsPanel();
+  bindSectionWalk();
   initHistory();
 
   // The piano roll canvas is sized from its viewport, so re-render whenever
@@ -403,13 +409,84 @@ function toggleLearnMode() {
 
 // ── Learn sessions ───────────────────────────────────────────────────────────
 
+function sectionSize() {
+  return parseInt(document.getElementById('learn-sections').value) || 0;
+}
+
 function startLearnSession() {
   if (!state.composition.notes.length) {
     showToast('Record something first to learn');
     return;
   }
+  if (isWalking()) { stopSectionWalk(); return; }
   clearKeyEffects();
+
+  const bars = sectionSize();
+  if (bars) {
+    const count = startSectionWalk(bars);
+    if (!count) showToast('Nothing to learn here');
+    return;
+  }
   if (!startLearn()) showToast('Nothing to learn here');
+}
+
+// ── Section walk ─────────────────────────────────────────────────────────────
+
+function setLearnPhase(text) {
+  const el = document.getElementById('learn-phase');
+  el.classList.toggle('hidden', !text);
+  el.textContent = text || '';
+}
+
+function barsLabel({ startBar, endBar }) {
+  return startBar === endBar ? `bar ${startBar}` : `bars ${startBar}–${endBar}`;
+}
+
+function bindSectionWalk() {
+  const modal = document.getElementById('section-modal');
+
+  on('sections:preview', (s) => {
+    showLearnStatus(true);
+    setWaitingPitches([]);
+    modal.classList.add('hidden');
+    setLearnPhase(`Listen · section ${s.index + 1}/${s.total}`);
+    document.getElementById('learn-count').textContent = barsLabel(s);
+    document.getElementById('learn-hint').textContent = 'Playing it through first';
+  });
+
+  on('sections:walk', (s) => {
+    setLearnPhase(`Your turn · section ${s.index + 1}/${s.total}`);
+  });
+
+  on('sections:done', (s) => {
+    setLearnPhase('');
+    showLearnStatus(false);
+    document.getElementById('section-title').textContent =
+      `${barsLabel(s).replace(/^b/, 'B')} done`;
+    document.getElementById('section-sub').textContent = s.last
+      ? 'That was the last section.'
+      : `Section ${s.index + 1} of ${s.total}. What next?`;
+    document.getElementById('btn-section-next').textContent =
+      s.last ? 'Finish' : 'Next section';
+    modal.classList.remove('hidden');
+  });
+
+  on('sections:end', () => { modal.classList.add('hidden'); setLearnPhase(''); showLearnStatus(false); });
+  on('sections:complete', ({ total }) =>
+    showToast(`Worked through all ${total} section${total === 1 ? '' : 's'}`, 2600));
+
+  document.getElementById('btn-section-again').onclick = () => repeatSection();
+  document.getElementById('btn-section-next').onclick = () => advanceSection();
+  document.getElementById('btn-section-train').onclick = () => trainCurrentSection();
+}
+
+// Training takes the transport, so the walk steps aside rather than competing
+function trainCurrentSection() {
+  const section = handOverForTraining();
+  document.getElementById('section-modal').classList.add('hidden');
+  if (!section) return;
+  setPracticeMode('train');
+  startTrainingSession(section);
 }
 
 function showLearnStatus(visible) {
@@ -537,6 +614,8 @@ function closeTopModal() {
   const top = open[open.length - 1];
   if (!top) return;
   if (top.id === 'shortcuts-modal') closeShortcutsPanel();
+  // Dismissing the section choice means stopping there, not skipping ahead
+  else if (top.id === 'section-modal') stopSectionWalk();
   else top.classList.add('hidden');
 }
 
@@ -612,16 +691,7 @@ let lastTrainingBars = null;
 // Bar numbers are 1-based and inclusive of `startBar`, exclusive past `endBar`
 function rangeForBars({ startBar, endBar }) {
   const { tempo, timeSignature } = state.composition;
-  const beatMs = (60 / tempo) * 1000;
-  const barMs = timeSignature.numerator * (4 / timeSignature.denominator) * beatMs;
-  return {
-    startMs: (startBar - 1) * barMs,
-    // The grading boundary is the barline itself. Playback runs a little past
-    // it separately, so the last note can still be played without the next
-    // bar's first note being pulled into the section.
-    endMs: endBar * barMs,
-    tailMs: beatMs,
-  };
+  return barRangeMs(startBar, endBar, tempo, timeSignature);
 }
 
 function startTrainingSession(bars = null) {
@@ -941,8 +1011,24 @@ function shortcutActions() {
     state.ui.editorSelectedNotes.size > 0;
 
   const resultsUp = () => !document.getElementById('accuracy-modal').classList.contains('hidden');
+  const sectionUp = () => !document.getElementById('section-modal').classList.contains('hidden');
 
   return [
+    // While the end-of-section choice is up these shadow the global keys, the
+    // same way Space retries while the results are showing
+    { id: 'section-again', group: 'sections', scope: sectionUp, hint: 'btn-section-again',
+      section: 'Training', label: 'Learn this section again',
+      defaultBindings: [{ code: 'KeyR' }],
+      run: () => repeatSection() },
+    { id: 'section-train', group: 'sections', scope: sectionUp, hint: 'btn-section-train',
+      section: 'Training', label: 'Train over this section',
+      defaultBindings: [{ code: 'KeyT' }],
+      run: () => trainCurrentSection() },
+    { id: 'section-next', group: 'sections', scope: sectionUp, hint: 'btn-section-next',
+      section: 'Training', label: 'Move to the next section',
+      defaultBindings: [{ code: 'Space' }, { code: 'Enter' }],
+      run: () => advanceSection() },
+
     // While the results are up Space repeats the run rather than driving the
     // transport — a context binding, matched before the global one
     { id: 'retry-training', group: 'results', scope: resultsUp,
