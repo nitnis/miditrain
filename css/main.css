@@ -248,6 +248,28 @@ html, body {
   cursor: pointer;
 }
 
+.volume-slider {
+  -webkit-appearance: none;
+  width: 72px;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  cursor: pointer;
+}
+.volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+}
+.volume-value {
+  min-width: 34px;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
 .adj-btn {
   width: 28px; height: 28px;
   background: var(--surface);
@@ -891,6 +913,7 @@ select:focus { outline: 1px solid var(--accent); }
   .display-group { display: none; }
   .speed-group { display: none; }
   .tempo-slider { display: none; }
+  .volume-slider, .volume-value { display: none; }
 }
 
 /* ── STEP RECORD BUTTON ── */
