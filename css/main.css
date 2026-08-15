@@ -470,6 +470,19 @@ select:focus { outline: 1px solid var(--accent); }
   display: block;
 }
 
+/* Playhead. An overlay, so it can move without the score being laid out again */
+.sheet-playhead {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2px;
+  background: rgba(233, 69, 96, 0.8);
+  pointer-events: none;
+  z-index: 4;
+  will-change: transform;
+}
+.sheet-playhead.hidden { display: none; }
+
 /* VexFlow SVG — override black defaults for dark theme (attributes, not inline styles) */
 #vexflow-output svg path  { fill: #ccd; stroke: #ccd; }
 #vexflow-output svg line  { stroke: #ccd; }
