@@ -58,9 +58,14 @@ export function off(event, fn) {
 }
 
 export function emit(event, data) {
-  _listeners.get(event)?.forEach(fn => {
+  const handlers = _listeners.get(event);
+  if (!handlers) return;
+  // Iterate a copy. A Set visits entries added while it is being iterated, so
+  // a handler that subscribes to the same event — one step of a sequence
+  // arming the next — would be called by the very dispatch that registered it.
+  for (const fn of [...handlers]) {
     try { fn(data); } catch (e) { console.error(`Handler error [${event}]:`, e); }
-  });
+  }
 }
 
 export const state = _state;
