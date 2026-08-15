@@ -12,17 +12,20 @@ const MAX_ENTRIES = 100;
 // that consecutive edits stay separate
 const COALESCE_MS = 250;
 
-let stack = [{ tempo: 120, notes: [] }];
+let stack = [{ tempo: 120, keySignature: 'C', transpose: 0, notes: [] }];
 let index = 0;
 let applying = false;   // suppress capture while restoring a snapshot
 let pending = null;
 
-// The tempo rides along with the notes: changing it rescales every note time,
-// so a snapshot of the notes alone would restore old timings under a new
-// tempo and land the music off the beat.
+// Three settings ride along with the notes, because each is bound to them:
+// tempo rescales every note time, and transposing shifts every pitch and moves
+// the key with it. Restoring the notes alone would leave the music sounding
+// against a tempo, key and slider that no longer describe it.
 function snapshot() {
   return {
     tempo: state.composition.tempo,
+    keySignature: state.composition.keySignature,
+    transpose: state.ui.transpose,
     notes: state.composition.notes.map(n => ({ ...n })),
   };
 }
@@ -30,6 +33,8 @@ function snapshot() {
 function matchesCurrentEntry(snap) {
   const entry = stack[index];
   if (entry.tempo !== snap.tempo) return false;
+  if (entry.keySignature !== snap.keySignature) return false;
+  if (entry.transpose !== snap.transpose) return false;
   if (entry.notes.length !== snap.notes.length) return false;
   for (let i = 0; i < snap.notes.length; i++) {
     const a = entry.notes[i], b = snap.notes[i];
@@ -69,6 +74,8 @@ function apply(snap) {
   applying = true;
   state.composition.notes = snap.notes.map(n => ({ ...n }));
   update('composition.tempo', snap.tempo);
+  update('composition.keySignature', snap.keySignature);
+  update('ui.transpose', snap.transpose);
 
   // Selections can outlive the notes they point at
   const live = new Set(state.composition.notes.map(n => n.id));
