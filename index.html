@@ -258,6 +258,10 @@
           <option value="Ab">Ab major</option>
           <option value="Db">Db major</option>
         </select>
+        <span class="tool-label" style="margin-left:10px" title="Shift the whole piece in semitones — the key follows">Transpose:</span>
+        <input type="range" id="transpose-slider" class="transpose-slider" min="-12" max="12" step="1" value="0">
+        <span class="transpose-value" id="transpose-value">0</span>
+        <button class="small-btn transpose-reset" id="btn-transpose-reset" title="Back to the original pitch">Reset</button>
         <span class="tool-label" style="margin-left:10px" title="Notation grid — also the step size when step recording">Quantize / Step:</span>
         <select id="quantize-select" title="Notation grid — also the step size when step recording">
           <option value="1">1/1</option>

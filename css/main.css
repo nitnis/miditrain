@@ -270,6 +270,35 @@ html, body {
   font-variant-numeric: tabular-nums;
 }
 
+/* Transpose: centre-detented, since zero is the meaningful default */
+.transpose-slider {
+  -webkit-appearance: none;
+  width: 130px;
+  height: 4px;
+  background: linear-gradient(90deg, var(--border) 0 calc(50% - 1px),
+              var(--muted) calc(50% - 1px) calc(50% + 1px),
+              var(--border) calc(50% + 1px) 100%);
+  border-radius: 2px;
+  cursor: pointer;
+}
+.transpose-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+}
+.transpose-value {
+  min-width: 30px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.transpose-value.shifted { color: var(--accent); }
+.transpose-reset { padding: 2px 8px; font-size: 11px; }
+
 .adj-btn {
   width: 28px; height: 28px;
   background: var(--surface);

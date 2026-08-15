@@ -1,6 +1,6 @@
 // UI updates: DOM manipulation, modals, controls
 import { state, update, emit, on } from './state.js';
-import { record, play, stop, stopAndRewind, startCountIn, playRange, seekTo, seekToStart, seekToEnd, clearAllNotes, transposeNotes, applyLegato, deleteNotes, changeTempo } from './transport.js';
+import { record, play, stop, stopAndRewind, startCountIn, playRange, seekTo, seekToStart, seekToEnd, clearAllNotes, transposeNotes, transposeAll, applyLegato, deleteNotes, changeTempo } from './transport.js';
 import { renderSheet, initSheet, getChordOverlayData, getStaveGeometry, movePlayhead } from './sheet.js';
 import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWaitingPitches } from './pianoroll.js';
 import { startLearn, stopLearn } from './learn.js';
@@ -65,6 +65,9 @@ export function initUI() {
 
   // MIDI status updates
   on('change:composition.tempo', () => { syncTempoControls(); scheduleSheetRender(); });
+  // Undo can move the key and the transpose too, so the controls follow state
+  on('change:ui.transpose', () => syncTransposeControls());
+  on('change:composition.keySignature', () => { syncTransposeControls(); scheduleSheetRender(); });
   on('change:midi.connected', ({ value }) => updateMidiStatus(value));
   on('change:midi.inputs', ({ value }) => updateMidiInputsList(value));
   on('midi:unavailable', ({ reason }) => showMidiWarning(reason));
@@ -240,6 +243,76 @@ function syncTempoControls() {
 function nudgeTempo(delta) {
   setTempo(state.composition.tempo + delta);
   showToast(`${state.composition.tempo} BPM`, 900);
+}
+
+// ── Transpose ────────────────────────────────────────────────────────────────
+// The slider reads as a total offset from where the piece started, not a nudge,
+// so moving it to +2 always means "two semitones above the original" however it
+// got there. The key selector travels the same interval.
+
+const TRANSPOSE_RANGE = 12;
+const MIN_PITCH = 21;
+const MAX_PITCH = 108;
+
+// One key per pitch class, in the spellings the selector offers
+const KEY_BY_PITCH_CLASS = {
+  0: 'C', 1: 'Db', 2: 'D', 3: 'Eb', 4: 'E', 5: 'F',
+  6: 'F#', 7: 'G', 8: 'Ab', 9: 'A', 10: 'Bb', 11: 'B',
+};
+const PITCH_CLASS_BY_KEY = {
+  C: 0, Db: 1, D: 2, Eb: 3, E: 4, F: 5,
+  'F#': 6, G: 7, Ab: 8, A: 9, Bb: 10, B: 11,
+};
+
+// How far the piece can still move before a note leaves the keyboard. Checked
+// up front so the shift is applied whole or not at all — clamping note by note
+// would squash a chord together at the edges and could not be undone by
+// dragging back.
+function transposeBounds() {
+  const pitches = state.composition.notes.map(n => n.pitch);
+  if (!pitches.length) return { lo: -TRANSPOSE_RANGE, hi: TRANSPOSE_RANGE };
+  const applied = state.ui.transpose;
+  return {
+    lo: Math.max(-TRANSPOSE_RANGE, applied + MIN_PITCH - Math.min(...pitches)),
+    hi: Math.min(TRANSPOSE_RANGE, applied + MAX_PITCH - Math.max(...pitches)),
+  };
+}
+
+function setTranspose(value) {
+  const wanted = Math.round(Number(value));
+  if (!Number.isFinite(wanted)) return;
+  const { lo, hi } = transposeBounds();
+  const target = Math.max(lo, Math.min(hi, wanted));
+  if (target !== wanted) {
+    showToast(`Cannot go past ${target > 0 ? '+' : ''}${target} — notes would fall off the keyboard`, 2200);
+  }
+
+  const delta = target - state.ui.transpose;
+  if (delta) {
+    transposeAll(delta);
+    const pc = PITCH_CLASS_BY_KEY[state.composition.keySignature] ?? 0;
+    update('composition.keySignature', KEY_BY_PITCH_CLASS[(((pc + delta) % 12) + 12) % 12]);
+    update('ui.transpose', target);
+    scheduleSheetRender();
+  }
+  syncTransposeControls();
+}
+
+// The slider follows the state, so undo moves it too
+function syncTransposeControls() {
+  const semitones = state.ui.transpose;
+  const slider = document.getElementById('transpose-slider');
+  const label = document.getElementById('transpose-value');
+  if (!slider) return;
+  slider.value = semitones;
+  label.textContent = semitones > 0 ? `+${semitones}` : String(semitones);
+  label.classList.toggle('shifted', semitones !== 0);
+  document.getElementById('key-select').value = state.composition.keySignature;
+}
+
+function nudgeTranspose(direction) {
+  setTranspose(state.ui.transpose + direction);
+  showToast(`Transpose ${state.ui.transpose > 0 ? '+' : ''}${state.ui.transpose} · key of ${state.composition.keySignature}`, 1200);
 }
 
 function applyMuteUI(muted) {
@@ -693,6 +766,10 @@ function bindToolbar() {
     scheduleSheetRender();
   };
 
+  document.getElementById('transpose-slider').oninput = (e) => setTranspose(e.target.value);
+  document.getElementById('btn-transpose-reset').onclick = () => setTranspose(0);
+  syncTransposeControls();
+
   // Quantize and step size are one setting, surfaced in two places
   for (const sel of quantizeSelects()) {
     sel.value = String(state.ui.quantize);
@@ -812,6 +889,9 @@ function loadComposition(song) {
   stop();
   Object.assign(state.composition, song);
   document.getElementById('composition-name').textContent = song.name || 'Untitled';
+  // The slider measures distance from where the piece arrived, so a new piece
+  // starts back at zero
+  update('ui.transpose', 0);
   syncTempoControls();
   const [num, den] = [song.timeSignature.numerator, song.timeSignature.denominator];
   document.getElementById('ts-num').value = num;
@@ -1026,6 +1106,19 @@ function shortcutActions() {
       section: 'Options', label: 'Tempo up 1 BPM',
       defaultBindings: [{ code: 'BracketRight' }],
       run: () => nudgeTempo(1) },
+    // "<" and ">" — the usual pair for shifting pitch
+    { id: 'transpose-down', group: 'global',
+      section: 'Options', label: 'Transpose down a semitone',
+      defaultBindings: [{ code: 'Comma', shift: true }],
+      run: () => nudgeTranspose(-1) },
+    { id: 'transpose-up', group: 'global',
+      section: 'Options', label: 'Transpose up a semitone',
+      defaultBindings: [{ code: 'Period', shift: true }],
+      run: () => nudgeTranspose(1) },
+    { id: 'transpose-reset', group: 'global', hint: 'btn-transpose-reset',
+      section: 'Options', label: 'Back to the original pitch',
+      defaultBindings: [{ code: 'Digit0', shift: true }],
+      run: () => setTranspose(0) },
     { id: 'quantize-coarser', group: 'global',
       section: 'Options', label: 'Coarser quantize / step',
       defaultBindings: [{ code: 'Minus' }],

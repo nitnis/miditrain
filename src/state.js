@@ -35,6 +35,7 @@ const _state = {
     stepLegato: false,      // step recording holds each note until the next one
     quantize: 8,            // grid division (8 = 1/8 note); also the step-record step size
     keySignature: 'C',
+    transpose: 0,           // semitones the piece has been shifted by, for the slider
     editorSelectedNotes: new Set(), // selected note IDs in piano roll editor
   },
   accuracy: {
