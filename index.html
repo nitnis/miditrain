@@ -213,6 +213,12 @@
           </svg>
           Learn
         </button>
+        <select id="learn-sections" title="Learn the piece a few bars at a time — each section is played to you first">
+          <option value="0">Whole piece</option>
+          <option value="2">2-bar sections</option>
+          <option value="4">4-bar sections</option>
+          <option value="8">8-bar sections</option>
+        </select>
       </div>
 
     </div><!-- .toolbar-row -->
@@ -321,6 +327,7 @@
         <span class="learn-count" id="learn-count">0 / 0</span>
         <span class="learn-hint" id="learn-hint">Play the highlighted keys</span>
         <span class="learn-pass hidden" id="learn-pass"></span>
+        <span class="learn-phase hidden" id="learn-phase"></span>
       </div>
     </div>
     <div id="piano-keyboard-container">
@@ -381,6 +388,20 @@
         <button class="modal-btn" id="btn-train-again">Try Again</button>
         <button class="modal-btn primary" id="btn-close-accuracy">Done</button>
       </div>
+    </div>
+  </div>
+
+  <!-- End of a learn section -->
+  <div class="modal-overlay hidden" id="section-modal">
+    <div class="modal-box">
+      <h2 id="section-title">Bars 1–4 done</h2>
+      <p class="section-sub" id="section-sub">What next?</p>
+      <div class="modal-actions section-actions">
+        <button class="modal-btn" id="btn-section-again">Learn it again <kbd class="kbd-hint">R</kbd></button>
+        <button class="modal-btn" id="btn-section-train">Train this section <kbd class="kbd-hint">T</kbd></button>
+        <button class="modal-btn primary" id="btn-section-next">Next section <kbd class="kbd-hint">Space</kbd></button>
+      </div>
+      <p class="retry-hint"><kbd class="kbd-hint">Esc</kbd> to stop here</p>
     </div>
   </div>
 

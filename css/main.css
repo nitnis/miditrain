@@ -629,6 +629,24 @@ select:focus { outline: 1px solid var(--accent); }
   color: var(--accent2);
   border-color: var(--accent2);
 }
+.learn-phase {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #06121c;
+  font-weight: 700;
+}
+.learn-phase.hidden { display: none; }
+
+/* End-of-section choice */
+.section-sub {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 6px 0 0;
+}
+.section-actions { flex-wrap: wrap; }
+.section-actions .kbd-hint { margin-left: 6px; }
 .gauge-score {
   font-size: 15px;
   font-weight: 800;

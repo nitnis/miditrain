@@ -186,3 +186,18 @@ export function barStartMs(barNumber, tempo, timeSignature) {
   const beatsPerBar = timeSignature.numerator * (4 / timeSignature.denominator);
   return beatsToMs(barNumber * beatsPerBar, tempo);
 }
+
+// A stretch of bars in milliseconds. Bar numbers are 1-based and endBar is
+// inclusive. Everything that practises a section — training, learn mode and
+// the section walk — measures it here, so they cannot disagree about where a
+// section starts or how far past it playback runs.
+export function barRangeMs(startBar, endBar, tempo, timeSignature) {
+  return {
+    startMs: barStartMs(startBar - 1, tempo, timeSignature),
+    // The grading boundary is the barline itself. Playback runs a little past
+    // it separately, so the last note can still sound without the next bar's
+    // first note being pulled into the section.
+    endMs: barStartMs(endBar, tempo, timeSignature),
+    tailMs: (60 / tempo) * 1000,
+  };
+}
