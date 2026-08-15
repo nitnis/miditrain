@@ -299,6 +299,16 @@ export function deleteNotes(noteIds) {
   emit('transport:noteschanged', state.composition.notes);
 }
 
+// Shift the whole piece. Kept apart from transposeNotes because the caller has
+// already checked the shift fits inside the keyboard: clamping note by note
+// would collapse a chord onto one pitch at the edges and make the move
+// impossible to undo by dragging back.
+export function transposeAll(semitones) {
+  if (!semitones) return;
+  for (const note of state.composition.notes) note.pitch += semitones;
+  emit('transport:noteschanged', state.composition.notes);
+}
+
 export function transposeNotes(noteIds, semitones) {
   for (const id of noteIds) {
     const note = state.composition.notes.find(n => n.id === id);
