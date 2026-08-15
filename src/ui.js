@@ -5,6 +5,7 @@ import { renderSheet, initSheet, getChordOverlayData, getStaveGeometry } from '.
 import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWaitingPitches } from './pianoroll.js';
 import { startLearn, stopLearn } from './learn.js';
 import { saveComposition, listCompositions, deleteComposition, compositionToJSON, compositionFromJSON } from './storage.js';
+import { compositionToMidi, midiToComposition } from './midi-file.js';
 import { startAccuracy, stopAccuracy, getWorstSection, EXTRA_PENALTY_PCT } from './accuracy.js';
 import { startMetronome, stopMetronome } from './metronome.js';
 import { resumeAudioContext, applyOutputLevel, applyClicksOnly } from './audio.js';
@@ -404,23 +405,52 @@ async function saveCurrentComposition() {
   showToast('Saved!');
 }
 
-function exportComposition() {
-  const name = document.getElementById('composition-name').textContent.trim() || 'Untitled';
-  update('composition.name', name);
-  const json = compositionToJSON(state.composition);
-  const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+function download(data, mimeType, filename) {
+  const url = URL.createObjectURL(new Blob([data], { type: mimeType }));
   const a = document.createElement('a');
   a.href = url;
-  a.download = `${fileSafeName(name)}.json`;
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
-  showToast(`Exported ${a.download}`);
+  showToast(`Exported ${filename}`);
+}
+
+// The composition name is editable in place, so read it back before writing
+// it into the file
+function currentName() {
+  const name = document.getElementById('composition-name').textContent.trim() || 'Untitled';
+  update('composition.name', name);
+  return name;
+}
+
+function exportComposition() {
+  const name = currentName();
+  download(compositionToJSON(state.composition), 'application/json', `${fileSafeName(name)}.json`);
+}
+
+function exportMidi() {
+  const name = currentName();
+  if (!state.composition.notes.length) {
+    showToast('Nothing to export yet');
+    return;
+  }
+  download(compositionToMidi(state.composition), 'audio/midi', `${fileSafeName(name)}.mid`);
 }
 
 function importComposition() {
   document.getElementById('import-file').click();
+}
+
+// One Import button for both formats. A MIDI file announces itself in its
+// first four bytes, which is more reliable than trusting the extension.
+async function readImportedFile(file) {
+  const head = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+  const isMidi = String.fromCharCode(...head) === 'MThd';
+  if (isMidi) return midiToComposition(await file.arrayBuffer());
+  if (/\.midi?$/i.test(file.name)) throw new Error('That .mid file does not start with a MIDI header');
+  return compositionFromJSON(await file.text());
 }
 
 function openMidiInfo() {
@@ -711,6 +741,7 @@ function bindCompositionControls() {
   document.getElementById('btn-open').onclick = () => openSongBrowser();
 
   document.getElementById('btn-export').onclick = exportComposition;
+  document.getElementById('btn-export-midi').onclick = exportMidi;
   const importInput = document.getElementById('import-file');
   document.getElementById('btn-import').onclick = importComposition;
   importInput.onchange = async () => {
@@ -719,12 +750,14 @@ function bindCompositionControls() {
     importInput.value = '';
     if (!file) return;
     try {
-      const imported = compositionFromJSON(await file.text());
+      const imported = await readImportedFile(file);
       if (state.composition.notes.length &&
           !confirm('Replace the current composition with the imported one?')) return;
       loadComposition(imported);
       const n = imported.notes.length;
-      showToast(`Imported "${imported.name}" — ${n} note${n === 1 ? '' : 's'}`);
+      const detail = imported.warnings?.length ? ` · ${imported.warnings.join(' · ')}` : '';
+      showToast(`Imported "${imported.name}" — ${n} note${n === 1 ? '' : 's'}${detail}`,
+        imported.warnings?.length ? 5000 : 2500);
     } catch (err) {
       showToast(`Import failed: ${err.message}`, 4000);
     }
@@ -1035,8 +1068,12 @@ function shortcutActions() {
       section: 'File', label: 'Export as JSON',
       defaultBindings: [{ code: 'KeyE', mod: true }],
       run: () => exportComposition() },
+    { id: 'export-midi', group: 'global', hint: 'btn-export-midi',
+      section: 'File', label: 'Export as MIDI',
+      defaultBindings: [{ code: 'KeyE', mod: true, shift: true }],
+      run: () => exportMidi() },
     { id: 'import', group: 'global', hint: 'btn-import',
-      section: 'File', label: 'Import from JSON',
+      section: 'File', label: 'Import a JSON or MIDI file',
       defaultBindings: [{ code: 'KeyI', mod: true }],
       run: () => importComposition() },
     { id: 'clear-all', group: 'global', hint: 'btn-clear',
