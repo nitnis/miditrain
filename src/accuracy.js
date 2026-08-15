@@ -11,6 +11,16 @@ const ALMOST_MS = 350;
 // at roughly the right time, which is not the same as missing it.
 const GRADE_CREDIT = { perfect: 1, good: 1, almost: 0.5, miss: 0 };
 
+// A wrong note is not free. Credit alone only measures the notes that were
+// written, so a run peppered with extras could otherwise score as cleanly as
+// one that hit nothing it shouldn't have. Each extra costs a flat slice.
+export const EXTRA_PENALTY_PCT = 3;
+
+function scoreFor(credit, divisor, extras) {
+  const earned = divisor ? (credit / divisor) * 100 : 100;
+  return Math.max(0, Math.round(earned - extras * EXTRA_PENALTY_PCT));
+}
+
 let expectedNotes = []; // { id, pitch, startTimeMs, durationMs, grade, latencyMs }
 let playedNotes = [];   // { pitch, time, matched }
 let cleanupFns = [];
@@ -99,7 +109,7 @@ function emitProgress() {
     played: graded.length,
     total: expectedNotes.length,
     wrong,
-    score: graded.length ? Math.round((credit / graded.length) * 100) : 100,
+    score: scoreFor(credit, graded.length, wrong),
   });
 }
 
@@ -139,7 +149,7 @@ function computeResults() {
     ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length) : 0;
 
   const credit = perfect + good + almost * GRADE_CREDIT.almost;
-  const score = Math.round((credit / total) * 100);
+  const score = scoreFor(credit, total, extra);
 
   return { score, perfect, good, almost, correct: perfect + good, missed, extra, avgLatencyMs, total };
 }
