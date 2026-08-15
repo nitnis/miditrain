@@ -1,7 +1,7 @@
 // UI updates: DOM manipulation, modals, controls
 import { state, update, emit, on } from './state.js';
 import { record, play, stop, stopAndRewind, startCountIn, playRange, seekTo, seekToStart, seekToEnd, clearAllNotes, transposeNotes, applyLegato, deleteNotes, changeTempo } from './transport.js';
-import { renderSheet, initSheet, getChordOverlayData, getStaveGeometry } from './sheet.js';
+import { renderSheet, initSheet, getChordOverlayData, getStaveGeometry, movePlayhead } from './sheet.js';
 import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWaitingPitches } from './pianoroll.js';
 import { startLearn, stopLearn } from './learn.js';
 import { saveComposition, listCompositions, deleteComposition, compositionToJSON, compositionFromJSON } from './storage.js';
@@ -21,6 +21,7 @@ import {
 
 let sheetContainer = null;
 let renderDebounce = null;
+let sheetShowsStepCursor = false;
 
 export function initUI() {
   sheetContainer = document.getElementById('vexflow-output');
@@ -53,13 +54,13 @@ export function initUI() {
 
   // Re-render sheet on notes change
   on('transport:noteschanged', () => scheduleSheetRender());
-  on('transport:stop', () => scheduleSheetRender());
+  // Stopping used to repaint so the playhead would follow, and again to clear
+  // it. The overlay does both for free now, so the only thing left that stop
+  // has to erase is the step cursor, which is part of the drawing.
+  on('transport:stop', () => { if (sheetShowsStepCursor) scheduleSheetRender(); });
   on('transport:tick', (t) => {
     updatePositionDisplay(t);
-    if (renderDebounce === null) {
-      // Update playhead periodically
-      window._lastTickT = t;
-    }
+    movePlayhead(t);
   });
 
   // MIDI status updates
@@ -108,12 +109,6 @@ export function initUI() {
   scheduleSheetRender();
   updateLoopDisplay();
 
-  // Periodic sheet playhead update during playback
-  setInterval(() => {
-    if (state.transport.mode !== 'stopped') {
-      scheduleSheetRender();
-    }
-  }, 250);
 }
 
 function bindTransport() {
@@ -201,7 +196,9 @@ function bindTransport() {
   on('change:transport.currentTime', ({ value }) => {
     if (state.transport.mode === 'step-recording') {
       updatePositionDisplay(value);
-      scheduleSheetRender();
+      scheduleSheetRender(); // the step cursor is part of the drawing
+    } else {
+      movePlayhead(value);   // seeking while stopped only moves the overlay
     }
   });
 }
@@ -1312,8 +1309,11 @@ function scheduleSheetRender() {
   clearTimeout(renderDebounce);
   renderDebounce = setTimeout(() => {
     renderDebounce = null;
-    const t = (state.transport.mode !== 'stopped' && state.transport.mode !== 'step-recording')
-      ? state.transport.currentTime : null;
+    // The step cursor stands in for the playhead while stepping; otherwise the
+    // playhead shows wherever the position is, stopped or not — moving it with
+    // the arrows or the mouse should be visible on the stave too
+    sheetShowsStepCursor = state.transport.mode === 'step-recording';
+    const t = sheetShowsStepCursor ? null : state.transport.currentTime;
     if (state.ui.view !== 'piano-roll') {
       renderSheet(state.composition.notes, state.composition, t);
       updateChordOverlay();

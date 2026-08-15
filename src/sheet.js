@@ -52,6 +52,7 @@ function recordStaveGeom(stave, clef, measure) {
     measure,
     x: stave.getX(),
     w: stave.getWidth(),
+    y: stave.getY(),
     // Where notes actually begin, past any clef and key signature — a click
     // maps to time across this span, not the whole stave
     noteStartX: stave.getNoteStartX(),
@@ -172,16 +173,59 @@ export function renderSheet(notes, composition, currentTimeMs = null) {
       drawChordLabels(measureNotes, trebleStave, beatsPerMeasure, useFlats, beatPositions);
     }
 
-    // Step cursor takes the place of the playhead while step recording
+    // Step cursor takes the place of the playhead while step recording. The
+    // playhead itself is an overlay rather than part of the drawing — see
+    // movePlayhead.
     if (stepping) {
       drawStepCursor(cursorBeat, m, trebleStave, bassStave, beatsPerMeasure, beatPositions);
-    } else if (currentTimeMs !== null) {
-      drawPlayhead(currentTimeMs, m, trebleStave, bassStave, tempo, beatsPerMeasure);
     }
   }
 
   drawTies(segments, segmentPlacement);
   drawSlurs(notes, segmentPlacement);
+
+  playheadBeatsPerMeasure = beatsPerMeasure;
+  playheadBeatMs = (60 / tempo) * 1000;
+  movePlayhead(stepping ? null : currentTimeMs);
+}
+
+// ── Playhead ─────────────────────────────────────────────────────────────────
+// A DOM element over the score rather than a line inside it. Drawn into the
+// SVG it could only move by laying the whole score out again — which, on a
+// piece of any length, costs hundreds of milliseconds and stalls playback.
+
+let playheadEl = null;
+let playheadBeatsPerMeasure = 4;
+let playheadBeatMs = 500;
+
+export function movePlayhead(currentTimeMs) {
+  if (!container) return;
+  if (!playheadEl) {
+    playheadEl = document.createElement('div');
+    playheadEl.id = 'sheet-playhead';
+    playheadEl.className = 'sheet-playhead hidden';
+    container.parentElement.appendChild(playheadEl);
+  }
+  if (currentTimeMs === null || !_staveGeom.length) {
+    playheadEl.classList.add('hidden');
+    return;
+  }
+
+  const currentBeat = currentTimeMs / playheadBeatMs;
+  const measure = Math.floor(currentBeat / playheadBeatsPerMeasure);
+  const treble = _staveGeom.find(g => g.measure === measure && g.clef === 'treble');
+  const bass = _staveGeom.find(g => g.measure === measure && g.clef === 'bass');
+  if (!treble || !bass) { playheadEl.classList.add('hidden'); return; }
+
+  const beatFrac = (currentBeat - measure * playheadBeatsPerMeasure) / playheadBeatsPerMeasure;
+  const x = treble.noteStartX + beatFrac * (treble.noteEndX - treble.noteStartX);
+  const top = treble.y - 8;
+  const height = (bass.y + 95) - top;
+
+  // The container is padded and scrolls; the geometry is in SVG coordinates
+  playheadEl.style.transform = `translate(${x + container.offsetLeft}px, ${top + container.offsetTop}px)`;
+  playheadEl.style.height = `${height}px`;
+  playheadEl.classList.remove('hidden');
 }
 
 // ── Slurs ────────────────────────────────────────────────────────────────────
@@ -488,25 +532,3 @@ function drawStepCursor(cursorBeat, measureIdx, trebleStave, bassStave, beatsPer
   } catch (_) {}
 }
 
-function drawPlayhead(currentTimeMs, measureIdx, trebleStave, bassStave, tempo, beatsPerMeasure) {
-  const beatMs = (60 / tempo) * 1000;
-  const currentBeat = currentTimeMs / beatMs;
-  const mIdx = Math.floor(currentBeat / beatsPerMeasure);
-  if (mIdx !== measureIdx) return;
-
-  const beatFrac = (currentBeat - mIdx * beatsPerMeasure) / beatsPerMeasure;
-  const noteStartX = trebleStave.getNoteStartX();
-  const noteEndX   = trebleStave.getX() + trebleStave.getWidth() - 10;
-  const x = noteStartX + beatFrac * (noteEndX - noteStartX);
-
-  try {
-    svgCtx.save();
-    svgCtx.beginPath();
-    svgCtx.setStrokeStyle('rgba(233, 69, 96, 0.8)');
-    svgCtx.setLineWidth(2);
-    svgCtx.moveTo(x, trebleStave.getY() - 8);
-    svgCtx.lineTo(x, bassStave.getY() + 95);
-    svgCtx.stroke();
-    svgCtx.restore();
-  } catch (_) {}
-}
