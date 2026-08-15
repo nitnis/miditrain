@@ -204,6 +204,14 @@
           </svg>
           Train
         </button>
+        <button class="toggle-btn" id="btn-learn-mode" title="Toggle Learn Mode — wait at each note until you play it">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 5.5 A9 3 0 0 1 12 5.5 A9 3 0 0 1 21 5.5"/>
+            <path d="M3 5.5v11a9 3 0 0 0 9 0 9 3 0 0 0 9 0v-11"/>
+            <line x1="12" y1="7" x2="12" y2="19"/>
+          </svg>
+          Learn
+        </button>
       </div>
 
     </div><!-- .toolbar-row -->
@@ -303,6 +311,10 @@
         <div class="gauge-score" id="gauge-score">—</div>
         <div class="gauge-track"><div class="gauge-fill" id="gauge-fill"></div></div>
         <div class="gauge-meta" id="gauge-meta">0 / 0</div>
+      </div>
+      <div id="learn-status" class="learn-status hidden">
+        <span class="learn-count" id="learn-count">0 / 0</span>
+        <span class="learn-hint" id="learn-hint">Play the highlighted keys</span>
       </div>
     </div>
     <div id="piano-keyboard-container">

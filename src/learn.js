@@ -1,0 +1,178 @@
+// Learn mode: walk the piece one attack at a time.
+//
+// The notes fall at tempo until the next one reaches the hit line, then
+// everything freezes: the chord sounds once as a prompt, and the clock does
+// not move again until exactly those keys have been played.
+//
+// This is much closer to step recording than to playback — an input-driven
+// mode with its own clock — so it runs beside transport.js rather than through
+// it, and cleans itself up when something else takes the transport, the same
+// way the step recorder does.
+import { state, update, emit, on } from './state.js';
+import { noteOn, noteOff, resumeAudioContext } from './audio.js';
+
+// Notes struck this close together are one thing to play, so they are waited
+// on together. Matches the tolerance the slur renderer uses for "same attack".
+const CHORD_MS = 40;
+
+// How long the prompt chord sounds if nothing interrupts it. It steps aside
+// the moment the first correct key goes down, so this is only the ceiling.
+const PROMPT_MIN_MS = 250;
+const PROMPT_MAX_MS = 900;
+
+let groups = [];        // [{ startMs, durationMs, pitches:Set, notes:[] }]
+let index = -1;
+let pending = new Set();  // pitches of the current group not yet played
+let prompting = [];       // pitches the prompt is holding down
+let promptTimer = null;
+let rafId = null;         // non-null only while the notes are falling
+let perfStart = 0;
+let posStart = 0;
+let targetMs = 0;
+let cleanupFns = [];
+
+// One entry per attack, in time order
+export function groupAttacks(notes) {
+  const sorted = [...notes].sort((a, b) => a.startTime - b.startTime);
+  const out = [];
+  for (const note of sorted) {
+    const last = out[out.length - 1];
+    // Measured against the group's own start, so a run of notes 40ms apart
+    // cannot chain into one arbitrarily wide chord
+    if (last && note.startTime - last.startMs <= CHORD_MS) {
+      last.pitches.add(note.pitch);
+      last.notes.push(note);
+      last.durationMs = Math.max(last.durationMs, note.duration);
+    } else {
+      out.push({
+        startMs: note.startTime,
+        durationMs: note.duration,
+        pitches: new Set([note.pitch]),
+        notes: [note],
+      });
+    }
+  }
+  return out;
+}
+
+export function startLearn() {
+  if (state.transport.mode === 'learning') return false;
+  groups = groupAttacks(state.composition.notes);
+  if (!groups.length) return false;
+
+  resumeAudioContext();
+  releaseListeners();
+  index = -1;
+  update('transport.currentTime', 0);
+  update('transport.mode', 'learning');
+  // Registered after the mode change, so entering the mode cannot trip the
+  // listener that exists to notice something else leaving it
+  cleanupFns = [
+    on('midi:noteon', handleNoteOn),
+    on('change:transport.mode', ({ value }) => { if (value !== 'learning') finish(false); }),
+  ];
+  emit('transport:learn', { total: groups.length });
+  goTo(0);
+  return true;
+}
+
+export function stopLearn() {
+  finish(false);
+}
+
+export function getLearnProgress() {
+  if (!groups.length || index < 0) return null;
+  return { done: index, total: groups.length, pending: [...pending] };
+}
+
+function releaseListeners() {
+  cleanupFns.forEach(fn => fn());
+  cleanupFns = [];
+}
+
+function finish(completed) {
+  if (rafId !== null) cancelAnimationFrame(rafId);
+  rafId = null;
+  clearPrompt();
+  releaseListeners();
+  pending.clear();
+  emit('learn:waiting', { pitches: [], done: index, total: groups.length });
+  if (completed) emit('learn:complete', { total: groups.length });
+  // Already out of the mode when something else stopped us — saying so twice
+  // would bounce back through the mode listener
+  if (state.transport.mode === 'learning') {
+    update('transport.mode', 'stopped');
+    emit('transport:stop');
+  }
+}
+
+function goTo(i) {
+  index = i;
+  if (i >= groups.length) { finish(true); return; }
+
+  pending = new Set(groups[i].pitches);
+  targetMs = groups[i].startMs;
+  perfStart = performance.now();
+  posStart = state.transport.currentTime;
+
+  if (posStart >= targetMs) { arrive(); return; }
+  rafId = requestAnimationFrame(fall);
+}
+
+// The only time the clock moves: between one attack and the next
+function fall() {
+  const t = posStart + (performance.now() - perfStart) * (state.transport.speed || 1);
+  if (t >= targetMs) { arrive(); return; }
+  update('transport.currentTime', t);
+  emit('transport:tick', t);
+  rafId = requestAnimationFrame(fall);
+}
+
+function arrive() {
+  rafId = null;
+  update('transport.currentTime', targetMs);
+  emit('transport:tick', targetMs);
+  playPrompt(groups[index]);
+  announce();
+}
+
+function announce() {
+  emit('learn:waiting', { pitches: [...pending], done: index, total: groups.length });
+}
+
+function playPrompt(group) {
+  clearPrompt();
+  for (const note of group.notes) {
+    noteOn(note.pitch, note.velocity ?? 90);
+    prompting.push(note.pitch);
+  }
+  const ms = Math.min(PROMPT_MAX_MS, Math.max(PROMPT_MIN_MS, group.durationMs));
+  promptTimer = setTimeout(clearPrompt, ms);
+}
+
+function clearPrompt() {
+  clearTimeout(promptTimer);
+  promptTimer = null;
+  for (const pitch of prompting) {
+    // A pitch the player is holding is theirs now — the prompt and the live
+    // monitor share one voice per pitch, so releasing it would cut their note
+    if (!state.midi.activeNotes.has(pitch)) noteOff(pitch);
+  }
+  prompting = [];
+}
+
+function handleNoteOn({ pitch }) {
+  // Input counts only at the wait, never while the notes are still falling
+  if (state.transport.mode !== 'learning' || rafId !== null) return;
+
+  if (!pending.has(pitch)) {
+    emit('learn:wrong', { pitch });
+    return;
+  }
+
+  clearPrompt(); // the prompt steps aside as soon as the player starts
+  pending.delete(pitch);
+  emit('learn:hit', { pitch });
+  if (pending.size === 0) goTo(index + 1);
+  else announce();
+}

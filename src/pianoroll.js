@@ -141,6 +141,14 @@ export function drawKeyboard(activeNotes = null) {
     }
   }
 
+  if (waitingPitches.size) {
+    const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 220);
+    for (const midi of waitingPitches) {
+      const key = keyMap.get(midi);
+      if (key) drawWaitingKey(kbCtx, key, pulse);
+    }
+  }
+
   if (effects.length) drawEffects(performance.now());
 }
 
@@ -150,6 +158,31 @@ export function drawKeyboard(activeNotes = null) {
 
 const EFFECT_MS = { perfect: 620, wrong: 700, good: 380 };
 let effects = []; // { midi, kind, born }
+
+// ── Learn-mode targets ───────────────────────────────────────────────────────
+// The keys the piece is currently waiting on. Marked on the keyboard and at
+// the hit line, so the player is told what to press rather than left to work
+// it out from a note that has stopped moving.
+
+let waitingPitches = new Set();
+
+export function setWaitingPitches(pitches) {
+  waitingPitches = new Set(pitches || []);
+}
+
+const WAIT_COLOR = '#f5b301';
+
+function drawWaitingKey(ctx, key, pulse) {
+  ctx.save();
+  ctx.globalAlpha = 0.45 + 0.35 * pulse;
+  ctx.fillStyle = WAIT_COLOR;
+  ctx.fillRect(key.x, key.isWhite ? key.h * 0.55 : 0, key.w - (key.isWhite ? 1 : 0), key.isWhite ? key.h * 0.45 : key.h);
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = WAIT_COLOR;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(key.x + 1, 1, key.w - 2, key.h - 2);
+  ctx.restore();
+}
 
 export function spawnKeyEffect(midi, kind) {
   effects.push({ midi, kind, born: performance.now() });
@@ -335,6 +368,23 @@ export function drawFallingNotes(notes, composition, currentTimeMs, accuracyResu
     // Highlight top edge
     fallingCtx.fillStyle = 'rgba(255,255,255,0.3)';
     fallingCtx.fillRect(x + 2, visibleTop, Math.max(1, w - 4), 2);
+  }
+
+  // Keys the piece is waiting on: a pulsing column down to the hit line, so
+  // the frozen note reads as "play this" rather than as a stall
+  if (waitingPitches.size) {
+    const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 220);
+    for (const midi of waitingPitches) {
+      const keyInfo = keyMap.get(midi);
+      if (!keyInfo) continue;
+      const band = fallingCtx.createLinearGradient(0, ch - 90, 0, ch);
+      band.addColorStop(0, 'transparent');
+      band.addColorStop(1, WAIT_COLOR);
+      fallingCtx.globalAlpha = 0.25 + 0.35 * pulse;
+      fallingCtx.fillStyle = band;
+      fallingCtx.fillRect(keyInfo.x, ch - 90, keyInfo.w, 90);
+      fallingCtx.globalAlpha = 1;
+    }
   }
 
   // Draw active notes "glow" at the hit line

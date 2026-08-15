@@ -2,7 +2,8 @@
 import { state, update, emit, on } from './state.js';
 import { record, play, stop, stopAndRewind, startCountIn, playRange, seekTo, seekToStart, seekToEnd, clearAllNotes, transposeNotes, applyLegato, deleteNotes, changeTempo } from './transport.js';
 import { renderSheet, initSheet, getChordOverlayData, getStaveGeometry } from './sheet.js';
-import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects } from './pianoroll.js';
+import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWaitingPitches } from './pianoroll.js';
+import { startLearn, stopLearn } from './learn.js';
 import { saveComposition, listCompositions, deleteComposition, compositionToJSON, compositionFromJSON } from './storage.js';
 import { startAccuracy, stopAccuracy, getWorstSection } from './accuracy.js';
 import { startMetronome, stopMetronome } from './metronome.js';
@@ -73,6 +74,20 @@ export function initUI() {
     else if (grade === 'good') spawnKeyEffect(pitch, 'good');
   });
   on('accuracy:wrong', ({ pitch }) => spawnKeyEffect(pitch, 'wrong'));
+
+  // Learn: the highlighted keys are the instruction, so they follow the state
+  on('transport:learn', ({ total }) => {
+    showLearnStatus(true);
+    showToast(`Learn mode — ${total} note${total === 1 ? '' : 's'} to play`, 1600);
+  });
+  on('learn:waiting', (info) => {
+    if (info.pitches.length) updateLearnStatus(info);
+    else setWaitingPitches([]);
+  });
+  on('learn:hit', ({ pitch }) => spawnKeyEffect(pitch, 'good'));
+  on('learn:wrong', ({ pitch }) => spawnKeyEffect(pitch, 'wrong'));
+  on('learn:complete', ({ total }) => showToast(`Learn complete — ${total} played`, 2200));
+
   on('accuracy:progress', (p) => updateGauge(p));
   on('accuracy:complete', (results) => showAccuracyResults(results));
 
@@ -101,7 +116,9 @@ function bindTransport() {
   document.getElementById('btn-step-back').onclick = () => stepGoBack();
   document.getElementById('btn-play').onclick = () => {
     modeGuard();
+    if (state.transport.mode === 'learning') { stopLearn(); return; }
     if (state.transport.mode === 'playing' || state.transport.mode === 'count-in') { stop(); return; }
+    if (state.ui.learnMode) { startLearnSession(); return; }
     if (state.ui.trainMode) { startTrainingSession(); return; }
     if (state.transport.mode === 'step-recording') stopStepRecord();
     play();
@@ -122,6 +139,13 @@ function bindTransport() {
     document.getElementById('btn-play').textContent = '▶';
     setStepControlsVisible(true);
   });
+  on('transport:learn', () => {
+    document.getElementById('btn-play').classList.add('active');
+    document.getElementById('btn-play').textContent = '⏸';
+    document.getElementById('btn-record').classList.remove('active');
+    document.getElementById('btn-step-record').classList.remove('active');
+    setStepControlsVisible(false);
+  });
   on('transport:play', () => {
     document.getElementById('btn-play').classList.add('active');
     document.getElementById('btn-play').textContent = '⏸';
@@ -135,6 +159,7 @@ function bindTransport() {
     document.getElementById('btn-play').classList.remove('active');
     document.getElementById('btn-play').textContent = '▶';
     setStepControlsVisible(false);
+    showLearnStatus(false);
     updatePositionDisplay(state.transport.currentTime);
     if (state.ui.trainMode && state.accuracy.active) {
       stopAccuracy();
@@ -264,12 +289,52 @@ function toggleClicksOnly() {
     : 'Clicks only — turn the metronome on to hear anything but the count-in', 1800);
 }
 
+// Train and Learn both take over the Play button, so only one can be armed
+function setPracticeMode(mode) {
+  update('ui.trainMode', mode === 'train');
+  update('ui.learnMode', mode === 'learn');
+  document.getElementById('btn-train-mode').classList.toggle('active', mode === 'train');
+  document.getElementById('btn-learn-mode').classList.toggle('active', mode === 'learn');
+  document.getElementById('btn-play').title =
+    mode === 'train' ? 'Start Training' : mode === 'learn' ? 'Start Learning' : 'Play';
+}
+
 function toggleTrainMode() {
   const active = !state.ui.trainMode;
-  update('ui.trainMode', active);
-  document.getElementById('btn-train-mode').classList.toggle('active', active);
-  document.getElementById('btn-play').title = active ? 'Start Training' : 'Play';
+  setPracticeMode(active ? 'train' : null);
   showToast(active ? 'Training mode ON — press Play to start' : 'Training mode OFF');
+}
+
+function toggleLearnMode() {
+  const active = !state.ui.learnMode;
+  setPracticeMode(active ? 'learn' : null);
+  showToast(active
+    ? 'Learn mode ON — press Play, then play each note as it lands'
+    : 'Learn mode OFF');
+}
+
+// ── Learn sessions ───────────────────────────────────────────────────────────
+
+function startLearnSession() {
+  if (!state.composition.notes.length) {
+    showToast('Record something first to learn');
+    return;
+  }
+  clearKeyEffects();
+  if (!startLearn()) showToast('Nothing to learn here');
+}
+
+function showLearnStatus(visible) {
+  document.getElementById('learn-status').classList.toggle('hidden', !visible);
+  if (!visible) setWaitingPitches([]);
+}
+
+function updateLearnStatus({ pitches, done, total }) {
+  setWaitingPitches(pitches);
+  document.getElementById('learn-count').textContent = `${done + 1} / ${total}`;
+  document.getElementById('learn-hint').textContent = pitches.length === 1
+    ? 'Play the highlighted key'
+    : `Play the ${pitches.length} highlighted keys`;
 }
 
 function toggleLoop() {
@@ -558,6 +623,7 @@ function bindToolbar() {
 
   document.getElementById('btn-metronome').onclick = toggleMetronome;
   document.getElementById('btn-clicks-only').onclick = toggleClicksOnly;
+  document.getElementById('btn-learn-mode').onclick = toggleLearnMode;
 
   const speedSlider = document.getElementById('speed-slider');
   const speedValue = document.getElementById('speed-value');
@@ -813,6 +879,7 @@ function shortcutActions() {
       defaultBindings: [{ code: 'Space' }],
       run: () => {
         if (state.transport.mode !== 'stopped') stop();
+        else if (state.ui.learnMode) startLearnSession();
         else if (state.ui.trainMode) startTrainingSession();
         else play();
       } },
@@ -887,6 +954,11 @@ function shortcutActions() {
       section: 'Options', label: 'Toggle training mode',
       defaultBindings: [{ code: 'KeyT' }],
       run: () => toggleTrainMode() },
+    // Shift on the training key: the two practice modes are a pair
+    { id: 'learn', group: 'global', hint: 'btn-learn-mode',
+      section: 'Options', label: 'Toggle learn mode',
+      defaultBindings: [{ code: 'KeyT', shift: true }],
+      run: () => toggleLearnMode() },
     { id: 'loop', group: 'global',
       section: 'Options', label: 'Toggle loop',
       defaultBindings: [{ code: 'KeyL', shift: true }],
