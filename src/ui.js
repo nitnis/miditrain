@@ -5,7 +5,7 @@ import { renderSheet, initSheet, getChordOverlayData, getStaveGeometry } from '.
 import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWaitingPitches } from './pianoroll.js';
 import { startLearn, stopLearn } from './learn.js';
 import { saveComposition, listCompositions, deleteComposition, compositionToJSON, compositionFromJSON } from './storage.js';
-import { startAccuracy, stopAccuracy, getWorstSection } from './accuracy.js';
+import { startAccuracy, stopAccuracy, getWorstSection, EXTRA_PENALTY_PCT } from './accuracy.js';
 import { startMetronome, stopMetronome } from './metronome.js';
 import { resumeAudioContext, applyOutputLevel, applyClicksOnly } from './audio.js';
 import { startStepRecord, stopStepRecord, stepInsertRest, stepGoBack, getStepMs } from './step-recorder.js';
@@ -1600,7 +1600,10 @@ function showAccuracyResults(results) {
   document.getElementById('stat-almost').textContent = almost;
   document.getElementById('stat-correct').textContent = good;
   document.getElementById('stat-missed').textContent = missed;
-  document.getElementById('stat-extra').textContent = extra;
+  // Say what the extras cost, or the score looks like it lost marks nowhere
+  document.getElementById('stat-extra').textContent = extra
+    ? `${extra} (−${extra * EXTRA_PENALTY_PCT}%)`
+    : '0';
   document.getElementById('stat-timing').textContent = `±${avgLatencyMs}ms`;
 
   // Animate the score arc
