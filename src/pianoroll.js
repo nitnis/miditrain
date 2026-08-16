@@ -2,6 +2,7 @@
 import { state } from './state.js';
 import { getAccuracyResults } from './accuracy.js';
 import { setEditorLayout } from './note-editor.js';
+import { isRightHand } from './chords.js';
 
 // Piano layout constants
 const MIDI_MIN = 21; // A0
@@ -19,10 +20,14 @@ const PC_COLORS = [
   '#ff5722', '#00bcd4', '#8bc34a', '#ff9800',
 ];
 
-// Falling notes read as two families rather than twelve: which hand shape the
-// note belongs to matters more here than which pitch class it is.
-const WHITE_NOTE = '#3d8bfd';
-const BLACK_NOTE = '#7c3aed';
+// Falling notes are coloured by hand first — that is the thing you need to
+// know while sight-reading them — and by white or black key within it. The
+// right hand keeps the blue and deep purple it has always had; the left takes
+// a warm pair, far enough from the greens and yellows that grade a hit.
+const HAND_COLORS = {
+  right: { white: '#3d8bfd', black: '#7c3aed' },
+  left:  { white: '#f472b6', black: '#db2777' },
+};
 // Grades colour the note as it falls
 const GRADE_COLORS = { perfect: '#2ecc71', good: '#2ecc71', almost: '#f1c40f' };
 // Black-key notes are drawn narrower still, so the two rows read apart
@@ -269,7 +274,8 @@ function getKeyX(midi) {
 }
 
 function fallingColor(midi) {
-  return IS_WHITE[midi % 12] ? WHITE_NOTE : BLACK_NOTE;
+  const hand = HAND_COLORS[isRightHand(midi) ? 'right' : 'left'];
+  return IS_WHITE[midi % 12] ? hand.white : hand.black;
 }
 
 function getNoteColor(midi, alpha = 1) {
