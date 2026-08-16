@@ -182,6 +182,12 @@
           </svg>
           Metro
         </button>
+        <select id="metro-subdivision" title="Click the beat, or subdivide it — the divisions click lighter than the beat">
+          <option value="1">Beat</option>
+          <option value="2">&#9834;&#9834; 8ths</option>
+          <option value="3">Triplets</option>
+          <option value="4">&#9835; 16ths</option>
+        </select>
         <button class="toggle-btn" id="btn-clicks-only" title="Hear only the metronome and count-in">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M9 17V5l10-2v12"/>
@@ -190,6 +196,29 @@
             <line x1="3" y1="21" x2="21" y2="3"/>
           </svg>
           Clicks only
+        </button>
+      </div>
+
+      <!-- What the falling-notes window shows over the notes -->
+      <div class="tool-group">
+        <span class="tool-label">SHOW</span>
+        <button class="toggle-btn" id="btn-beat-overlay" title="Show the beat counter over the falling notes (Shift+B)">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <circle cx="4.5" cy="12" r="2.5" fill="currentColor" stroke="none"/>
+            <circle cx="11" cy="12" r="2" opacity="0.7"/>
+            <circle cx="17" cy="12" r="2" opacity="0.7"/>
+            <circle cx="22" cy="12" r="1.5" opacity="0.4"/>
+          </svg>
+          Beat
+        </button>
+        <button class="toggle-btn" id="btn-chord-overlay" title="Show the chord under the playhead over the falling notes (Shift+C)">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="7" cy="17" r="3"/>
+            <line x1="10" y1="17" x2="10" y2="5"/>
+            <line x1="10" y1="5" x2="20" y2="7"/>
+            <line x1="10" y1="9" x2="20" y2="11"/>
+          </svg>
+          Chord
         </button>
       </div>
 
