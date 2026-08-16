@@ -37,8 +37,10 @@ function loop() {
   const t = currentPosition();
   update('transport.currentTime', t);
 
-  // Check loop bounds
-  if (state.transport.loopEnabled) {
+  // Check loop bounds. A bounded stretch is exempt: playRange means play this
+  // once and stop, and wrapping instead would leave a training run over those
+  // same bars going round forever with no score at the end of it.
+  if (state.transport.loopEnabled && stopAtMs === null) {
     const loopEndMs = barStartMs(state.transport.loopEndBar, state.composition.tempo, state.composition.timeSignature);
     if (t >= loopEndMs) {
       const loopStartMs = barStartMs(state.transport.loopStartBar - 1, state.composition.tempo, state.composition.timeSignature);
