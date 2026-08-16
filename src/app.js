@@ -3,10 +3,16 @@ import { initMidi } from './midi.js';
 import { initUI } from './ui.js';
 import { on, emit, state } from './state.js';
 import { noteOn as audioNoteOn, noteOff as audioNoteOff } from './audio.js';
+import { restoreSettings, restoreComposition, initSession } from './session.js';
 
 async function boot() {
-  // Initialize UI first (draws empty staves)
+  // Last session first, so the UI is built from where the app was left rather
+  // than from defaults it would then have to be talked out of
+  restoreSettings();
+  await restoreComposition();
+
   initUI();
+  initSession();
 
   // Monitor incoming MIDI in every mode — stopped, live recording and step
   // recording all sound the key you press. Registered before MIDI init: that
