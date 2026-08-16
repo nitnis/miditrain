@@ -495,8 +495,8 @@ function drawChordName(notes, composition, currentTimeMs, cw, ch) {
 // A level crossing, because a crossing signal is the one blinking light
 // everybody can already read: two lamps taking turns, one per beat, both of
 // them together on the downbeat so the bar line is unmistakable. Under the
-// crossbuck, a pip per beat says where in the bar you are; the lit lamp pulses
-// once per subdivision, which is exactly what the clicks are doing.
+// crossbuck sit two rows: a pip per beat, saying where in the bar you are, and
+// — when the beat is set to divide — a bar per click, filling through the beat.
 //
 // It counts the same composition-time ticks the audible metronome does, so
 // what you see and what you hear cannot disagree — but it is its own switch,
@@ -529,8 +529,9 @@ function drawMetronome(composition, currentTimeMs, cw, ch) {
   const pad = 10 * s;
   const buckH = 22 * s;
   const pipH = 9 * s;
+  const subH = subs > 1 ? 9 * s : 0;
   const width = gap + lampR * 2 + pad * 2 + 16 * s;
-  const height = pad * 2 + buckH + lampR * 2 + pipH + BUCK_CLEARANCE * s;
+  const height = pad * 2 + buckH + lampR * 2 + pipH + subH + BUCK_CLEARANCE * s;
   const x = cw - width - 12;
   const y = 10;
 
@@ -546,19 +547,18 @@ function drawMetronome(composition, currentTimeMs, cw, ch) {
   const midX = x + width / 2;
   drawCrossbuck(midX, y + pad + buckH / 2, buckH, s);
 
-  // The lamps alternate beat by beat, and the downbeat lights both
+  // The lamps alternate beat by beat, and the downbeat lights both. They swell
+  // on the attack so the eye catches the beat landing, not a lamp merely on.
   const lampY = y + pad + buckH + BUCK_CLEARANCE * s + lampR;
-  // A lamp burns through its beat and pulses at each subdivision, the way the
-  // clicks do; the leading edge of each pulse is what the eye picks up
-  const intoSub = (intoBeat * subs) % 1;
-  const pulse = running ? 0.55 + 0.45 * Math.max(0, 1 - intoSub * 2.5) : 0;
+  const swell = running ? Math.max(0, 1 - intoBeat * 3) : 0;
+  const burn = 0.6 + 0.4 * swell;
   const litLeft = running && (beatIndex === 0 || beat % 2 === 0);
   const litRight = running && (beatIndex === 0 || beat % 2 === 1);
-  drawLamp(midX - gap / 2, lampY, lampR, litLeft ? pulse : 0, s);
-  drawLamp(midX + gap / 2, lampY, lampR, litRight ? pulse : 0, s);
+  drawLamp(midX - gap / 2, lampY, lampR, litLeft ? burn : 0, s);
+  drawLamp(midX + gap / 2, lampY, lampR, litRight ? burn : 0, s);
 
   // Where in the bar, under the lamps
-  const pipY = y + height - pipH / 2 - 3 * s;
+  const pipY = y + pad + buckH + BUCK_CLEARANCE * s + lampR * 2 + pipH / 2;
   const pipGap = Math.min(13 * s, (width - pad * 2) / beatsPerBar);
   for (let b = 0; b < beatsPerBar; b++) {
     const px = midX + (b - (beatsPerBar - 1) / 2) * pipGap;
@@ -569,6 +569,27 @@ function drawMetronome(composition, currentTimeMs, cw, ch) {
       ? (b === 0 ? '#f5b301' : 'rgba(240,240,255,0.9)')
       : 'rgba(140,140,180,0.4)';
     fallingCtx.fill();
+  }
+
+  // The divisions of the beat get their own row rather than sharing the lamps:
+  // one bar per click, filling left to right through the beat. Sharing meant a
+  // brightness wobble nobody could see under a lamp already burning red.
+  if (subs > 1) {
+    const subIndex = Math.min(subs - 1, Math.floor(intoBeat * subs));
+    const rowW = width - pad * 2;
+    const slot = rowW / subs;
+    const barW = Math.max(3 * s, slot - 3 * s);
+    const subY = pipY + pipH / 2 + 2 * s;
+    for (let i = 0; i < subs; i++) {
+      const sx = x + pad + i * slot + (slot - barW) / 2;
+      const on = running && i === subIndex;
+      // The first click of the beat is the beat itself, so it is coloured like
+      // one; the rest are the lighter ticks between
+      fallingCtx.fillStyle = on
+        ? (i === 0 ? '#ffd166' : '#7fe3ff')
+        : 'rgba(140,140,180,0.3)';
+      fallingCtx.fillRect(sx, subY, barW, (on ? 4 : 2.5) * s);
+    }
   }
   fallingCtx.restore();
 }
