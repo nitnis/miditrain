@@ -33,6 +33,7 @@
     <div class="header-right">
       <select id="profile-select" class="profile-select" title="Who is practising — each profile keeps its own progress and speeds"></select>
       <button class="hdr-btn" id="btn-profiles" title="Manage profiles and the folder they are kept in">Profiles…</button>
+      <button class="hdr-btn" id="btn-practice" title="Write a scale or arpeggio onto the stave to practise (Shift+S)">Scales…</button>
       <button class="hdr-btn" id="btn-new">New</button>
       <button class="hdr-btn" id="btn-open">Open</button>
       <button class="hdr-btn" id="btn-save">Save</button>
@@ -461,6 +462,68 @@
 
       <div class="modal-actions">
         <button class="modal-btn primary" id="btn-close-profiles">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scale and arpeggio generator -->
+  <div class="modal-overlay hidden" id="practice-modal">
+    <div class="modal-box practice-box">
+      <div class="practice-tabs" role="tablist">
+        <button class="practice-tab active" id="tab-scales" data-kind="scale" role="tab">Scales</button>
+        <button class="practice-tab" id="tab-arpeggios" data-kind="arpeggio" role="tab">Arpeggios</button>
+      </div>
+      <p class="section-sub" id="practice-blurb">Write a scale onto the stave to practise. Everything else works on it: play it, loop a stretch, train it, or walk it in learn mode.</p>
+
+      <div class="practice-grid">
+        <label class="practice-field">
+          <span>Root</span>
+          <select id="gen-root"></select>
+        </label>
+        <label class="practice-field">
+          <span id="gen-type-label">Scale</span>
+          <select id="gen-type"></select>
+        </label>
+        <label class="practice-field hidden" id="gen-inversion-field">
+          <span>Inversion</span>
+          <select id="gen-inversion"></select>
+        </label>
+        <label class="practice-field">
+          <span>Octaves</span>
+          <select id="gen-octaves">
+            <option value="1">1</option>
+            <option value="2" selected>2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+          </select>
+        </label>
+        <label class="practice-field">
+          <span>Start on</span>
+          <select id="gen-octave" title="Which octave the right hand begins in"></select>
+        </label>
+        <label class="practice-field">
+          <span>Hands</span>
+          <select id="gen-hands"></select>
+        </label>
+        <label class="practice-field">
+          <span>Direction</span>
+          <select id="gen-direction"></select>
+        </label>
+        <label class="practice-field">
+          <span>Run</span>
+          <select id="gen-pattern" title="Straight is the scale itself; the rest are the runs built on one"></select>
+        </label>
+        <label class="practice-field">
+          <span>Note value</span>
+          <select id="gen-note-value"></select>
+        </label>
+      </div>
+
+      <p class="practice-summary" id="practice-summary"></p>
+
+      <div class="modal-actions">
+        <button class="modal-btn" id="btn-practice-cancel">Cancel</button>
+        <button class="modal-btn primary" id="btn-practice-generate">Write it</button>
       </div>
     </div>
   </div>
