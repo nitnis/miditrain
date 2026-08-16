@@ -31,6 +31,8 @@
     <span id="composition-name" class="composition-name" contenteditable="true" spellcheck="false">Untitled</span>
 
     <div class="header-right">
+      <select id="profile-select" class="profile-select" title="Who is practising — each profile keeps its own progress and speeds"></select>
+      <button class="hdr-btn" id="btn-profiles" title="Manage profiles and the folder they are kept in">Profiles…</button>
       <button class="hdr-btn" id="btn-new">New</button>
       <button class="hdr-btn" id="btn-open">Open</button>
       <button class="hdr-btn" id="btn-save">Save</button>
@@ -387,6 +389,34 @@
         <button class="modal-btn" id="btn-train-section" hidden>Practise bars 1–2</button>
         <button class="modal-btn" id="btn-train-again">Try Again</button>
         <button class="modal-btn primary" id="btn-close-accuracy">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Profiles -->
+  <div class="modal-overlay hidden" id="profiles-modal">
+    <div class="modal-box profiles-box">
+      <h2>Profiles</h2>
+      <p class="section-sub">Each profile remembers where it got to and how fast it plays each section.</p>
+
+      <div class="profile-list" id="profile-list"></div>
+
+      <div class="profile-row">
+        <input type="text" id="profile-new-name" class="profile-input" placeholder="New profile name" maxlength="60">
+        <button class="modal-btn" id="btn-profile-create">Create</button>
+      </div>
+
+      <h3 class="profile-heading">Folder on disk</h3>
+      <p class="section-sub" id="profile-folder-state">No folder chosen.</p>
+      <div class="profile-row">
+        <button class="modal-btn" id="btn-profile-folder">Choose folder…</button>
+        <button class="modal-btn" id="btn-profile-scan">Load profiles from folder</button>
+        <button class="modal-btn" id="btn-profile-file">Load a profile file…</button>
+        <input type="file" id="profile-file" accept="application/json,.json" hidden>
+      </div>
+
+      <div class="modal-actions">
+        <button class="modal-btn primary" id="btn-close-profiles">Done</button>
       </div>
     </div>
   </div>

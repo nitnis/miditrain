@@ -5,7 +5,8 @@
 // read synchronously; the song can be thousands of notes, so it goes to
 // IndexedDB beside the saved compositions.
 import { state, update, on } from './state.js';
-import { saveWorkingComposition, loadWorkingComposition } from './storage.js';
+import { saveWorkingComposition, loadWorkingComposition, compositionToJSON, compositionFromJSON } from './storage.js';
+import { current as currentProfile, adoptProfile, switchProfile } from './profiles.js';
 
 const SETTINGS_KEY = 'miditrain.settings';
 const SAVE_DEBOUNCE_MS = 400;
@@ -77,6 +78,45 @@ export async function restoreComposition() {
     // A composition that will not load is not worth blocking start-up over
     return false;
   }
+}
+
+// ── The whole of it, for a file ──────────────────────────────────────────────
+// One definition of "all current state", so what Save writes and what loading
+// a file puts back cannot drift apart.
+
+export function collectBundle() {
+  const settings = {};
+  for (const path of Object.keys(SETTINGS)) settings[path] = readPath(path);
+  return {
+    profile: currentProfile(),
+    settings,
+    composition: JSON.parse(compositionToJSON(state.composition)).composition,
+  };
+}
+
+// Returns what it actually restored, so the caller can say so
+export function applyBundle(bundle) {
+  const applied = { profile: null, settings: false, composition: false };
+
+  const profile = adoptProfile(bundle.profile);
+  if (profile) { switchProfile(profile.id); applied.profile = profile; }
+
+  if (bundle.settings && typeof bundle.settings === 'object') {
+    for (const [path, check] of Object.entries(SETTINGS)) {
+      const value = check(bundle.settings[path]);
+      if (value !== undefined) update(path, value);
+    }
+    applied.settings = true;
+  }
+
+  if (bundle.composition) {
+    try {
+      const composition = compositionFromJSON(JSON.stringify(bundle.composition));
+      Object.assign(state.composition, composition);
+      applied.composition = true;
+    } catch { /* the profile is still worth having without the song */ }
+  }
+  return applied;
 }
 
 // ── Save, as things change ───────────────────────────────────────────────────
