@@ -2,7 +2,7 @@
 import { state } from './state.js';
 import { getAccuracyResults } from './accuracy.js';
 import { setEditorLayout } from './note-editor.js';
-import { isRightHand } from './chords.js';
+import { handOf } from './hands.js';
 
 // Piano layout constants
 const MIDI_MIN = 21; // A0
@@ -273,9 +273,18 @@ function getKeyX(midi) {
   return key.x + key.w / 2;
 }
 
-function fallingColor(midi) {
-  const hand = HAND_COLORS[isRightHand(midi) ? 'right' : 'left'];
-  return IS_WHITE[midi % 12] ? hand.white : hand.black;
+function handColor(hand, midi) {
+  const pair = HAND_COLORS[hand];
+  return IS_WHITE[midi % 12] ? pair.white : pair.black;
+}
+
+function fallingColor(note) {
+  return handColor(handOf(note), note.pitch);
+}
+
+// A key being held has no note behind it to ask, so it falls back to register
+function keyColor(midi) {
+  return handColor(midi >= 60 ? 'right' : 'left', midi);
 }
 
 function getNoteColor(midi, alpha = 1) {
@@ -350,7 +359,7 @@ export function drawFallingNotes(notes, composition, currentTimeMs, accuracyResu
 
     // Graded notes recolour as they are played; a miss keeps its own colour so
     // the eye is drawn to what did happen rather than what did not
-    let color = fallingColor(note.pitch);
+    let color = fallingColor(note);
     if (trainMode && accuracyResults) {
       const result = accuracyResults.find(r => r.noteId === note.id);
       if (result && GRADE_COLORS[result.grade]) color = GRADE_COLORS[result.grade];
@@ -399,7 +408,7 @@ export function drawFallingNotes(notes, composition, currentTimeMs, accuracyResu
     if (!keyInfo) continue;
     const x = keyInfo.x + keyInfo.w / 2;
     const grad2 = fallingCtx.createRadialGradient(x, ch, 0, x, ch, 40);
-    grad2.addColorStop(0, fallingColor(midi));
+    grad2.addColorStop(0, keyColor(midi));
     grad2.addColorStop(1, 'transparent');
     fallingCtx.fillStyle = grad2;
     fallingCtx.fillRect(keyInfo.x - 5, ch - 50, keyInfo.w + 10, 50);

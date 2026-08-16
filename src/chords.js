@@ -20,12 +20,6 @@ const CHORD_PATTERNS = [
 
 function pitchClass(midi) { return midi % 12; }
 
-// Middle C is where the grand staff divides, so it is also the line between
-// the hands. One definition, so the falling notes cannot disagree with the
-// stave about which hand a note belongs to.
-export const HAND_SPLIT = 60;
-export function isRightHand(pitch) { return pitch >= HAND_SPLIT; }
-
 // ── Spelling by key ──────────────────────────────────────────────────────────
 // "Does this key use flats" is too coarse a question. It puts every sharp key
 // in one bucket, so a B-flat chord came out as "A#" in C major and no chord
