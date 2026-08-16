@@ -663,7 +663,9 @@ function bindSectionWalk() {
     document.getElementById('section-sub').textContent = s.last
       ? 'That was the last section.'
       : `Section ${s.index + 1} of ${s.total}. What next?`;
-    document.getElementById('btn-section-next').textContent =
+    // Only the label — writing the button's whole content would take the key
+    // hint out with it
+    document.getElementById('section-next-label').textContent =
       s.last ? 'Finish' : 'Next section';
     modal.classList.remove('hidden');
   });
@@ -1256,9 +1258,11 @@ function shortcutActions() {
   return [
     // While the end-of-section choice is up these shadow the global keys, the
     // same way Space retries while the results are showing
+    // Going again is the default: a section you have just stumbled through is
+    // more likely to want repeating than leaving behind
     { id: 'section-again', group: 'sections', scope: sectionUp, hint: 'btn-section-again',
       section: 'Training', label: 'Learn this section again',
-      defaultBindings: [{ code: 'KeyR' }],
+      defaultBindings: [{ code: 'Space' }, { code: 'Enter' }, { code: 'KeyR' }],
       run: () => repeatSection() },
     { id: 'section-train', group: 'sections', scope: sectionUp, hint: 'btn-section-train',
       section: 'Training', label: 'Train over this section',
@@ -1266,7 +1270,7 @@ function shortcutActions() {
       run: () => trainCurrentSection() },
     { id: 'section-next', group: 'sections', scope: sectionUp, hint: 'btn-section-next',
       section: 'Training', label: 'Move to the next section',
-      defaultBindings: [{ code: 'Space' }, { code: 'Enter' }],
+      defaultBindings: [{ code: 'KeyN' }],
       run: () => advanceSection() },
 
     // While the results are up Space repeats the run rather than driving the
