@@ -230,6 +230,45 @@ export function movePlayhead(currentTimeMs) {
   playheadEl.classList.remove('hidden');
 }
 
+// ── Loop marker ──────────────────────────────────────────────────────────────
+// The bars a loop covers, struck through in highlighter so the range is
+// visible where the music is rather than only as two numbers in the toolbar.
+// An overlay for the same reason the playhead is one: it changes far more often
+// than the layout does, and re-laying out a long piece to move it costs
+// hundreds of milliseconds.
+
+let loopLayer = null;
+
+// `startBar`/`endBar` are 1-based and endBar is inclusive, the same as
+// everywhere else that names a stretch of bars. Pass null to clear.
+export function markLoopRange(startBar, endBar) {
+  if (!container) return;
+  if (!loopLayer) {
+    loopLayer = document.createElement('div');
+    loopLayer.className = 'sheet-loop-layer';
+    container.parentElement.appendChild(loopLayer);
+  }
+  loopLayer.replaceChildren();
+  if (!startBar || !endBar || !_staveGeom.length) return;
+
+  // One band per bar. Bars on the same system abut exactly, so they read as a
+  // single stroke; a range that wraps to the next system breaks where the
+  // music does, which is what a pen would have done too.
+  for (let measure = startBar - 1; measure <= endBar - 1; measure++) {
+    const treble = _staveGeom.find(g => g.measure === measure && g.clef === 'treble');
+    const bass = _staveGeom.find(g => g.measure === measure && g.clef === 'bass');
+    if (!treble || !bass) continue;
+    const top = treble.y - 8;
+    const band = document.createElement('div');
+    band.className = 'sheet-loop-band';
+    band.style.transform =
+      `translate(${treble.x + container.offsetLeft}px, ${top + container.offsetTop}px)`;
+    band.style.width = `${treble.w}px`;
+    band.style.height = `${(bass.y + 95) - top}px`;
+    loopLayer.appendChild(band);
+  }
+}
+
 // ── Slurs ────────────────────────────────────────────────────────────────────
 // A slur marks notes played without separation. That is exactly what overlap
 // in the raw timing means, so it is read from there — quantizing snaps each
