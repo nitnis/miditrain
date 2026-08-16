@@ -67,6 +67,9 @@ export function compositionToJSON(composition) {
         velocity: n.velocity,
         startTime: n.startTime,
         duration: n.duration,
+        // Only when the source actually said so — an inferred hand is derived
+        // from the notes and would go stale the moment they are edited
+        ...(n.hand ? { hand: n.hand } : {}),
       })),
     },
   }, null, 2);
@@ -120,6 +123,7 @@ export function compositionFromJSON(text) {
       velocity: isFiniteNumber(n.velocity) ? Math.round(Math.min(127, Math.max(1, n.velocity))) : 90,
       startTime: Math.max(0, n.startTime),
       duration: Math.max(1, n.duration),
+      ...(n.hand === 'left' || n.hand === 'right' ? { hand: n.hand } : {}),
     }))
     .sort((a, b) => a.startTime - b.startTime);
 

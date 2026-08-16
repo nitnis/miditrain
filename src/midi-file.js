@@ -127,6 +127,16 @@ class Reader {
   }
 }
 
+// Files written from notation software usually say which hand is which, and
+// nothing inferred from the notes can beat being told. "Piano right" and
+// "Piano left" is the common spelling; treble and bass turn up too.
+function handFromTrackName(name) {
+  const text = (name || '').toLowerCase();
+  if (/\b(right|treble|rh|r\.h)\b/.test(text)) return 'right';
+  if (/\b(left|bass|lh|l\.h)\b/.test(text)) return 'left';
+  return null;
+}
+
 // One track's events, at absolute ticks
 function readTrack(reader, length) {
   const end = reader.pos + length;
@@ -194,7 +204,14 @@ export function midiToComposition(buffer) {
     const id = reader.string(4);
     const length = reader.uint32();
     if (id !== 'MTrk') { reader.bytesN(length); continue; }   // skip unknown chunks
-    events.push(...readTrack(reader, length));
+    const trackEvents = readTrack(reader, length);
+    // The track's own name decides the hand for everything on it
+    const named = trackEvents.find(e => e.meta === 0x03);
+    const hand = named ? handFromTrackName(new TextDecoder().decode(named.data)) : null;
+    // Both hands are usually written on the same channel, and their ranges
+    // overlap, so a note has to be matched to its note-off within its own track
+    for (const event of trackEvents) { event.track = i; if (hand) event.hand = hand; }
+    events.push(...trackEvents);
   }
   if (!events.length) throw new Error('No usable tracks in this MIDI file');
 
@@ -235,7 +252,7 @@ export function midiToComposition(buffer) {
   // Honouring a tempo map would put the notes in the right places in time but
   // the wrong places on the stave, which is the half that matters here.
   const msPerTick = (60000 / tempo) / division;
-  const held = new Map();   // `${channel}:${pitch}` -> { pitch, tick, velocity }
+  const held = new Map();   // `${track}:${channel}:${pitch}` -> { pitch, tick, velocity, hand }
   const notes = [];
   let dropped = 0;
   let clamped = 0;
@@ -251,19 +268,20 @@ export function midiToComposition(buffer) {
       velocity: Math.max(1, Math.min(127, start.velocity)),
       startTime: start.tick * msPerTick,
       duration: Math.max(20, (endTick - start.tick) * msPerTick),
+      ...(start.hand ? { hand: start.hand } : {}),
     });
   };
 
   for (const e of events) {
     if (e.pitch === undefined) continue;
     if (e.channel === DRUM_CHANNEL) { if (e.on) dropped += 1; continue; }
-    const key = `${e.channel}:${e.pitch}`;
+    const key = `${e.track}:${e.channel}:${e.pitch}`;
 
     if (e.on) {
       // A pitch restruck before its note-off ends the first one where the
       // second begins, rather than being dropped or left hanging
       if (held.has(key)) closeNote(key, e.tick);
-      held.set(key, { pitch: e.pitch, tick: e.tick, velocity: e.velocity });
+      held.set(key, { pitch: e.pitch, tick: e.tick, velocity: e.velocity, hand: e.hand });
     } else if (held.has(key)) {
       closeNote(key, e.tick);
     }

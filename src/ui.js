@@ -17,6 +17,7 @@ import { startStepRecord, stopStepRecord, stepInsertRest, stepGoBack, getStepMs 
 import { initNoteEditor, getSelectedIds, clearSelection } from './note-editor.js';
 import { staffPositionName, midiToNoteWithOctave } from './chords.js';
 import { barRangeMs } from './quantizer.js';
+import { inferHands } from './hands.js';
 import {
   listProfiles, current as currentProfile, switchProfile, createProfile, deleteProfile,
   adoptProfile, sectionKey, sectionTempo, rememberSectionTempo, setLearningPosition,
@@ -1752,6 +1753,9 @@ function scheduleSheetRender() {
     // The step cursor stands in for the playhead while stepping; otherwise the
     // playhead shows wherever the position is, stopped or not — moving it with
     // the arrows or the mouse should be visible on the stave too
+    // Which hand plays what is read off the texture, so it has to be up to
+    // date before either view draws
+    inferHands(state.composition.notes, (60 / state.composition.tempo) * 1000);
     sheetShowsStepCursor = state.transport.mode === 'step-recording';
     const t = sheetShowsStepCursor ? null : state.transport.currentTime;
     if (state.ui.view !== 'piano-roll') {
