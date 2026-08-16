@@ -934,13 +934,26 @@ function rangeForBars({ startBar, endBar }) {
   return barRangeMs(startBar, endBar, tempo, timeSignature);
 }
 
+// The loop range is the app's way of naming a stretch of bars — learn mode
+// already reads it that way, and training disagreeing with it is why setting
+// the bars and pressing Play trained the whole piece.
+function loopBars() {
+  const { loopEnabled, loopStartBar, loopEndBar } = state.transport;
+  return loopEnabled ? { startBar: loopStartBar, endBar: loopEndBar } : null;
+}
+
 function startTrainingSession(bars = null) {
   if (!state.composition.notes.length) {
     showToast('Record something first to train with');
     return;
   }
   document.getElementById('accuracy-modal').classList.add('hidden');
-  lastTrainingBars = bars ? { startBar: bars.startBar, endBar: bars.endBar } : null;
+  // An explicit section wins; otherwise the loop range, if one is set
+  const target = bars || loopBars();
+  lastTrainingBars = target ? { startBar: target.startBar, endBar: target.endBar } : null;
+  if (!bars && lastTrainingBars) {
+    showToast(`Training bars ${lastTrainingBars.startBar}–${lastTrainingBars.endBar}`, 1800);
+  }
   clearKeyEffects();
   showGauge(true);
 
