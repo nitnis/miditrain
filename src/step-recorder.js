@@ -122,6 +122,7 @@ function commitChord() {
       velocity,
       startTime: stepPos,
       duration: soundingDuration(stepMs, stepMs),
+      ...(state.ui.recordHand === 'auto' ? {} : { hand: state.ui.recordHand }),
     };
     state.composition.notes.push(note);
     committed.push(note);
