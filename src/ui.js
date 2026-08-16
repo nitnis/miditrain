@@ -115,9 +115,40 @@ export function initUI() {
   on('accuracy:complete', (results) => showAccuracyResults(results));
 
   updateMidiStatus(false);
+  applyStateToControls();
   scheduleSheetRender();
+}
+
+// Every control set from state in one pass. The app restores its last session
+// before the UI is built, so each control has to be able to catch up rather
+// than relying on the markup's default being right.
+function applyStateToControls() {
+  const { composition, transport, ui } = state;
+
+  document.getElementById('composition-name').textContent = composition.name || 'Untitled';
+  document.getElementById('key-select').value = composition.keySignature;
+  document.getElementById('ts-num').value = composition.timeSignature.numerator;
+  document.getElementById('ts-den').value = composition.timeSignature.denominator;
+  syncTempoControls();
+  syncTransposeControls();
+
+  for (const sel of quantizeSelects()) sel.value = String(ui.quantize);
+  document.getElementById('learn-sections').value = String(ui.learnSectionBars);
+  document.getElementById('legato-toggle').checked = ui.stepLegato;
+
+  applyMuteUI(ui.muted);
+  setVolume(Math.round(ui.volume * 100));
+  applyClicksOnly();
+  document.getElementById('btn-clicks-only').classList.toggle('active', ui.clicksOnly);
+  document.getElementById('btn-metronome').classList.toggle('active', ui.metronomeEnabled);
+  document.getElementById('btn-count-in').classList.toggle('active', ui.countInEnabled);
+  setPracticeMode(ui.trainMode ? 'train' : ui.learnMode ? 'learn' : null);
+
+  document.getElementById('loop-start').value = transport.loopStartBar;
+  document.getElementById('loop-end').value = transport.loopEndBar;
   updateLoopDisplay();
 
+  setView(ui.view);
 }
 
 function bindTransport() {
@@ -410,7 +441,7 @@ function toggleLearnMode() {
 // ── Learn sessions ───────────────────────────────────────────────────────────
 
 function sectionSize() {
-  return parseInt(document.getElementById('learn-sections').value) || 0;
+  return state.ui.learnSectionBars;
 }
 
 function startLearnSession() {
@@ -475,6 +506,8 @@ function bindSectionWalk() {
   on('sections:complete', ({ total }) =>
     showToast(`Worked through all ${total} section${total === 1 ? '' : 's'}`, 2600));
 
+  document.getElementById('learn-sections').onchange = (e) =>
+    update('ui.learnSectionBars', parseInt(e.target.value) || 0);
   document.getElementById('btn-section-again').onclick = () => repeatSection();
   document.getElementById('btn-section-next').onclick = () => advanceSection();
   document.getElementById('btn-section-train').onclick = () => trainCurrentSection();
