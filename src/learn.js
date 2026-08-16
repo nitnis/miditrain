@@ -23,7 +23,12 @@ const PROMPT_MAX_MS = 900;
 
 let groups = [];        // [{ startMs, durationMs, pitches:Set, notes:[] }]
 let index = -1;
-let pending = new Set();  // pitches of the current group not yet played
+let pending = new Set();  // pitches of the current group not currently held
+// Notes struck since arriving at this group and still down. A chord counts as
+// played when every one of its notes is held at the same moment, so this is
+// emptied on arrival — a key left down from the previous group has to be
+// released and struck again, which is what a repeated note asks for anyway.
+let struck = new Set();
 let prompting = [];       // pitches the prompt is holding down
 let promptTimer = null;
 let rafId = null;         // non-null only while the notes are falling
@@ -93,12 +98,14 @@ export function startLearn(bars = null) {
   index = -1;
   pass = 1;
   slips = 0;
+  struck.clear();
   update('transport.currentTime', sectionStartMs);
   update('transport.mode', 'learning');
   // Registered after the mode change, so entering the mode cannot trip the
   // listener that exists to notice something else leaving it
   cleanupFns = [
     on('midi:noteon', handleNoteOn),
+    on('midi:noteoff', handleNoteOff),
     on('change:transport.mode', ({ value }) => { if (value !== 'learning') finish(false); }),
   ];
   emit('transport:learn', {
@@ -177,10 +184,16 @@ function fall() {
 
 function arrive() {
   rafId = null;
+  struck.clear();
+  refreshPending();
   update('transport.currentTime', targetMs);
   emit('transport:tick', targetMs);
   playPrompt(groups[index]);
   announce();
+}
+
+function refreshPending() {
+  pending = new Set([...groups[index].pitches].filter(p => !struck.has(p)));
 }
 
 function restartPass() {
@@ -224,7 +237,7 @@ function handleNoteOn({ pitch }) {
   // Input counts only at the wait, never while the notes are still falling
   if (state.transport.mode !== 'learning' || rafId !== null) return;
 
-  if (!pending.has(pitch)) {
+  if (!groups[index].pitches.has(pitch)) {
     slips += 1;
     emit('learn:wrong', { pitch, slips });
     if (looping) announce();
@@ -232,8 +245,20 @@ function handleNoteOn({ pitch }) {
   }
 
   clearPrompt(); // the prompt steps aside as soon as the player starts
-  pending.delete(pitch);
+  struck.add(pitch);
+  refreshPending();
   emit('learn:hit', { pitch });
+  // Together, not one at a time: the step only passes while every note of it
+  // is down at once
   if (pending.size === 0) goTo(index + 1);
   else announce();
+}
+
+// Letting go of part of a chord un-plays it, so the highlight comes back and
+// the step waits again rather than banking the notes already pressed
+function handleNoteOff({ pitch }) {
+  if (state.transport.mode !== 'learning' || rafId !== null) return;
+  if (!struck.delete(pitch)) return;
+  refreshPending();
+  announce();
 }
