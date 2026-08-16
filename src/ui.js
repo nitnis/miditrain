@@ -2018,6 +2018,32 @@ function bindChordOverlay() {
   });
 }
 
+// The tooltip is absolutely positioned inside the score's scrolling container,
+// so it has to be placed in that container's *content* coordinates. Measuring
+// against the container's viewport rectangle alone left out the scroll offset,
+// which put the tooltip that many pixels too high — off the top of the visible
+// area entirely once the score was scrolled down to a lower system.
+function placeChordTooltip(tooltip, label, containerEl) {
+  const box = containerEl.getBoundingClientRect();
+  const rect = label.getBoundingClientRect();
+  const toContentX = (x) => x - box.left + containerEl.scrollLeft;
+  const toContentY = (y) => y - box.top + containerEl.scrollTop;
+
+  const visibleTop = containerEl.scrollTop;
+  const visibleBottom = visibleTop + containerEl.clientHeight;
+
+  // Below the label, unless that would run past what is on screen — then above
+  let top = toContentY(rect.bottom) + 4;
+  if (top + tooltip.offsetHeight > visibleBottom) {
+    top = Math.max(visibleTop + 4, toContentY(rect.top) - tooltip.offsetHeight - 4);
+  }
+
+  const left = toContentX(rect.left);
+  const maxLeft = containerEl.scrollLeft + containerEl.clientWidth - tooltip.offsetWidth - 8;
+  tooltip.style.left = `${Math.max(containerEl.scrollLeft + 4, Math.min(left, maxLeft))}px`;
+  tooltip.style.top = `${top}px`;
+}
+
 function updateChordOverlay() {
   const overlay = document.getElementById('chord-labels-overlay');
   if (!overlay) return;
@@ -2027,7 +2053,6 @@ function updateChordOverlay() {
     const data = getChordOverlayData();
     const tooltip = document.getElementById('chord-tooltip');
     const containerEl = document.getElementById('sheet-container');
-    const containerRect = containerEl ? containerEl.getBoundingClientRect() : { left: 0, top: 0 };
     // The overlay is positioned absolutely inside #sheet-container
     for (const item of data) {
       const el = document.createElement('span');
@@ -2036,14 +2061,12 @@ function updateChordOverlay() {
       if (item.arpeggiated) el.title = 'Arpeggiated chord';
       el.style.left = item.x + 'px';
       el.style.top = item.y + 'px';
-      el.addEventListener('mouseenter', (e) => {
+      el.addEventListener('mouseenter', () => {
         tooltip.innerHTML = `<div class="chord-tooltip-name">${item.label}</div>` +
           buildMiniPianoSVG(item.pitches) +
           `<div class="chord-tooltip-voicing">${buildVoicingCaption(item.pitches)}</div>`;
-        const r = el.getBoundingClientRect();
-        tooltip.style.left = (r.left - containerRect.left) + 'px';
-        tooltip.style.top = (r.bottom - containerRect.top + 4) + 'px';
-        tooltip.classList.remove('hidden');
+        tooltip.classList.remove('hidden'); // has to be laid out before it can be measured
+        placeChordTooltip(tooltip, el, containerEl);
       });
       overlay.appendChild(el);
     }
