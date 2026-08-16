@@ -61,6 +61,12 @@
         <button class="transport-btn step-btn" id="btn-step-record" title="Step Record — write one note/chord per step (Shift+R)">&#9655;&#9679;</button>
         <button class="transport-btn play-btn" id="btn-play" title="Play/Pause (Space)">&#9654;</button>
         <button class="transport-btn" id="btn-to-end" title="Go to end">&#9654;&#9654;</button>
+        <span class="tool-label" style="margin-left:8px">HAND</span>
+        <select id="record-hand" title="Which hand new notes are written to. Auto works it out from the texture.">
+          <option value="auto">Auto</option>
+          <option value="left">Left</option>
+          <option value="right">Right</option>
+        </select>
       </div>
 
       <!-- Step controls (visible only in step-recording mode) -->
@@ -305,6 +311,10 @@
         <button class="small-btn" id="btn-oct-up" title="Transpose up 1 octave (Shift+↑)">&#9650; Oct</button>
         <button class="small-btn" id="btn-oct-down" title="Transpose down 1 octave (Shift+↓)">&#9660; Oct</button>
         <button class="small-btn" id="btn-legato" title="Extend selected notes to touch the next note">Legato</button>
+        <span class="tool-sep">|</span>
+        <button class="small-btn" id="btn-hand-left" title="Put the selected notes in the left hand">&#9668; L.H.</button>
+        <button class="small-btn" id="btn-hand-right" title="Put the selected notes in the right hand">R.H. &#9658;</button>
+        <button class="small-btn" id="btn-hand-auto" title="Let the texture decide again for the selected notes">Auto</button>
         <button class="small-btn danger" id="btn-editor-delete" title="Delete selected notes (Del)">Delete</button>
         <span id="editor-hint" class="editor-hint">Click note to select · Shift+click multi-select · Del to delete · ↑↓ transpose</span>
       </div>

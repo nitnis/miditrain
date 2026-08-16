@@ -1,6 +1,6 @@
 // UI updates: DOM manipulation, modals, controls
 import { state, update, emit, on } from './state.js';
-import { record, play, stop, stopAndRewind, startCountIn, playRange, seekTo, seekToStart, seekToEnd, clearAllNotes, transposeNotes, transposeAll, applyLegato, deleteNotes, changeTempo } from './transport.js';
+import { record, play, stop, stopAndRewind, startCountIn, playRange, seekTo, seekToStart, seekToEnd, clearAllNotes, transposeNotes, transposeAll, setNotesHand, applyLegato, deleteNotes, changeTempo } from './transport.js';
 import { renderSheet, initSheet, getChordOverlayData, getStaveGeometry, movePlayhead } from './sheet.js';
 import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWaitingPitches } from './pianoroll.js';
 import { startLearn, stopLearn } from './learn.js';
@@ -143,6 +143,7 @@ function applyStateToControls() {
 
   for (const sel of quantizeSelects()) sel.value = String(ui.quantize);
   document.getElementById('learn-sections').value = String(ui.learnSectionBars);
+  syncRecordHand();
   document.getElementById('legato-toggle').checked = ui.stepLegato;
 
   applyMuteUI(ui.muted);
@@ -359,6 +360,42 @@ function syncTransposeControls() {
 function nudgeTranspose(direction) {
   setTranspose(state.ui.transpose + direction);
   showToast(`Transpose ${state.ui.transpose > 0 ? '+' : ''}${state.ui.transpose} · key of ${state.composition.keySignature}`, 1200);
+}
+
+// ── Hands ────────────────────────────────────────────────────────────────────
+// Two ways to say which hand plays what: pick one before you record, or select
+// notes afterwards and say so. Both write an explicit hand onto the note, which
+// the inference then leaves alone.
+
+const HAND_LABEL = { auto: 'worked out from the texture', left: 'the left hand', right: 'the right hand' };
+
+function setRecordHand(hand) {
+  update('ui.recordHand', hand);
+  syncRecordHand();
+  showToast(`New notes go to ${HAND_LABEL[hand]}`, 1600);
+}
+
+function syncRecordHand() {
+  const el = document.getElementById('record-hand');
+  el.value = state.ui.recordHand;
+  el.classList.toggle('left', state.ui.recordHand === 'left');
+  el.classList.toggle('right', state.ui.recordHand === 'right');
+}
+
+// Step through auto → left → right, so one key covers the whole control
+const HAND_CYCLE = ['auto', 'left', 'right'];
+function cycleRecordHand() {
+  const next = HAND_CYCLE[(HAND_CYCLE.indexOf(state.ui.recordHand) + 1) % HAND_CYCLE.length];
+  setRecordHand(next);
+}
+
+function assignSelectedHand(hand) {
+  const ids = getSelectedIds();
+  if (!ids.size) { showToast('Select some notes first', 1600); return; }
+  const changed = setNotesHand(ids, hand);
+  showToast(changed
+    ? `${changed} note${changed === 1 ? '' : 's'} → ${HAND_LABEL[hand]}`
+    : `Already ${HAND_LABEL[hand]}`, 1800);
 }
 
 function applyMuteUI(muted) {
@@ -1054,6 +1091,7 @@ function bindToolbar() {
     scheduleSheetRender();
   };
 
+  document.getElementById('record-hand').onchange = (e) => setRecordHand(e.target.value);
   document.getElementById('btn-mute').onclick = toggleMute;
   applyMuteUI(state.ui.muted);
   document.getElementById('volume-slider').oninput = (e) => setVolume(e.target.value);
@@ -1347,6 +1385,18 @@ function shortcutActions() {
       section: 'Piano roll editing', label: 'Transpose down an octave',
       defaultBindings: [{ code: 'ArrowDown', shift: true }],
       run: () => transposeNotes(getSelectedIds(), -12) },
+    { id: 'editor-hand-left', group: 'editor', scope: editing, hint: 'btn-hand-left',
+      section: 'Piano roll editing', label: 'Put the selection in the left hand',
+      defaultBindings: [{ code: 'BracketLeft' }],
+      run: () => assignSelectedHand('left') },
+    { id: 'editor-hand-right', group: 'editor', scope: editing, hint: 'btn-hand-right',
+      section: 'Piano roll editing', label: 'Put the selection in the right hand',
+      defaultBindings: [{ code: 'BracketRight' }],
+      run: () => assignSelectedHand('right') },
+    { id: 'editor-hand-auto', group: 'editor', scope: editing, hint: 'btn-hand-auto',
+      section: 'Piano roll editing', label: 'Let the texture decide for the selection',
+      defaultBindings: [{ code: 'Backslash' }],
+      run: () => assignSelectedHand('auto') },
     { id: 'editor-legato', group: 'editor', scope: editing, hint: 'btn-legato',
       section: 'Piano roll editing', label: 'Extend selection to the next note',
       defaultBindings: [{ code: 'KeyG' }],
@@ -1412,6 +1462,10 @@ function shortcutActions() {
       section: 'Options', label: 'Toggle metronome',
       defaultBindings: [{ code: 'KeyM' }],
       run: () => toggleMetronome() },
+    { id: 'record-hand', group: 'global', hint: 'record-hand',
+      section: 'Options', label: 'Which hand new notes are written to',
+      defaultBindings: [{ code: 'KeyH' }],
+      run: () => cycleRecordHand() },
     { id: 'clicks-only', group: 'global', hint: 'btn-clicks-only',
       section: 'Options', label: 'Hear only the metronome and count-in',
       defaultBindings: [{ code: 'KeyK' }],
@@ -1836,6 +1890,9 @@ function bindEditorToolbar() {
     const sel = getSelectedIds();
     if (sel.size) applyLegato(sel);
   };
+  document.getElementById('btn-hand-left').onclick = () => assignSelectedHand('left');
+  document.getElementById('btn-hand-right').onclick = () => assignSelectedHand('right');
+  document.getElementById('btn-hand-auto').onclick = () => assignSelectedHand('auto');
   document.getElementById('btn-editor-delete').onclick = () => {
     const sel = getSelectedIds();
     if (!sel.size) return;

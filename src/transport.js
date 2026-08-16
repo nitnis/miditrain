@@ -275,6 +275,9 @@ function finalizeNote(pitch, info, endTime) {
     velocity: info.velocity,
     startTime: info.startTime,
     duration,
+    // Recording into a named hand says so outright; on auto the note is left
+    // for the texture to be read from
+    ...(state.ui.recordHand === 'auto' ? {} : { hand: state.ui.recordHand }),
   };
   state.composition.notes.push(note);
   emit('transport:noteschanged', state.composition.notes);
@@ -309,6 +312,19 @@ export function transposeAll(semitones) {
   if (!semitones) return;
   for (const note of state.composition.notes) note.pitch += semitones;
   emit('transport:noteschanged', state.composition.notes);
+}
+
+// Say outright which hand plays these, or hand them back to the inference
+export function setNotesHand(noteIds, hand) {
+  const ids = new Set(noteIds);
+  let changed = 0;
+  for (const note of state.composition.notes) {
+    if (!ids.has(note.id)) continue;
+    if (hand === 'auto') { if ('hand' in note) { delete note.hand; changed++; } }
+    else if (note.hand !== hand) { note.hand = hand; changed++; }
+  }
+  if (changed) emit('transport:noteschanged', state.composition.notes);
+  return changed;
 }
 
 export function transposeNotes(noteIds, semitones) {
