@@ -152,6 +152,8 @@ function applyStateToControls() {
   document.getElementById('btn-clicks-only').classList.toggle('active', ui.clicksOnly);
   document.getElementById('btn-metronome').classList.toggle('active', ui.metronomeEnabled);
   document.getElementById('metro-subdivision').value = String(ui.metronomeSubdivision);
+  document.getElementById('btn-beat-overlay').classList.toggle('active', ui.showBeatOverlay);
+  document.getElementById('btn-chord-overlay').classList.toggle('active', ui.showChordOverlay);
   document.getElementById('btn-count-in').classList.toggle('active', ui.countInEnabled);
   setPracticeMode(ui.trainMode ? 'train' : ui.learnMode ? 'learn' : null);
 
@@ -941,6 +943,22 @@ function cycleSubdivision() {
   setSubdivision(SUBDIVISIONS[(i + 1) % SUBDIVISIONS.length]);
 }
 
+// The two readouts over the falling notes. Each is its own switch: the beat
+// counter is worth watching whether or not the clicks are audible, and either
+// can go when the notes are all you want to see.
+const OVERLAYS = {
+  beat:  { path: 'ui.showBeatOverlay',  button: 'btn-beat-overlay',  on: 'Beat counter on',  off: 'Beat counter off' },
+  chord: { path: 'ui.showChordOverlay', button: 'btn-chord-overlay', on: 'Chord names on',   off: 'Chord names off' },
+};
+
+function toggleOverlay(which) {
+  const { path, button, on, off } = OVERLAYS[which];
+  const shown = !state.ui[path.split('.')[1]];
+  update(path, shown);
+  document.getElementById(button).classList.toggle('active', shown);
+  showToast(shown ? on : off, 1200);
+}
+
 function toggleMetronome() {
   const enabled = !state.ui.metronomeEnabled;
   update('ui.metronomeEnabled', enabled);
@@ -1136,6 +1154,8 @@ function bindToolbar() {
   document.getElementById('btn-metronome').onclick = toggleMetronome;
   document.getElementById('btn-clicks-only').onclick = toggleClicksOnly;
   document.getElementById('metro-subdivision').onchange = (e) => setSubdivision(e.target.value);
+  document.getElementById('btn-beat-overlay').onclick = () => toggleOverlay('beat');
+  document.getElementById('btn-chord-overlay').onclick = () => toggleOverlay('chord');
   document.getElementById('btn-learn-mode').onclick = toggleLearnMode;
 
   const speedSlider = document.getElementById('speed-slider');
@@ -1490,6 +1510,14 @@ function shortcutActions() {
       section: 'Options', label: 'Metronome subdivision',
       defaultBindings: [{ code: 'KeyM', shift: true }],
       run: () => cycleSubdivision() },
+    { id: 'beat-overlay', group: 'global', hint: 'btn-beat-overlay',
+      section: 'Options', label: 'Show the beat over the falling notes',
+      defaultBindings: [{ code: 'KeyB', shift: true }],
+      run: () => toggleOverlay('beat') },
+    { id: 'chord-overlay', group: 'global', hint: 'btn-chord-overlay',
+      section: 'Options', label: 'Show the chord over the falling notes',
+      defaultBindings: [{ code: 'KeyC', shift: true }],
+      run: () => toggleOverlay('chord') },
     { id: 'record-hand', group: 'global', hint: 'record-hand',
       section: 'Options', label: 'Which hand new notes are written to',
       defaultBindings: [{ code: 'KeyH' }],

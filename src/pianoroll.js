@@ -445,6 +445,7 @@ function currentChordLabel(notes, currentTimeMs, keySignature) {
 }
 
 function drawChordName(notes, composition, currentTimeMs, cw) {
+  if (!state.ui.showChordOverlay) return;
   const label = currentChordLabel(notes, currentTimeMs, composition.keySignature);
   if (!label) return;
 
@@ -463,15 +464,16 @@ function drawChordName(notes, composition, currentTimeMs, cw) {
 // ── Metronome ────────────────────────────────────────────────────────────────
 // One dot per beat in the bar; the beat being counted lights up and swells on
 // its attack, so the eye catches the click rather than a lamp that is simply
-// on. The subdivision ticks show underneath when the metronome clicks them.
+// on. The subdivision ticks show underneath when the beat is set to divide.
 // The dots count the same ticks the audible metronome does, so what you see
-// and what you hear cannot disagree.
+// and what you hear cannot disagree — but it is its own switch, because a beat
+// worth watching is not always one worth listening to.
 
 const METRO_DOT = 7;
 const METRO_GAP = 16;
 
 function drawMetronome(composition, currentTimeMs, cw) {
-  if (!state.ui.metronomeEnabled) return;
+  if (!state.ui.showBeatOverlay) return;
 
   const { tempo, timeSignature } = composition;
   const beatsPerBar = Math.max(1, timeSignature.numerator);

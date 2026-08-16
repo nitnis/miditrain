@@ -199,6 +199,29 @@
         </button>
       </div>
 
+      <!-- What the falling-notes window shows over the notes -->
+      <div class="tool-group">
+        <span class="tool-label">SHOW</span>
+        <button class="toggle-btn" id="btn-beat-overlay" title="Show the beat counter over the falling notes (Shift+B)">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <circle cx="4.5" cy="12" r="2.5" fill="currentColor" stroke="none"/>
+            <circle cx="11" cy="12" r="2" opacity="0.7"/>
+            <circle cx="17" cy="12" r="2" opacity="0.7"/>
+            <circle cx="22" cy="12" r="1.5" opacity="0.4"/>
+          </svg>
+          Beat
+        </button>
+        <button class="toggle-btn" id="btn-chord-overlay" title="Show the chord under the playhead over the falling notes (Shift+C)">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="7" cy="17" r="3"/>
+            <line x1="10" y1="17" x2="10" y2="5"/>
+            <line x1="10" y1="5" x2="20" y2="7"/>
+            <line x1="10" y1="9" x2="20" y2="11"/>
+          </svg>
+          Chord
+        </button>
+      </div>
+
       <!-- Speed -->
       <div class="tool-group speed-group">
         <span class="tool-label">SPEED</span>
