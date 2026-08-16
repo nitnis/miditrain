@@ -13,6 +13,7 @@ import { playRange, stop } from './transport.js';
 import { startLearn, stopLearn } from './learn.js';
 import { barRangeMs } from './quantizer.js';
 import { loopBars } from './range.js';
+import { isPractised } from './hands.js';
 
 let sections = [];
 let index = 0;
@@ -26,7 +27,9 @@ let listeners = [];
 // stretch of bars — training and plain learn mode both practise it — and a walk
 // that marched through the whole piece regardless was the odd one out.
 export function buildSections(barsPerSection) {
-  const notes = state.composition.notes;
+  // Only the hand being practised counts: a section of nothing but the other
+  // hand's notes has nothing in it to walk
+  const notes = state.composition.notes.filter(isPractised);
   if (!notes.length || barsPerSection < 1) return [];
 
   const { tempo, timeSignature } = state.composition;
