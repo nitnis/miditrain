@@ -12,6 +12,7 @@ import { state, update, emit, on } from './state.js';
 import { noteOn, noteOff, resumeAudioContext } from './audio.js';
 import { barRangeMs } from './quantizer.js';
 import { loopBars, loopRangeMs } from './range.js';
+import { isPractised } from './hands.js';
 
 // Notes struck this close together are one thing to play, so they are waited
 // on together. Matches the tolerance the slur renderer uses for "same attack".
@@ -83,7 +84,9 @@ export function startLearn(bars = null) {
     : loopRangeMs();
   looping = Boolean(section) && !bars;
   sectionStartMs = section ? section.startMs : 0;
-  groups = groupAttacks(state.composition.notes)
+  // Practising one hand walks only that hand's attacks — the other hand's
+  // notes are not waited on and not prompted
+  groups = groupAttacks(state.composition.notes.filter(isPractised))
     .filter(g => !section || (g.startMs >= section.startMs && g.startMs < section.endMs));
   if (!groups.length) return false;
 

@@ -2,7 +2,7 @@
 import { state, on } from './state.js';
 import { getAccuracyResults } from './accuracy.js';
 import { setEditorLayout } from './note-editor.js';
-import { handOf } from './hands.js';
+import { handOf, isPractised, practiceHand } from './hands.js';
 import { detectChord } from './chords.js';
 import { subdivision } from './metronome.js';
 
@@ -353,6 +353,8 @@ export function drawFallingNotes(notes, composition, currentTimeMs, accuracyResu
   const windowStart = currentTimeMs - pastWindow;
   const windowEnd = currentTimeMs + LOOKAHEAD_MS;
 
+  const dimOthers = (state.ui.trainMode || state.ui.learnMode) && practiceHand() !== 'both';
+
   const visibleNotes = notes.filter(n =>
     n.startTime < windowEnd && (n.startTime + n.duration) > windowStart
   );
@@ -378,6 +380,10 @@ export function drawFallingNotes(notes, composition, currentTimeMs, accuracyResu
       if (result && GRADE_COLORS[result.grade]) color = GRADE_COLORS[result.grade];
     }
 
+    // Practising one hand: the other one is still drawn, because you need to
+    // see what you are playing against, but faintly enough to be background
+    fallingCtx.globalAlpha = dimOthers && !isPractised(note) ? 0.25 : 1;
+
     const isBlack = !IS_WHITE[note.pitch % 12];
     const fullW = Math.max(keyInfo.w - 2, 4);
     const w = isBlack ? Math.max(4, fullW * BLACK_NOTE_WIDTH) : fullW;
@@ -397,6 +403,7 @@ export function drawFallingNotes(notes, composition, currentTimeMs, accuracyResu
     fallingCtx.fillStyle = 'rgba(255,255,255,0.3)';
     fallingCtx.fillRect(x + 2, visibleTop, Math.max(1, w - 4), 2);
   }
+  fallingCtx.globalAlpha = 1;
 
   // Keys the piece is waiting on: a pulsing column down to the hit line, so
   // the frozen note reads as "play this" rather than as a stall

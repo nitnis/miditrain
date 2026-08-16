@@ -151,6 +151,7 @@ function applyStateToControls() {
   for (const sel of quantizeSelects()) sel.value = String(ui.quantize);
   document.getElementById('learn-sections').value = String(ui.learnSectionBars);
   syncRecordHand();
+  syncPracticeHand();
   document.getElementById('legato-toggle').checked = ui.stepLegato;
 
   applyMuteUI(ui.muted);
@@ -396,6 +397,31 @@ const HAND_CYCLE = ['auto', 'left', 'right'];
 function cycleRecordHand() {
   const next = HAND_CYCLE[(HAND_CYCLE.indexOf(state.ui.recordHand) + 1) % HAND_CYCLE.length];
   setRecordHand(next);
+}
+
+// Which hand the practice modes work on. A separate thing from the hand new
+// notes are written to: this one changes nothing about the music, only what
+// you are held to.
+const PRACTICE_LABEL = { both: 'both hands', left: 'the left hand', right: 'the right hand' };
+const PRACTICE_CYCLE = ['both', 'left', 'right'];
+
+function setPracticeHand(hand) {
+  const want = PRACTICE_CYCLE.includes(hand) ? hand : 'both';
+  update('ui.practiceHand', want);
+  syncPracticeHand();
+  showToast(`Practising ${PRACTICE_LABEL[want]}`, 1600);
+}
+
+function syncPracticeHand() {
+  const el = document.getElementById('practice-hand');
+  el.value = state.ui.practiceHand;
+  el.classList.toggle('left', state.ui.practiceHand === 'left');
+  el.classList.toggle('right', state.ui.practiceHand === 'right');
+}
+
+function cyclePracticeHand() {
+  const next = PRACTICE_CYCLE[(PRACTICE_CYCLE.indexOf(state.ui.practiceHand) + 1) % PRACTICE_CYCLE.length];
+  setPracticeHand(next);
 }
 
 function assignSelectedHand(hand) {
@@ -1131,6 +1157,7 @@ function bindToolbar() {
   };
 
   document.getElementById('record-hand').onchange = (e) => setRecordHand(e.target.value);
+  document.getElementById('practice-hand').onchange = (e) => setPracticeHand(e.target.value);
   document.getElementById('btn-mute').onclick = toggleMute;
   applyMuteUI(state.ui.muted);
   document.getElementById('volume-slider').oninput = (e) => setVolume(e.target.value);
@@ -1611,6 +1638,10 @@ function shortcutActions() {
       section: 'Options', label: 'Which hand new notes are written to',
       defaultBindings: [{ code: 'KeyH' }],
       run: () => cycleRecordHand() },
+    { id: 'practice-hand', group: 'global', hint: 'practice-hand',
+      section: 'Options', label: 'Which hand to train and learn',
+      defaultBindings: [{ code: 'KeyH', shift: true }],
+      run: () => cyclePracticeHand() },
     { id: 'clicks-only', group: 'global', hint: 'btn-clicks-only',
       section: 'Options', label: 'Hear only the metronome and count-in',
       defaultBindings: [{ code: 'KeyK' }],
