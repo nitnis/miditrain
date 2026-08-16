@@ -27,6 +27,7 @@ const _state = {
     view: 'sheet',          // 'sheet' | 'piano-roll' | 'split'
     trainMode: false,
     learnMode: false,       // wait at each note until it is played
+    learnSectionBars: 0,    // 0 = learn the whole piece, otherwise section size
     metronomeEnabled: false,
     muted: false,           // master audio mute; audible by default
     volume: 1,              // 0..1, applied at the master gain

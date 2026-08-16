@@ -1,6 +1,7 @@
 // IndexedDB persistence via localforage
 
 let store;
+let workingStore;
 
 function getStore() {
   if (!store) {
@@ -8,6 +9,18 @@ function getStore() {
   }
   return store;
 }
+
+// The working composition lives in its own store rather than alongside the
+// saved ones. It is whatever the app happened to have open, not something the
+// user chose to keep, and it must not turn up in the Open browser.
+function getWorkingStore() {
+  if (!workingStore) {
+    workingStore = localforage.createInstance({ name: 'miditrain', storeName: 'session' });
+  }
+  return workingStore;
+}
+
+const WORKING_KEY = 'working';
 
 export async function saveComposition(composition) {
   const id = composition.id || crypto.randomUUID();
@@ -57,6 +70,27 @@ export function compositionToJSON(composition) {
       })),
     },
   }, null, 2);
+}
+
+// Stored as the export format, so restoring runs the same validation an
+// imported file gets — browser storage can be stale, half-written or left over
+// from an older version of the app, and none of that should load over the top
+// of a working state the app has no code for.
+export async function saveWorkingComposition(composition) {
+  await getWorkingStore().setItem(WORKING_KEY, {
+    id: composition.id || null,
+    json: compositionToJSON(composition),
+  });
+}
+
+export async function loadWorkingComposition() {
+  const saved = await getWorkingStore().getItem(WORKING_KEY);
+  if (!saved || typeof saved.json !== 'string') return null;
+  const composition = compositionFromJSON(saved.json);
+  // Unlike an import, this keeps its identity: Save should still update the
+  // record it came from rather than making a second copy
+  composition.id = typeof saved.id === 'string' ? saved.id : null;
+  return composition;
 }
 
 const isFiniteNumber = (v) => typeof v === 'number' && Number.isFinite(v);
