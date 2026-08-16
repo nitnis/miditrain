@@ -532,7 +532,7 @@ function updateLearnStatus({ pitches, done, total, looping, pass, slips }) {
   document.getElementById('learn-count').textContent = `${done + 1} / ${total}`;
   document.getElementById('learn-hint').textContent = pitches.length === 1
     ? 'Play the highlighted key'
-    : `Play the ${pitches.length} highlighted keys`;
+    : `Play the ${pitches.length} highlighted keys together`;
 
   const passEl = document.getElementById('learn-pass');
   passEl.classList.toggle('hidden', !looping);
