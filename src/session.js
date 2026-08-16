@@ -38,6 +38,7 @@ const SETTINGS = {
   'ui.quantize': oneOf(1, 2, 4, 8, 16, 32),
   'ui.transpose': wholeRange(-12, 12),
   'ui.learnSectionBars': oneOf(0, 2, 4, 8),
+  'ui.recordHand': oneOf('auto', 'left', 'right'),
   'transport.loopEnabled': bool,
   'transport.loopStartBar': wholeRange(1, 999),
   'transport.loopEndBar': wholeRange(1, 999),

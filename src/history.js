@@ -39,7 +39,8 @@ function matchesCurrentEntry(snap) {
   for (let i = 0; i < snap.notes.length; i++) {
     const a = entry.notes[i], b = snap.notes[i];
     if (a.id !== b.id || a.pitch !== b.pitch || a.startTime !== b.startTime ||
-        a.duration !== b.duration || a.velocity !== b.velocity) return false;
+        a.duration !== b.duration || a.velocity !== b.velocity ||
+        a.hand !== b.hand) return false;
   }
   return true;
 }

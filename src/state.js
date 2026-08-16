@@ -28,6 +28,7 @@ const _state = {
     trainMode: false,
     learnMode: false,       // wait at each note until it is played
     learnSectionBars: 0,    // 0 = learn the whole piece, otherwise section size
+    recordHand: 'auto',     // 'auto' | 'left' | 'right' — the hand new notes are written to
     metronomeEnabled: false,
     muted: false,           // master audio mute; audible by default
     volume: 1,              // 0..1, applied at the master gain

@@ -1244,3 +1244,12 @@ input[type="number"] { -webkit-appearance: none; }
 
 /* Prevent text selection in transport area */
 #toolbar, #header { -webkit-user-select: none; user-select: none; }
+
+/* Which hand new notes go to */
+#record-hand {
+  height: 28px;
+  font-size: 12px;
+  padding: 2px 4px;
+}
+#record-hand.left  { border-color: #f472b6; color: #f472b6; }
+#record-hand.right { border-color: #3d8bfd; color: #3d8bfd; }
