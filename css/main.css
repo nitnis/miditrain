@@ -526,6 +526,35 @@ select:focus { outline: 1px solid var(--accent); }
 }
 .sheet-playhead.hidden { display: none; }
 
+/* Highlighter over the looped bars. Screen rather than multiply because the
+   paper here is dark — a marker lightens what it covers on this page. */
+.sheet-loop-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+.sheet-loop-band {
+  position: absolute;
+  top: 0;
+  left: 0;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 226, 92, 0.03) 0%,
+    rgba(255, 214, 51, 0.15) 10%,
+    rgba(255, 205, 40, 0.17) 90%,
+    rgba(255, 226, 92, 0.04) 100%
+  );
+  /* The wet edges a marker leaves where the felt turns */
+  box-shadow:
+    inset 0 2px 0 rgba(255, 228, 120, 0.28),
+    inset 0 -2px 0 rgba(255, 228, 120, 0.28),
+    inset 0 0 10px rgba(255, 220, 90, 0.12);
+  border-radius: 3px;
+  mix-blend-mode: screen;
+}
+
 /* VexFlow SVG — override black defaults for dark theme (attributes, not inline styles) */
 #vexflow-output svg path  { fill: #ccd; stroke: #ccd; }
 #vexflow-output svg line  { stroke: #ccd; }

@@ -1,7 +1,7 @@
 // UI updates: DOM manipulation, modals, controls
 import { state, update, emit, on } from './state.js';
 import { record, play, stop, stopAndRewind, startCountIn, playRange, seekTo, seekToStart, seekToEnd, clearAllNotes, transposeNotes, transposeAll, setNotesHand, applyLegato, deleteNotes, changeTempo, getCompositionDuration } from './transport.js';
-import { renderSheet, initSheet, getChordOverlayData, getStaveGeometry, movePlayhead } from './sheet.js';
+import { renderSheet, initSheet, getChordOverlayData, getStaveGeometry, movePlayhead, markLoopRange } from './sheet.js';
 import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWaitingPitches, fallingMsPerPixel } from './pianoroll.js';
 import { startLearn, stopLearn } from './learn.js';
 import {
@@ -84,6 +84,11 @@ export function initUI() {
   // Undo can move the key and the transpose too, so the controls follow state
   on('change:ui.transpose', () => syncTransposeControls());
   on('change:composition.keySignature', () => { syncTransposeControls(); scheduleSheetRender(); });
+  // However the loop range is set — the fields, the checkbox, a click on the
+  // falling notes, a restored session — the marking on the score follows it
+  for (const path of ['loopEnabled', 'loopStartBar', 'loopEndBar']) {
+    on(`change:transport.${path}`, refreshLoopMarker);
+  }
   on('change:midi.connected', ({ value }) => updateMidiStatus(value));
   on('change:midi.inputs', ({ value }) => updateMidiInputsList(value));
   on('midi:unavailable', ({ reason }) => showMidiWarning(reason));
@@ -1295,6 +1300,14 @@ function syncLoopControls() {
   updateLoopDisplay();
 }
 
+// The looped bars, marked on the score. Only when the loop is on: an unused
+// range is a leftover, not something to draw over the music.
+function refreshLoopMarker() {
+  const { loopEnabled, loopStartBar, loopEndBar } = state.transport;
+  if (loopEnabled) markLoopRange(loopStartBar, loopEndBar);
+  else markLoopRange(null, null);
+}
+
 // Keep the download name recognisable but safe for any filesystem
 function fileSafeName(name) {
   const cleaned = name.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-');
@@ -1961,6 +1974,8 @@ function scheduleSheetRender() {
     if (state.ui.view !== 'piano-roll') {
       renderSheet(state.composition.notes, state.composition, t);
       updateChordOverlay();
+      // The bands are placed from the layout that was just built
+      refreshLoopMarker();
     }
     if (state.ui.view === 'piano-roll') {
       const rollCanvas = document.getElementById('roll-canvas');
