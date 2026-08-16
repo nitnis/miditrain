@@ -19,6 +19,7 @@ import { staffPositionName, midiToNoteWithOctave } from './chords.js';
 import { barRangeMs, barAtMs } from './quantizer.js';
 import { loopBars } from './range.js';
 import { inferHands } from './hands.js';
+import { SCALES, CHORDS, PATTERNS, HANDS, DIRECTIONS, NOTE_VALUES, ROOTS, buildExercise } from './scales.js';
 import {
   listProfiles, current as currentProfile, switchProfile, createProfile, deleteProfile,
   adoptProfile, sectionKey, sectionTempo, rememberSectionTempo, setLearningPosition,
@@ -61,6 +62,7 @@ export function initUI() {
   bindShortcutsPanel();
   bindSectionWalk();
   bindProfiles();
+  bindPracticeGenerator();
   initHistory();
 
   // The piano roll canvas is sized from its viewport, so re-render whenever
@@ -84,7 +86,13 @@ export function initUI() {
   on('change:composition.tempo', () => { syncTempoControls(); scheduleSheetRender(); });
   // Undo can move the key and the transpose too, so the controls follow state
   on('change:ui.transpose', () => syncTransposeControls());
-  on('change:composition.keySignature', () => { syncTransposeControls(); scheduleSheetRender(); });
+  on('change:composition.keySignature', () => {
+    // A generated exercise spells its own notes, which was right for the key it
+    // was written in. Choosing another key hands the spelling back to it.
+    for (const note of state.composition.notes) delete note.spelling;
+    syncTransposeControls();
+    scheduleSheetRender();
+  });
   // However the loop range is set — the fields, the checkbox, a click on the
   // falling notes, a restored session — the marking on the score follows it
   for (const path of ['loopEnabled', 'loopStartBar', 'loopEndBar']) {
@@ -540,6 +548,159 @@ function startLearnSession() {
     return;
   }
   if (!startLearn()) showToast('Nothing to learn here');
+}
+
+// ── Scales and arpeggios ─────────────────────────────────────────────────────
+// A generated exercise is an ordinary composition, which is the whole trick:
+// once the notes are on the stave with hands on them, playing, looping,
+// training, learn mode and hand-selective practice all work on a scale for
+// free. Nothing downstream needs to know it was generated.
+
+let genKind = 'scale';
+
+const OCTAVE_CHOICES = [2, 3, 4, 5, 6];
+
+function fillOptions(el, entries) {
+  el.replaceChildren();
+  // Grouped tables get their groups; flat ones are a plain list
+  const groups = new Map();
+  for (const [value, item] of entries) {
+    const group = item.group || '';
+    if (!groups.has(group)) groups.set(group, []);
+    groups.get(group).push([value, item.name]);
+  }
+  for (const [group, items] of groups) {
+    const parent = group ? document.createElement('optgroup') : el;
+    if (group) { parent.label = group; el.appendChild(parent); }
+    for (const [value, name] of items) {
+      const opt = document.createElement('option');
+      opt.value = value;
+      opt.textContent = name;
+      parent.appendChild(opt);
+    }
+  }
+}
+
+function genOptions() {
+  return {
+    kind: genKind,
+    rootPc: Number(document.getElementById('gen-root').value),
+    type: document.getElementById('gen-type').value,
+    inversion: Number(document.getElementById('gen-inversion').value) || 0,
+    octaves: Number(document.getElementById('gen-octaves').value),
+    octave: Number(document.getElementById('gen-octave').value),
+    hands: document.getElementById('gen-hands').value,
+    direction: document.getElementById('gen-direction').value,
+    pattern: document.getElementById('gen-pattern').value,
+    noteValue: Number(document.getElementById('gen-note-value').value),
+    tempo: state.composition.tempo,
+  };
+}
+
+// Inversions only go as far as the chord has notes, so the list is rebuilt
+// whenever the chord changes rather than offering a third inversion of a triad
+function syncInversions() {
+  const field = document.getElementById('gen-inversion-field');
+  field.classList.toggle('hidden', genKind !== 'arpeggio');
+  if (genKind !== 'arpeggio') return;
+  const el = document.getElementById('gen-inversion');
+  const chord = CHORDS[document.getElementById('gen-type').value] || CHORDS.major;
+  const names = ['Root position', '1st inversion', '2nd inversion', '3rd inversion'];
+  const wanted = Math.min(chord.steps.length, names.length);
+  if (el.options.length !== wanted) {
+    const keep = Math.min(Number(el.value) || 0, wanted - 1);
+    el.replaceChildren();
+    for (let i = 0; i < wanted; i++) {
+      const opt = document.createElement('option');
+      opt.value = String(i);
+      opt.textContent = names[i];
+      el.appendChild(opt);
+    }
+    el.value = String(keep);
+  }
+}
+
+function updatePracticeSummary() {
+  syncInversions();
+  const opts = genOptions();
+  const exercise = buildExercise(opts);
+  const beats = exercise.durationMs / ((60 / opts.tempo) * 1000);
+  const bars = beats / (state.composition.timeSignature.numerator *
+    (4 / state.composition.timeSignature.denominator));
+  const hands = opts.hands === 'right' || opts.hands === 'left' ? '' : ' per hand';
+  document.getElementById('practice-summary').textContent =
+    `${exercise.title} — ${exercise.count} notes${hands}, ` +
+    `${bars.toFixed(bars % 1 ? 1 : 0)} bars at ${Math.round(opts.tempo)} BPM, key of ${exercise.keySignature}`;
+}
+
+function setGenKind(kind) {
+  genKind = kind;
+  for (const tab of document.querySelectorAll('.practice-tab')) {
+    tab.classList.toggle('active', tab.dataset.kind === kind);
+  }
+  document.getElementById('gen-type-label').textContent = kind === 'arpeggio' ? 'Chord' : 'Scale';
+  document.getElementById('practice-blurb').textContent = kind === 'arpeggio'
+    ? 'Write an arpeggio onto the stave to practise. Everything else works on it: play it, loop a stretch, train it, or walk it in learn mode.'
+    : 'Write a scale onto the stave to practise. Everything else works on it: play it, loop a stretch, train it, or walk it in learn mode.';
+  fillOptions(document.getElementById('gen-type'), Object.entries(kind === 'arpeggio' ? CHORDS : SCALES));
+  document.getElementById('btn-practice-generate').textContent =
+    kind === 'arpeggio' ? 'Write the arpeggio' : 'Write the scale';
+  updatePracticeSummary();
+}
+
+function writeExercise() {
+  const exercise = buildExercise(genOptions());
+  if (!exercise.notes.length) { showToast('Nothing to write'); return; }
+
+  // The key first: the notes carry spellings written for it, and changing the
+  // key is what hands spelling back to the key signature
+  update('composition.keySignature', exercise.keySignature);
+  state.composition.notes = exercise.notes;
+  state.composition.name = exercise.title;
+  // A generated exercise starts at the top, and the last thing loop-marked was
+  // about some other piece
+  update('transport.currentTime', 0);
+  update('transport.loopEnabled', false);
+  update('ui.transpose', 0);
+  emit('transport:noteschanged', state.composition.notes);
+
+  document.getElementById('composition-name').textContent = exercise.title;
+  document.getElementById('practice-modal').classList.add('hidden');
+  showToast(exercise.title, 2400);
+}
+
+function bindPracticeGenerator() {
+  const modal = document.getElementById('practice-modal');
+
+  fillOptions(document.getElementById('gen-root'), ROOTS.map(r => [String(r.pc), { name: r.name }]));
+  fillOptions(document.getElementById('gen-hands'), Object.entries(HANDS));
+  fillOptions(document.getElementById('gen-direction'), Object.entries(DIRECTIONS));
+  fillOptions(document.getElementById('gen-pattern'), Object.entries(PATTERNS));
+  fillOptions(document.getElementById('gen-note-value'), Object.entries(NOTE_VALUES));
+  fillOptions(document.getElementById('gen-octave'),
+    OCTAVE_CHOICES.map(o => [String(o), { name: `Octave ${o}${o === 4 ? ' (middle C)' : ''}` }]));
+
+  document.getElementById('gen-direction').value = 'updown';
+  document.getElementById('gen-octave').value = '4';
+  document.getElementById('gen-note-value').value = '8';
+
+  for (const tab of document.querySelectorAll('.practice-tab')) {
+    tab.onclick = () => setGenKind(tab.dataset.kind);
+  }
+  for (const el of modal.querySelectorAll('select')) {
+    el.addEventListener('change', updatePracticeSummary);
+  }
+  document.getElementById('btn-practice').onclick = () => openPracticeGenerator();
+  document.getElementById('btn-practice-cancel').onclick = () => modal.classList.add('hidden');
+  document.getElementById('btn-practice-generate').onclick = writeExercise;
+  modal.addEventListener('click', (e) => { if (e.target === modal) modal.classList.add('hidden'); });
+
+  setGenKind('scale');
+}
+
+function openPracticeGenerator(kind = genKind) {
+  setGenKind(kind);
+  document.getElementById('practice-modal').classList.remove('hidden');
 }
 
 // ── Profiles ─────────────────────────────────────────────────────────────────
@@ -1724,6 +1885,10 @@ function shortcutActions() {
       section: 'File', label: 'Open a composition',
       defaultBindings: [{ code: 'KeyO', mod: true }],
       run: () => openSongBrowser() },
+    { id: 'practice-generator', group: 'global', hint: 'btn-practice',
+      section: 'File', label: 'Write a scale or arpeggio to practise',
+      defaultBindings: [{ code: 'KeyS', shift: true }],
+      run: () => openPracticeGenerator() },
     { id: 'save', group: 'global', hint: 'btn-save',
       section: 'File', label: 'Save',
       defaultBindings: [{ code: 'KeyS', mod: true }],
