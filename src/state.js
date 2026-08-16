@@ -30,6 +30,9 @@ const _state = {
     learnSectionBars: 0,    // 0 = learn the whole piece, otherwise section size
     recordHand: 'auto',     // 'auto' | 'left' | 'right' — the hand new notes are written to
     metronomeEnabled: false,
+    metronomeSubdivision: 1, // clicks per beat: 1 beat only, 2 eighths, 3 triplets, 4 sixteenths
+    showBeatOverlay: true,  // the beat counter over the falling notes, seen without being heard
+    showChordOverlay: true, // the name of the chord under the playhead
     muted: false,           // master audio mute; audible by default
     volume: 1,              // 0..1, applied at the master gain
     clicksOnly: false,      // silence the notes, keep the metronome and count-in
