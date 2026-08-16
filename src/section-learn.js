@@ -12,6 +12,7 @@ import { state, update, emit, on } from './state.js';
 import { playRange, stop } from './transport.js';
 import { startLearn, stopLearn } from './learn.js';
 import { barRangeMs } from './quantizer.js';
+import { loopBars } from './range.js';
 
 let sections = [];
 let index = 0;
@@ -20,6 +21,10 @@ let listeners = [];
 
 // Bars that actually contain notes, chunked. A section of rests would stop the
 // walk dead with nothing to play.
+//
+// A marked loop narrows what gets chunked. It is the app's way of naming a
+// stretch of bars — training and plain learn mode both practise it — and a walk
+// that marched through the whole piece regardless was the odd one out.
 export function buildSections(barsPerSection) {
   const notes = state.composition.notes;
   if (!notes.length || barsPerSection < 1) return [];
@@ -29,8 +34,15 @@ export function buildSections(barsPerSection) {
   if (!barMs) return [];
 
   const barOf = (ms) => Math.floor(ms / barMs) + 1;
-  const firstBar = barOf(Math.min(...notes.map(n => n.startTime)));
-  const lastBar = barOf(Math.max(...notes.map(n => n.startTime)));
+  let firstBar = barOf(Math.min(...notes.map(n => n.startTime)));
+  let lastBar = barOf(Math.max(...notes.map(n => n.startTime)));
+
+  const marked = loopBars();
+  if (marked) {
+    firstBar = Math.max(firstBar, marked.startBar);
+    lastBar = Math.min(lastBar, marked.endBar);
+    if (lastBar < firstBar) return [];
+  }
 
   const out = [];
   for (let bar = firstBar; bar <= lastBar; bar += barsPerSection) {
