@@ -11,6 +11,7 @@
 import { state, update, emit, on } from './state.js';
 import { noteOn, noteOff, resumeAudioContext } from './audio.js';
 import { barRangeMs } from './quantizer.js';
+import { loopBars, loopRangeMs } from './range.js';
 
 // Notes struck this close together are one thing to play, so they are waited
 // on together. Matches the tolerance the slur renderer uses for "same attack".
@@ -46,13 +47,6 @@ let looping = false;
 let pass = 1;
 let slips = 0;          // wrong notes in the current pass
 
-function loopRange() {
-  const { loopEnabled, loopStartBar, loopEndBar } = state.transport;
-  if (!loopEnabled) return null;
-  const { tempo, timeSignature } = state.composition;
-  return barRangeMs(loopStartBar, loopEndBar, tempo, timeSignature);
-}
-
 // One entry per attack, in time order
 export function groupAttacks(notes) {
   const sorted = [...notes].sort((a, b) => a.startTime - b.startTime);
@@ -86,7 +80,7 @@ export function startLearn(bars = null) {
   const { tempo, timeSignature } = state.composition;
   const section = bars
     ? barRangeMs(bars.startBar, bars.endBar, tempo, timeSignature)
-    : loopRange();
+    : loopRangeMs();
   looping = Boolean(section) && !bars;
   sectionStartMs = section ? section.startMs : 0;
   groups = groupAttacks(state.composition.notes)
@@ -111,8 +105,8 @@ export function startLearn(bars = null) {
   emit('transport:learn', {
     total: groups.length,
     looping,
-    startBar: bars ? bars.startBar : (looping ? state.transport.loopStartBar : null),
-    endBar: bars ? bars.endBar : (looping ? state.transport.loopEndBar : null),
+    startBar: bars ? bars.startBar : (looping ? loopBars().startBar : null),
+    endBar: bars ? bars.endBar : (looping ? loopBars().endBar : null),
     walking: Boolean(bars),
   });
   goTo(0);

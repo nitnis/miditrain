@@ -17,6 +17,7 @@ import { startStepRecord, stopStepRecord, stepInsertRest, stepGoBack, getStepMs 
 import { initNoteEditor, getSelectedIds, clearSelection } from './note-editor.js';
 import { staffPositionName, midiToNoteWithOctave } from './chords.js';
 import { barRangeMs, barAtMs } from './quantizer.js';
+import { loopBars } from './range.js';
 import { inferHands } from './hands.js';
 import {
   listProfiles, current as currentProfile, switchProfile, createProfile, deleteProfile,
@@ -1018,14 +1019,6 @@ function rangeForBars({ startBar, endBar }) {
   return barRangeMs(startBar, endBar, tempo, timeSignature);
 }
 
-// The loop range is the app's way of naming a stretch of bars — learn mode
-// already reads it that way, and training disagreeing with it is why setting
-// the bars and pressing Play trained the whole piece.
-function loopBars() {
-  const { loopEnabled, loopStartBar, loopEndBar } = state.transport;
-  return loopEnabled ? { startBar: loopStartBar, endBar: loopEndBar } : null;
-}
-
 function startTrainingSession(bars = null) {
   if (!state.composition.notes.length) {
     showToast('Record something first to train with');
@@ -1303,9 +1296,8 @@ function syncLoopControls() {
 // The looped bars, marked on the score. Only when the loop is on: an unused
 // range is a leftover, not something to draw over the music.
 function refreshLoopMarker() {
-  const { loopEnabled, loopStartBar, loopEndBar } = state.transport;
-  if (loopEnabled) markLoopRange(loopStartBar, loopEndBar);
-  else markLoopRange(null, null);
+  const marked = loopBars();
+  markLoopRange(marked ? marked.startBar : null, marked ? marked.endBar : null);
 }
 
 // Keep the download name recognisable but safe for any filesystem
