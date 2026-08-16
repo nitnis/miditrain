@@ -1,7 +1,7 @@
 // VexFlow 4.x sheet music renderer (grand staff)
 import { state } from './state.js';
 import { quantizeNotes, groupByMeasure, groupIntoChords, fillWithRests, findBestDuration, splitAcrossBarlines } from './quantizer.js';
-import { detectChordRuns, spellPitchClass } from './chords.js';
+import { detectChordRuns, spellPitchClass, isRightHand } from './chords.js';
 
 function VF() { return window.Vex?.Flow; }
 
@@ -157,8 +157,8 @@ export function renderSheet(notes, composition, currentTimeMs = null) {
     } catch (_) {}
 
     const measureNotes = measures.get(m) || [];
-    const trebleNotes  = measureNotes.filter(n => n.pitch >= 60);
-    const bassNotes    = measureNotes.filter(n => n.pitch <  60);
+    const trebleNotes  = measureNotes.filter(n => isRightHand(n.pitch));
+    const bassNotes    = measureNotes.filter(n => !isRightHand(n.pitch));
 
     const trebleTicks = buildTickables(trebleNotes, beatsPerMeasure, 'treble', keySignature, segmentPlacement, line);
     const bassTicks   = buildTickables(bassNotes,   beatsPerMeasure, 'bass',   keySignature, segmentPlacement, line);
@@ -285,7 +285,7 @@ function drawSlurs(rawNotes, placement) {
   if (!Curve || !rawNotes.length) return;
 
   // Each stave carries its own slurs, and a run is only meaningful within one
-  for (const clefNotes of [rawNotes.filter(n => n.pitch >= 60), rawNotes.filter(n => n.pitch < 60)]) {
+  for (const clefNotes of [rawNotes.filter(n => isRightHand(n.pitch)), rawNotes.filter(n => !isRightHand(n.pitch))]) {
     for (const run of findSlurRuns(clefNotes)) {
       const placed = run
         .map(attack => {
