@@ -225,9 +225,57 @@ export function movePlayhead(currentTimeMs) {
   const height = (bass.y + 95) - top;
 
   // The container is padded and scrolls; the geometry is in SVG coordinates
-  playheadEl.style.transform = `translate(${x + container.offsetLeft}px, ${top + container.offsetTop}px)`;
+  const pageTop = top + container.offsetTop;
+  playheadEl.style.transform = `translate(${x + container.offsetLeft}px, ${pageTop}px)`;
   playheadEl.style.height = `${height}px`;
   playheadEl.classList.remove('hidden');
+  followPlayhead(pageTop, height);
+}
+
+// ── Following the music ──────────────────────────────────────────────────────
+// A score longer than the window is most of them, and a playhead you have to
+// chase is no use at all. The systems stack down the page, so following means
+// scrolling to the one being played — and only when it has left a comfortable
+// band, or every frame would re-issue a scroll and the smoothing would never
+// arrive anywhere.
+
+const FOLLOW_MARGIN = 20;     // how close to the edge counts as "about to go"
+const HANDBACK_MS = 2500;     // a deliberate look elsewhere is left alone
+let followSuspendedUntil = 0;
+let followTarget = null;
+let followBoundTo = null;
+
+// Only gestures count as the player taking over. Listening for `scroll` would
+// catch this module's own scrolling and hand control back to nobody.
+function watchForManualScroll(box) {
+  if (followBoundTo === box) return;
+  followBoundTo = box;
+  const takeOver = () => { followSuspendedUntil = performance.now() + HANDBACK_MS; };
+  box.addEventListener('wheel', takeOver, { passive: true });
+  box.addEventListener('touchmove', takeOver, { passive: true });
+}
+
+function followPlayhead(pageTop, height) {
+  const box = container.parentElement;
+  if (!box) return;
+  watchForManualScroll(box);
+
+  const slack = box.scrollHeight - box.clientHeight;
+  if (slack <= 0) return;
+  if (performance.now() < followSuspendedUntil) return;
+
+  const above = pageTop < box.scrollTop + FOLLOW_MARGIN;
+  const below = pageTop + height > box.scrollTop + box.clientHeight - FOLLOW_MARGIN;
+  if (!above && !below) { followTarget = null; return; }
+
+  // A third of the way down, so the system after this one is already in sight
+  // by the time the music reaches it
+  const target = Math.max(0, Math.min(slack, pageTop - (box.clientHeight - height) / 3));
+  // Mid-animation the scroll position is still short of the target, so compare
+  // against what was asked for rather than where the box currently is
+  if (followTarget !== null && Math.abs(target - followTarget) < 4) return;
+  followTarget = target;
+  box.scrollTo({ top: target, behavior: 'smooth' });
 }
 
 // ── Loop marker ──────────────────────────────────────────────────────────────
