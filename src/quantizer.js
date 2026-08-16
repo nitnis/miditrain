@@ -187,6 +187,13 @@ export function barStartMs(barNumber, tempo, timeSignature) {
   return beatsToMs(barNumber * beatsPerBar, tempo);
 }
 
+// Which bar a moment falls in — 1-based, the inverse of barStartMs
+export function barAtMs(ms, tempo, timeSignature) {
+  const beatsPerBar = timeSignature.numerator * (4 / timeSignature.denominator);
+  const barMs = beatsToMs(beatsPerBar, tempo);
+  return Math.max(1, Math.floor(Math.max(0, ms) / barMs) + 1);
+}
+
 // A stretch of bars in milliseconds. Bar numbers are 1-based and endBar is
 // inclusive. Everything that practises a section — training, learn mode and
 // the section walk — measures it here, so they cannot disagree about where a

@@ -1,8 +1,8 @@
 // UI updates: DOM manipulation, modals, controls
 import { state, update, emit, on } from './state.js';
-import { record, play, stop, stopAndRewind, startCountIn, playRange, seekTo, seekToStart, seekToEnd, clearAllNotes, transposeNotes, transposeAll, setNotesHand, applyLegato, deleteNotes, changeTempo } from './transport.js';
+import { record, play, stop, stopAndRewind, startCountIn, playRange, seekTo, seekToStart, seekToEnd, clearAllNotes, transposeNotes, transposeAll, setNotesHand, applyLegato, deleteNotes, changeTempo, getCompositionDuration } from './transport.js';
 import { renderSheet, initSheet, getChordOverlayData, getStaveGeometry, movePlayhead } from './sheet.js';
-import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWaitingPitches } from './pianoroll.js';
+import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWaitingPitches, fallingMsPerPixel } from './pianoroll.js';
 import { startLearn, stopLearn } from './learn.js';
 import {
   startSectionWalk, stopSectionWalk, repeatSection, advanceSection,
@@ -16,7 +16,7 @@ import { resumeAudioContext, applyOutputLevel, applyClicksOnly } from './audio.j
 import { startStepRecord, stopStepRecord, stepInsertRest, stepGoBack, getStepMs } from './step-recorder.js';
 import { initNoteEditor, getSelectedIds, clearSelection } from './note-editor.js';
 import { staffPositionName, midiToNoteWithOctave } from './chords.js';
-import { barRangeMs } from './quantizer.js';
+import { barRangeMs, barAtMs } from './quantizer.js';
 import { inferHands } from './hands.js';
 import {
   listProfiles, current as currentProfile, switchProfile, createProfile, deleteProfile,
@@ -56,6 +56,7 @@ export function initUI() {
   bindChordOverlay();
   bindStaffHint();
   bindPianoResizer();
+  bindFallingScrub();
   bindShortcutsPanel();
   bindSectionWalk();
   bindProfiles();
@@ -132,7 +133,7 @@ export function initUI() {
 // before the UI is built, so each control has to be able to catch up rather
 // than relying on the markup's default being right.
 function applyStateToControls() {
-  const { composition, transport, ui } = state;
+  const { composition, ui } = state;
 
   document.getElementById('composition-name').textContent = composition.name || 'Untitled';
   document.getElementById('key-select').value = composition.keySignature;
@@ -157,9 +158,7 @@ function applyStateToControls() {
   document.getElementById('btn-count-in').classList.toggle('active', ui.countInEnabled);
   setPracticeMode(ui.trainMode ? 'train' : ui.learnMode ? 'learn' : null);
 
-  document.getElementById('loop-start').value = transport.loopStartBar;
-  document.getElementById('loop-end').value = transport.loopEndBar;
-  updateLoopDisplay();
+  syncLoopControls();
 
   setView(ui.view);
 }
@@ -245,10 +244,11 @@ function bindTransport() {
   });
   on('transport:countin-end', () => countOverlay.classList.add('hidden'));
 
-  // Keep position display live during step recording
+  // Everything that moves the playhead comes through here, including the moves
+  // nothing is running to tick for: seeking, scrubbing, a section jump
   on('change:transport.currentTime', ({ value }) => {
+    updatePositionDisplay(value);
     if (state.transport.mode === 'step-recording') {
-      updatePositionDisplay(value);
       scheduleSheetRender(); // the step cursor is part of the drawing
     } else {
       movePlayhead(value);   // seeking while stopped only moves the overlay
@@ -1211,6 +1211,90 @@ function bindLoopControls() {
   };
 }
 
+// ── The falling window as a control surface ──────────────────────────────────
+// Scroll it to move through the piece, click it to mark out a stretch of bars.
+// Between them that is the whole "find the hard four bars and drill them" loop
+// without touching a number field.
+
+// Modes that are driving the playhead themselves; scrubbing would be pulling
+// against them
+const SCRUB_LOCKED = new Set(['learning', 'count-in', 'step-recording']);
+
+// Wheel deltas arrive in pixels, lines or pages depending on the device
+function wheelPixels(e, viewportH) {
+  if (e.deltaMode === 1) return e.deltaY * 16;
+  if (e.deltaMode === 2) return e.deltaY * viewportH;
+  return e.deltaY;
+}
+
+function bindFallingScrub() {
+  const canvas = document.getElementById('falling-canvas');
+  let pending = 0;
+  let frame = null;
+
+  const apply = () => {
+    frame = null;
+    const delta = pending;
+    pending = 0;
+    const end = getCompositionDuration();
+    const target = Math.min(end, Math.max(0, state.transport.currentTime + delta));
+    if (target !== state.transport.currentTime) seekTo(target);
+  };
+
+  canvas.addEventListener('wheel', (e) => {
+    if (SCRUB_LOCKED.has(state.transport.mode)) return;
+    const msPerPixel = fallingMsPerPixel();
+    if (!msPerPixel) return;
+    // Scrolling down brings the notes down, which is what time passing looks
+    // like here — the gesture drags the ribbon rather than a scrollbar
+    e.preventDefault();
+    pending += wheelPixels(e, canvas.height) * msPerPixel;
+    if (!frame) frame = requestAnimationFrame(apply);
+  }, { passive: false });
+
+  canvas.addEventListener('click', () => markRangeEdge());
+}
+
+// Which end the next click sets. Marking a start arms the end, so two clicks
+// either side of a passage are the whole gesture.
+let nextRangeEdge = 'start';
+
+// What the range is for, which is whatever mode is armed. All three read the
+// same loop bars, so this only changes what the message calls it.
+function rangeName() {
+  if (state.ui.trainMode) return 'Training';
+  if (state.ui.learnMode) return 'Learning';
+  return 'Loop';
+}
+
+function markRangeEdge() {
+  if (!state.composition.notes.length) return;
+  const { tempo, timeSignature } = state.composition;
+  const bar = barAtMs(state.transport.currentTime, tempo, timeSignature);
+
+  if (nextRangeEdge === 'start') {
+    update('transport.loopStartBar', bar);
+    // A start on its own is a one-bar range, so the state is always a range
+    // somebody could press Play on
+    update('transport.loopEndBar', Math.max(bar, state.transport.loopEndBar));
+    update('transport.loopEnabled', true);
+    nextRangeEdge = 'end';
+    showToast(`${rangeName()} from bar ${bar} — click again for the end`, 2200);
+  } else {
+    const startBar = state.transport.loopStartBar;
+    update('transport.loopEndBar', Math.max(startBar, bar));
+    nextRangeEdge = 'start';
+    showToast(`${rangeName()} bars ${startBar}–${Math.max(startBar, bar)}`, 2000);
+  }
+  syncLoopControls();
+}
+
+function syncLoopControls() {
+  document.getElementById('loop-start').value = String(state.transport.loopStartBar);
+  document.getElementById('loop-end').value = String(state.transport.loopEndBar);
+  updateLoopDisplay();
+}
+
 // Keep the download name recognisable but safe for any filesystem
 function fileSafeName(name) {
   const cleaned = name.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-');
@@ -1777,7 +1861,13 @@ function updateLoopDisplay() {
   document.getElementById('loop-enabled').checked = enabled;
 }
 
+// A running transport both updates the position and ticks, so this is asked
+// the same question twice a frame; the second time is free.
+let shownPositionMs = null;
+
 function updatePositionDisplay(ms) {
+  if (ms === shownPositionMs) return;
+  shownPositionMs = ms;
   const totalSec = ms / 1000;
   const min = Math.floor(totalSec / 60);
   const sec = Math.floor(totalSec % 60);
