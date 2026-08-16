@@ -17,6 +17,13 @@ import { startStepRecord, stopStepRecord, stepInsertRest, stepGoBack, getStepMs 
 import { initNoteEditor, getSelectedIds, clearSelection } from './note-editor.js';
 import { staffPositionName, midiToNoteWithOctave } from './chords.js';
 import { barRangeMs } from './quantizer.js';
+import {
+  listProfiles, current as currentProfile, switchProfile, createProfile, deleteProfile,
+  adoptProfile, sectionKey, sectionTempo, rememberSectionTempo, setLearningPosition,
+  learningPosition, canUseFolder, chooseFolder, folderHandle, scanFolder, writeToFolder,
+  fileNameFor, bundleToJSON, bundleFromJSON,
+} from './profiles.js';
+import { collectBundle, applyBundle } from './session.js';
 import { initHistory, resetHistory, undo, redo } from './history.js';
 import {
   initShortcuts, getActions, bindingsFor, formatBinding, setBinding,
@@ -50,6 +57,7 @@ export function initUI() {
   bindPianoResizer();
   bindShortcutsPanel();
   bindSectionWalk();
+  bindProfiles();
   initHistory();
 
   // The piano roll canvas is sized from its viewport, so re-render whenever
@@ -461,6 +469,158 @@ function startLearnSession() {
   if (!startLearn()) showToast('Nothing to learn here');
 }
 
+// ── Profiles ─────────────────────────────────────────────────────────────────
+
+function bindProfiles() {
+  const modal = document.getElementById('profiles-modal');
+  const select = document.getElementById('profile-select');
+
+  select.onchange = (e) => { switchProfile(e.target.value); showProfileWelcome(); };
+  document.getElementById('btn-profiles').onclick = () => { renderProfiles(); modal.classList.remove('hidden'); };
+  document.getElementById('btn-close-profiles').onclick = () => modal.classList.add('hidden');
+
+  document.getElementById('btn-profile-create').onclick = () => {
+    const input = document.getElementById('profile-new-name');
+    createProfile(input.value);
+    input.value = '';
+    renderProfiles();
+    showToast(`Now practising as ${currentProfile().name}`);
+  };
+
+  document.getElementById('btn-profile-folder').onclick = async () => {
+    if (!canUseFolder()) {
+      showToast('This browser cannot be given a folder — profile files download instead', 4000);
+      return;
+    }
+    try {
+      await chooseFolder();
+      await renderFolderState();
+      showToast('Profile folder set');
+    } catch { /* the picker was dismissed */ }
+  };
+
+  document.getElementById('btn-profile-scan').onclick = async () => {
+    const handle = await folderHandle({ prompt: true });
+    if (!handle) { showToast('No folder chosen yet', 2200); return; }
+    const found = await scanFolder(handle);
+    for (const { bundle } of found) adoptProfile(bundle.profile);
+    renderProfiles();
+    showToast(found.length
+      ? `Found ${found.length} profile${found.length === 1 ? '' : 's'} in the folder`
+      : 'No profile files in that folder', 2600);
+  };
+
+  const fileInput = document.getElementById('profile-file');
+  document.getElementById('btn-profile-file').onclick = () => fileInput.click();
+  fileInput.onchange = async () => {
+    const file = fileInput.files?.[0];
+    fileInput.value = '';
+    if (!file) return;
+    try {
+      const bundle = bundleFromJSON(await file.text());
+      loadBundle(bundle);
+      renderProfiles();
+    } catch (err) {
+      showToast(`Could not read that file: ${err.message}`, 4000);
+    }
+  };
+
+  on('profiles:changed', () => renderProfileSelect());
+  renderProfileSelect();
+}
+
+// A file carries the profile, the settings and the song together, so taking
+// one on means becoming that player mid-practice rather than just borrowing
+// their name
+function loadBundle(bundle) {
+  if (state.composition.notes.length &&
+      !confirm('Load this profile? It replaces the current song and settings.')) return;
+  const applied = applyBundle(bundle);
+  applyStateToControls();
+  resetHistory();
+  scheduleSheetRender();
+  const parts = [applied.profile ? `profile "${applied.profile.name}"` : null,
+                 applied.composition ? 'song' : null,
+                 applied.settings ? 'settings' : null].filter(Boolean);
+  showToast(`Loaded ${parts.join(', ')}`, 3000);
+  showProfileWelcome();
+}
+
+// Say where this profile left off, if it left off anywhere
+function showProfileWelcome() {
+  const position = learningPosition();
+  if (!position) return;
+  showToast(
+    `${currentProfile().name} · last learning "${position.songName}", section ${position.sectionIndex + 1}`,
+    3200
+  );
+}
+
+function renderProfileSelect() {
+  const select = document.getElementById('profile-select');
+  const active = currentProfile();
+  select.innerHTML = '';
+  for (const profile of listProfiles()) {
+    const option = document.createElement('option');
+    option.value = profile.id;
+    option.textContent = profile.name;
+    option.selected = profile.id === active.id;
+    select.appendChild(option);
+  }
+}
+
+function renderProfiles() {
+  const list = document.getElementById('profile-list');
+  const active = currentProfile();
+  list.innerHTML = '';
+
+  for (const profile of listProfiles()) {
+    const row = document.createElement('div');
+    row.className = `profile-item${profile.id === active.id ? ' active' : ''}`;
+
+    const name = document.createElement('span');
+    name.className = 'profile-item-name';
+    name.textContent = profile.name;
+
+    const meta = document.createElement('span');
+    meta.className = 'profile-item-meta';
+    const at = profile.id === active.id ? learningPosition() : null;
+    meta.textContent = at ? `section ${at.sectionIndex + 1} of "${at.songName}"` : '';
+
+    row.append(name, meta);
+
+    if (profile.id !== active.id) {
+      const use = document.createElement('button');
+      use.className = 'modal-btn';
+      use.textContent = 'Use';
+      use.onclick = () => { switchProfile(profile.id); renderProfiles(); showProfileWelcome(); };
+      row.appendChild(use);
+    }
+
+    const remove = document.createElement('button');
+    remove.className = 'modal-btn';
+    remove.textContent = 'Delete';
+    remove.disabled = listProfiles().length <= 1;
+    remove.onclick = () => { if (deleteProfile(profile.id)) renderProfiles(); };
+    row.appendChild(remove);
+
+    list.appendChild(row);
+  }
+  renderFolderState();
+}
+
+async function renderFolderState() {
+  const el = document.getElementById('profile-folder-state');
+  if (!canUseFolder()) {
+    el.textContent = 'This browser cannot be given a folder. Save downloads a profile file instead, and it can be loaded back below.';
+    return;
+  }
+  const handle = await folderHandle();
+  el.textContent = handle
+    ? `Using "${handle.name}". Save writes this profile there.`
+    : 'No folder chosen. Save downloads a profile file instead.';
+}
+
 // ── Section walk ─────────────────────────────────────────────────────────────
 
 function setLearnPhase(text) {
@@ -487,6 +647,12 @@ function bindSectionWalk() {
 
   on('sections:walk', (s) => {
     setLearnPhase(`Your turn · section ${s.index + 1}/${s.total}`);
+    // Where this profile has got to, so loading it comes back here
+    setLearningPosition({
+      songName: state.composition.name,
+      sectionBars: state.ui.learnSectionBars,
+      sectionIndex: s.index,
+    });
   });
 
   on('sections:done', (s) => {
@@ -514,10 +680,29 @@ function bindSectionWalk() {
 }
 
 // Training takes the transport, so the walk steps aside rather than competing
+// The section being trained, so the speed it ends up at can be remembered
+// against it rather than against the piece as a whole
+let trainingSectionKey = null;
+
+function keyForSection(section) {
+  return sectionKey(state.composition.name, state.ui.learnSectionBars, section);
+}
+
 function trainCurrentSection() {
   const section = handOverForTraining();
   document.getElementById('section-modal').classList.add('hidden');
   if (!section) return;
+
+  // A section starts slow the first time and picks up where this profile left
+  // it after that — the speed is the thing a player earns, so it belongs to
+  // them rather than to the piece
+  trainingSectionKey = keyForSection(section);
+  const bpm = sectionTempo(trainingSectionKey);
+  if (bpm !== state.composition.tempo) {
+    setTempo(bpm);
+    showToast(`Training bars ${section.startBar}–${section.endBar} at ${bpm} BPM`, 1800);
+  }
+
   setPracticeMode('train');
   startTrainingSession(section);
 }
@@ -577,12 +762,32 @@ function newComposition() {
   resetHistory();
 }
 
+// Save keeps the composition in the browser, as it always has, and also writes
+// the whole state — profile included — to a file. Pressing Save is the one
+// moment the app can be sure the player wants something kept outside it.
 async function saveCurrentComposition() {
   const name = document.getElementById('composition-name').textContent.trim() || 'Untitled';
   update('composition.name', name);
   const saved = await saveComposition({ ...state.composition });
   update('composition.id', saved.id);
-  showToast('Saved!');
+
+  const profile = currentProfile();
+  const text = bundleToJSON(collectBundle());
+  const filename = fileNameFor(profile);
+
+  const handle = await folderHandle({ prompt: true });
+  if (handle) {
+    try {
+      await writeToFolder(handle, filename, text);
+      showToast(`Saved · ${filename} written to the profile folder`, 2600);
+      return;
+    } catch (err) {
+      showToast(`Saved to the browser, but the folder refused: ${err.message}`, 4000);
+      return;
+    }
+  }
+  // No folder configured, so the file goes the only other way out
+  download(text, 'application/json', filename);
 }
 
 function download(data, mimeType, filename) {
@@ -773,6 +978,8 @@ function nudgeRetryTempo(direction) {
   }
   retryTempoSteps = steps;
   updateRetryTempoLabel();
+  // Getting a section faster is progress worth keeping
+  if (trainingSectionKey) rememberSectionTempo(trainingSectionKey, state.composition.tempo);
   showToast(`Retry at ${state.composition.tempo} BPM`, 1200);
 }
 
@@ -1281,6 +1488,10 @@ function shortcutActions() {
       section: 'File', label: 'Export as MIDI',
       defaultBindings: [{ code: 'KeyE', mod: true, shift: true }],
       run: () => exportMidi() },
+    { id: 'profiles', group: 'global', hint: 'btn-profiles',
+      section: 'File', label: 'Manage profiles',
+      defaultBindings: [{ code: 'KeyP', shift: true }],
+      run: () => document.getElementById('btn-profiles').click() },
     { id: 'import', group: 'global', hint: 'btn-import',
       section: 'File', label: 'Import a JSON or MIDI file',
       defaultBindings: [{ code: 'KeyI', mod: true }],

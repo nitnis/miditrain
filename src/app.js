@@ -4,10 +4,12 @@ import { initUI } from './ui.js';
 import { on, emit, state } from './state.js';
 import { noteOn as audioNoteOn, noteOff as audioNoteOff } from './audio.js';
 import { restoreSettings, restoreComposition, initSession } from './session.js';
+import { loadProfiles } from './profiles.js';
 
 async function boot() {
   // Last session first, so the UI is built from where the app was left rather
   // than from defaults it would then have to be talked out of
+  loadProfiles();
   restoreSettings();
   await restoreComposition();
 
