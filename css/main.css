@@ -136,15 +136,17 @@ html, body {
   flex-shrink: 0;
 }
 
+/* Wrapping rather than scrolling. The row scrolled sideways with its scrollbar
+   hidden, so anything past the window edge — the metronome, the speed, the
+   practice modes — was not just off-screen but unfindable. Two shorter lines
+   cost a few pixels of height and show everything. */
 .toolbar-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  scrollbar-width: none;
+  flex-wrap: wrap;
+  row-gap: 6px;
 }
-.toolbar-row::-webkit-scrollbar { display: none; }
 
 .tool-group {
   display: flex;
@@ -345,6 +347,18 @@ select:focus { outline: 1px solid var(--accent); }
 }
 .toggle-btn .icon { width: 16px; height: 16px; }
 .toggle-btn .icon.hidden { display: none; }
+/* Buttons whose icon already says it. The wording moves to the tooltip, which
+   carries the shortcut too — but it stays in the DOM for screen readers, so
+   the button keeps a name rather than becoming an unlabelled glyph. */
+.toggle-btn.icon-only { position: relative; padding: 0 9px; gap: 0; }
+.toggle-btn.icon-only .btn-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 .toggle-btn:hover { border-color: var(--accent); color: var(--accent); }
 .toggle-btn.muted {
   border-color: var(--red);
@@ -571,10 +585,12 @@ select:focus { outline: 1px solid var(--accent); }
 }
 
 /* Live accuracy gauge, shown only while training */
+/* Left, because the crossing signal has the right-hand corner and a score
+   sitting on top of the beat helps nobody */
 .accuracy-gauge {
   position: absolute;
   top: 10px;
-  right: 10px;
+  left: 10px;
   bottom: 10px;
   width: 58px;
   display: flex;
@@ -736,6 +752,8 @@ select:focus { outline: 1px solid var(--accent); }
   display: block;
   width: 100%;
   height: 100%;
+  /* Scroll it to move through the piece, click it to mark a range */
+  cursor: crosshair;
 }
 
 #piano-keyboard-container {

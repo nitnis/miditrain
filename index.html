@@ -129,7 +129,7 @@
 
       <!-- Mute -->
       <div class="tool-group">
-        <button class="toggle-btn" id="btn-mute" title="Mute all audio">
+        <button class="toggle-btn icon-only" id="btn-mute" title="Mute all audio">
           <svg class="icon" id="icon-sound-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M11 5 L6 9 H2 v6 h4 l5 4 Z"/>
             <path d="M15.5 8.5a5 5 0 0 1 0 7"/>
@@ -140,7 +140,7 @@
             <line x1="16" y1="9" x2="22" y2="15"/>
             <line x1="22" y1="9" x2="16" y2="15"/>
           </svg>
-          <span id="mute-label">Sound</span>
+          <span class="btn-label" id="mute-label">Sound</span>
         </button>
         <input type="range" id="volume-slider" class="volume-slider" min="0" max="100" value="100">
         <span class="volume-value" id="volume-value">100%</span>
@@ -164,23 +164,23 @@
 
       <!-- Count-in -->
       <div class="tool-group">
-        <button class="toggle-btn" id="btn-count-in" title="Count one bar in before recording and training (C)">
+        <button class="toggle-btn icon-only" id="btn-count-in" title="Count one bar in before recording and training (C)">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="9"/>
             <polyline points="12 7 12 12 15 14"/>
           </svg>
-          Count-in
+          <span class="btn-label">Count-in</span>
         </button>
       </div>
 
       <!-- Metronome -->
       <div class="tool-group">
-        <button class="toggle-btn" id="btn-metronome" title="Toggle Metronome (M)">
+        <button class="toggle-btn icon-only" id="btn-metronome" title="Toggle Metronome (M)">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 2 L19 20 L5 20 Z"/>
             <line x1="12" y1="20" x2="12" y2="8" stroke-width="1.5" opacity="0.5"/>
           </svg>
-          Metro
+          <span class="btn-label">Metro</span>
         </button>
         <select id="metro-subdivision" title="Click the beat, or subdivide it — the divisions click lighter than the beat">
           <option value="1">Beat</option>
@@ -188,37 +188,37 @@
           <option value="3">Triplets</option>
           <option value="4">&#9835; 16ths</option>
         </select>
-        <button class="toggle-btn" id="btn-clicks-only" title="Hear only the metronome and count-in">
+        <button class="toggle-btn icon-only" id="btn-clicks-only" title="Hear only the metronome and count-in">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M9 17V5l10-2v12"/>
             <circle cx="6" cy="17" r="3"/>
             <circle cx="16" cy="15" r="3"/>
             <line x1="3" y1="21" x2="21" y2="3"/>
           </svg>
-          Clicks only
+          <span class="btn-label">Clicks only</span>
         </button>
       </div>
 
       <!-- What the falling-notes window shows over the notes -->
       <div class="tool-group">
         <span class="tool-label">SHOW</span>
-        <button class="toggle-btn" id="btn-beat-overlay" title="Show the beat counter over the falling notes (Shift+B)">
+        <button class="toggle-btn icon-only" id="btn-beat-overlay" title="Show the beat counter over the falling notes (Shift+B)">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
             <circle cx="4.5" cy="12" r="2.5" fill="currentColor" stroke="none"/>
             <circle cx="11" cy="12" r="2" opacity="0.7"/>
             <circle cx="17" cy="12" r="2" opacity="0.7"/>
             <circle cx="22" cy="12" r="1.5" opacity="0.4"/>
           </svg>
-          Beat
+          <span class="btn-label">Beat</span>
         </button>
-        <button class="toggle-btn" id="btn-chord-overlay" title="Show the chord under the playhead over the falling notes (Shift+C)">
+        <button class="toggle-btn icon-only" id="btn-chord-overlay" title="Show the chord under the playhead over the falling notes (Shift+C)">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="7" cy="17" r="3"/>
             <line x1="10" y1="17" x2="10" y2="5"/>
             <line x1="10" y1="5" x2="20" y2="7"/>
             <line x1="10" y1="9" x2="20" y2="11"/>
           </svg>
-          Chord
+          <span class="btn-label">Chord</span>
         </button>
       </div>
 
@@ -358,7 +358,7 @@
   <div id="piano-resizer" role="separator" aria-orientation="horizontal" title="Drag to resize the falling-notes area"></div>
   <div id="piano-section">
     <div id="falling-notes-container">
-      <canvas id="falling-canvas"></canvas>
+      <canvas id="falling-canvas" title="Scroll to move through the piece — click to set the start of a range, click again for its end"></canvas>
       <div id="accuracy-gauge" class="accuracy-gauge hidden">
         <div class="gauge-score" id="gauge-score">—</div>
         <div class="gauge-track"><div class="gauge-fill" id="gauge-fill"></div></div>
