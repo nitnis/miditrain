@@ -6,9 +6,15 @@ import { isRightHand } from './hands.js';
 
 function VF() { return window.Vex?.Flow; }
 
-// MIDI note → VexFlow "note/octave" string, spelled for the key
-function midiToVexKey(midi, keySignature) {
-  const spelling = spellPitchClass(midi % 12, keySignature);
+// MIDI note → VexFlow "note/octave" string, spelled for the key.
+//
+// A note may carry its own spelling, for when whoever made it knows better
+// than the key does: the seventh degree of A harmonic minor is a raised G, and
+// no amount of looking at C major will work that out from the pitch alone.
+function midiToVexKey(midi, keySignature, forced) {
+  const spelling = forced
+    ? { name: forced, letter: forced[0].toUpperCase(), accidental: forced.slice(1) }
+    : spellPitchClass(midi % 12, keySignature);
   let octave = Math.floor(midi / 12) - 1;
   // C-flat belongs to the octave above the pitch it sounds, B-sharp the one
   // below — without this they would be written a whole octave out of place
@@ -475,7 +481,7 @@ function buildTickables(staveNotes, beatsPerMeasure, clef, keySignature, segment
       // Sorted by pitch so a key's index is stable — ties address noteheads
       // by index into this array
       const group = [...item.group].sort((a, b) => a.pitch - b.pitch);
-      const keys = group.map(n => midiToVexKey(n.pitch, keySignature));
+      const keys = group.map(n => midiToVexKey(n.pitch, keySignature, n.spelling));
       const { vexDuration } = findBestDuration(group[0].durationBeats);
       try {
         const note = new StaveNote({ keys, duration: vexDuration, clef });

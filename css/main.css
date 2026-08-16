@@ -702,6 +702,61 @@ select:focus { outline: 1px solid var(--accent); }
   width: 92vw;
   text-align: left;
 }
+
+/* ── Scale and arpeggio generator ── */
+.practice-box {
+  max-width: 620px;
+  width: 92vw;
+  text-align: left;
+}
+.practice-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.practice-tab {
+  flex: 1;
+  height: 38px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 14px;
+  cursor: pointer;
+}
+.practice-tab:hover { color: var(--accent); border-color: var(--accent); }
+.practice-tab.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+  font-weight: 600;
+}
+.practice-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px 14px;
+  margin-top: 16px;
+}
+.practice-field { display: flex; flex-direction: column; gap: 4px; }
+.practice-field.hidden { display: none; }
+.practice-field > span {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.practice-field select { height: 32px; width: 100%; }
+.practice-summary {
+  margin-top: 18px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 13px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
 .profile-heading {
   font-size: 13px;
   text-transform: uppercase;
