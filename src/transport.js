@@ -14,7 +14,7 @@ function currentPosition() {
   return posStart + (performance.now() - perfStart) * state.transport.speed;
 }
 
-function getCompositionDuration() {
+export function getCompositionDuration() {
   const notes = state.composition.notes;
   if (!notes.length) return 0;
   return notes.reduce((max, n) => Math.max(max, n.startTime + n.duration), 0);

@@ -1,5 +1,5 @@
 // Falling notes canvas + 88-key piano keyboard display
-import { state } from './state.js';
+import { state, on } from './state.js';
 import { getAccuracyResults } from './accuracy.js';
 import { setEditorLayout } from './note-editor.js';
 import { handOf } from './hands.js';
@@ -59,6 +59,9 @@ export function initPianoRoll(fallingEl, keyboardEl) {
   const ro = new ResizeObserver(resizePiano);
   ro.observe(fallingCanvas.parentElement);
   ro.observe(keyboardEl);
+  // A held chord name outlives the notes that earned it, so it has to go when
+  // they do
+  on('transport:noteschanged', resetChordLabel);
   startAnimation();
 }
 
@@ -301,6 +304,14 @@ function getNoteColor(midi, alpha = 1) {
 
 const LOOKAHEAD_MS = 2500; // how many ms of notes are shown above the keyboard
 
+// What a pixel of the falling window is worth in time. Scrubbing asks, so that
+// dragging the view moves the music by exactly as much as it was dragged
+// instead of by some second, invented rate.
+export function fallingMsPerPixel() {
+  const h = fallingCanvas ? fallingCanvas.height : 0;
+  return h > 0 ? LOOKAHEAD_MS / h : 0;
+}
+
 export function drawFallingNotes(notes, composition, currentTimeMs, accuracyResults = null, trainMode = false) {
   if (!fallingCtx || !keyLayout.length) return;
 
@@ -417,16 +428,21 @@ export function drawFallingNotes(notes, composition, currentTimeMs, accuracyResu
   }
 
   // Overlays last, so nothing falling is drawn over them
-  drawChordName(notes, composition, currentTimeMs, cw);
-  drawMetronome(composition, currentTimeMs, cw);
+  drawChordName(notes, composition, currentTimeMs, cw, ch);
+  drawMetronome(composition, currentTimeMs, cw, ch);
 }
 
 // ── Current chord ────────────────────────────────────────────────────────────
-// What is sounding right now, named at the top of the window. Large enough to
-// read at a glance from the keyboard, faint enough that the notes still show
-// through it.
+// What is sounding, named at the top of the window. Large enough to read at a
+// glance from the keyboard, faint enough that the notes still show through it.
+//
+// It holds until something replaces it. A chord does not stop being the
+// harmony the moment the keys are released — a melody or a rest over the same
+// chord is still that chord — and a name that blinked out between every voicing
+// was unreadable.
 
 let chordCache = { key: '', label: null };
+let heldChord = { label: null, since: 0 };
 
 function currentChordLabel(notes, currentTimeMs, keySignature) {
   const pitches = [];
@@ -439,40 +455,58 @@ function currentChordLabel(notes, currentTimeMs, keySignature) {
   // Naming a chord is not free, and the sounding set changes far less often
   // than this is drawn
   const key = `${pitches.join(',')}|${keySignature}`;
-  if (key === chordCache.key) return chordCache.label;
-  chordCache = { key, label: pitches.length >= 2 ? detectChord(pitches, keySignature) : null };
-  return chordCache.label;
+  if (key !== chordCache.key) {
+    chordCache = { key, label: pitches.length >= 2 ? detectChord(pitches, keySignature) : null };
+  }
+
+  // Rewinding past the point a name was earned takes the name back with it
+  if (currentTimeMs < heldChord.since) heldChord = { label: null, since: 0 };
+  if (chordCache.label) heldChord = { label: chordCache.label, since: currentTimeMs };
+  return heldChord.label;
 }
 
-function drawChordName(notes, composition, currentTimeMs, cw) {
+// Forget the held name when the notes behind it have gone
+function resetChordLabel() {
+  chordCache = { key: '', label: null };
+  heldChord = { label: null, since: 0 };
+}
+
+function drawChordName(notes, composition, currentTimeMs, cw, ch) {
   if (!state.ui.showChordOverlay) return;
   const label = currentChordLabel(notes, currentTimeMs, composition.keySignature);
   if (!label) return;
 
+  // Sized to the window: readable from the keyboard in a tall one, and not
+  // swallowing a short one
+  const size = Math.max(30, Math.min(60, Math.round(ch * 0.3)));
   fallingCtx.save();
-  fallingCtx.font = '600 34px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+  fallingCtx.font = `600 ${size}px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`;
   fallingCtx.textAlign = 'center';
   fallingCtx.textBaseline = 'top';
   fallingCtx.globalAlpha = 0.72;
   fallingCtx.shadowColor = 'rgba(0,0,0,0.85)';
-  fallingCtx.shadowBlur = 10;
+  fallingCtx.shadowBlur = 12;
   fallingCtx.fillStyle = '#8ad4f5';
-  fallingCtx.fillText(label, cw / 2, 10);
+  fallingCtx.fillText(label, cw / 2, 8);
   fallingCtx.restore();
 }
 
 // ── Metronome ────────────────────────────────────────────────────────────────
-// One dot per beat in the bar; the beat being counted lights up and swells on
-// its attack, so the eye catches the click rather than a lamp that is simply
-// on. The subdivision ticks show underneath when the beat is set to divide.
-// The dots count the same ticks the audible metronome does, so what you see
-// and what you hear cannot disagree — but it is its own switch, because a beat
-// worth watching is not always one worth listening to.
+// A level crossing, because a crossing signal is the one blinking light
+// everybody can already read: two lamps taking turns, one per beat, both of
+// them together on the downbeat so the bar line is unmistakable. Under the
+// crossbuck, a pip per beat says where in the bar you are; the lit lamp pulses
+// once per subdivision, which is exactly what the clicks are doing.
+//
+// It counts the same composition-time ticks the audible metronome does, so
+// what you see and what you hear cannot disagree — but it is its own switch,
+// because a beat worth watching is not always one worth listening to.
 
-const METRO_DOT = 7;
-const METRO_GAP = 16;
+const LAMP_ON = '#ff3b30';
+const BUCK_CLEARANCE = 4; // the crossbuck sits above the lamps, not across them
+const LAMP_OFF = 'rgba(90,26,26,0.75)';
 
-function drawMetronome(composition, currentTimeMs, cw) {
+function drawMetronome(composition, currentTimeMs, cw, ch) {
   if (!state.ui.showBeatOverlay) return;
 
   const { tempo, timeSignature } = composition;
@@ -480,61 +514,113 @@ function drawMetronome(composition, currentTimeMs, cw) {
   const subs = subdivision();
   const beatMs = (60 / tempo) * 1000;
 
-  // Standing still between takes rather than counting a bar nobody is playing
+  // Standing dark between takes rather than counting a bar nobody is playing
   const running = state.transport.mode !== 'stopped';
   const beatPos = running ? currentTimeMs / beatMs : 0;
-  const beatIndex = ((Math.floor(beatPos) % beatsPerBar) + beatsPerBar) % beatsPerBar;
-  const intoBeat = running ? beatPos - Math.floor(beatPos) : 0;
+  const beat = Math.floor(beatPos);
+  const beatIndex = ((beat % beatsPerBar) + beatsPerBar) % beatsPerBar;
+  const intoBeat = running ? beatPos - beat : 0;
 
-  const width = beatsPerBar * METRO_GAP + 14;
-  const height = subs > 1 ? 40 : 28;
+  // Panel geometry, scaled to the window so a tall one gets a big signal and a
+  // short one still fits
+  const s = Math.max(0.85, Math.min(1.6, ch / 170));
+  const lampR = 11 * s;
+  const gap = 34 * s;
+  const pad = 10 * s;
+  const buckH = 22 * s;
+  const pipH = 9 * s;
+  const width = gap + lampR * 2 + pad * 2 + 16 * s;
+  const height = pad * 2 + buckH + lampR * 2 + pipH + BUCK_CLEARANCE * s;
   const x = cw - width - 12;
   const y = 10;
 
   fallingCtx.save();
-  fallingCtx.globalAlpha = 0.8;
-  fallingCtx.fillStyle = 'rgba(13,13,26,0.55)';
+  fallingCtx.fillStyle = 'rgba(13,13,26,0.6)';
   fallingCtx.strokeStyle = 'rgba(120,120,168,0.35)';
   fallingCtx.lineWidth = 1;
   fallingCtx.beginPath();
-  fallingCtx.roundRect(x, y, width, height, 8);
+  fallingCtx.roundRect(x, y, width, height, 10 * s);
   fallingCtx.fill();
   fallingCtx.stroke();
 
-  const cy = y + 14;
-  for (let b = 0; b < beatsPerBar; b++) {
-    const cx = x + 12 + b * METRO_GAP;
-    const isNow = running && b === beatIndex;
-    // The swell decays over the first third of the beat, so the eye catches
-    // the attack rather than a light that is simply on
-    const swell = isNow ? Math.max(0, 1 - intoBeat * 3) : 0;
-    const radius = METRO_DOT / 2 + swell * 3;
+  const midX = x + width / 2;
+  drawCrossbuck(midX, y + pad + buckH / 2, buckH, s);
 
+  // The lamps alternate beat by beat, and the downbeat lights both
+  const lampY = y + pad + buckH + BUCK_CLEARANCE * s + lampR;
+  // A lamp burns through its beat and pulses at each subdivision, the way the
+  // clicks do; the leading edge of each pulse is what the eye picks up
+  const intoSub = (intoBeat * subs) % 1;
+  const pulse = running ? 0.55 + 0.45 * Math.max(0, 1 - intoSub * 2.5) : 0;
+  const litLeft = running && (beatIndex === 0 || beat % 2 === 0);
+  const litRight = running && (beatIndex === 0 || beat % 2 === 1);
+  drawLamp(midX - gap / 2, lampY, lampR, litLeft ? pulse : 0, s);
+  drawLamp(midX + gap / 2, lampY, lampR, litRight ? pulse : 0, s);
+
+  // Where in the bar, under the lamps
+  const pipY = y + height - pipH / 2 - 3 * s;
+  const pipGap = Math.min(13 * s, (width - pad * 2) / beatsPerBar);
+  for (let b = 0; b < beatsPerBar; b++) {
+    const px = midX + (b - (beatsPerBar - 1) / 2) * pipGap;
+    const on = running && b === beatIndex;
     fallingCtx.beginPath();
-    fallingCtx.arc(cx, cy, radius, 0, Math.PI * 2);
-    if (isNow) {
-      fallingCtx.fillStyle = b === 0 ? '#f5b301' : '#5bc0eb';
-      fallingCtx.shadowColor = fallingCtx.fillStyle;
-      fallingCtx.shadowBlur = 6 + swell * 10;
-    } else {
-      fallingCtx.fillStyle = b === 0 ? 'rgba(245,179,1,0.35)' : 'rgba(120,120,168,0.45)';
-      fallingCtx.shadowBlur = 0;
-    }
+    fallingCtx.arc(px, pipY, (on ? 3.2 : 2.2) * s, 0, Math.PI * 2);
+    fallingCtx.fillStyle = on
+      ? (b === 0 ? '#f5b301' : 'rgba(240,240,255,0.9)')
+      : 'rgba(140,140,180,0.4)';
     fallingCtx.fill();
   }
-  fallingCtx.shadowBlur = 0;
+  fallingCtx.restore();
+}
 
-  if (subs > 1) {
-    const subIndex = Math.floor(intoBeat * subs);
-    const ticksY = y + height - 9;
-    const span = (beatsPerBar - 1) * METRO_GAP;
-    for (let s = 0; s < subs; s++) {
-      const tx = x + 12 + (span * s) / Math.max(1, subs - 1);
-      const on = running && s === subIndex;
-      fallingCtx.fillStyle = on ? 'rgba(91,192,235,0.95)' : 'rgba(120,120,168,0.35)';
-      fallingCtx.fillRect(tx - 3, ticksY, 6, on ? 4 : 2);
-    }
+// The crossed boards, white with the black edge they have in the real thing
+function drawCrossbuck(cx, cy, size, s) {
+  const arm = size * 0.78;
+  fallingCtx.save();
+  fallingCtx.lineCap = 'round';
+  for (const angle of [Math.PI / 4, -Math.PI / 4]) {
+    const dx = Math.cos(angle) * arm;
+    const dy = Math.sin(angle) * arm;
+    fallingCtx.beginPath();
+    fallingCtx.moveTo(cx - dx, cy - dy);
+    fallingCtx.lineTo(cx + dx, cy + dy);
+    fallingCtx.strokeStyle = 'rgba(0,0,0,0.55)';
+    fallingCtx.lineWidth = 7 * s;
+    fallingCtx.stroke();
+    fallingCtx.strokeStyle = 'rgba(240,240,245,0.82)';
+    fallingCtx.lineWidth = 4.5 * s;
+    fallingCtx.stroke();
   }
+  fallingCtx.restore();
+}
+
+// `lit` is 0 for dark, otherwise how hard it is burning right now
+function drawLamp(cx, cy, r, lit, s) {
+  fallingCtx.save();
+  // Housing, so an unlit lamp still reads as a lamp
+  fallingCtx.beginPath();
+  fallingCtx.arc(cx, cy, r + 2.5 * s, 0, Math.PI * 2);
+  fallingCtx.fillStyle = 'rgba(20,20,30,0.9)';
+  fallingCtx.fill();
+  fallingCtx.strokeStyle = 'rgba(150,150,180,0.45)';
+  fallingCtx.lineWidth = 1.5 * s;
+  fallingCtx.stroke();
+
+  fallingCtx.beginPath();
+  fallingCtx.arc(cx, cy, r, 0, Math.PI * 2);
+  if (lit > 0) {
+    const glow = fallingCtx.createRadialGradient(cx, cy - r * 0.25, r * 0.15, cx, cy, r);
+    glow.addColorStop(0, '#fff1ef');
+    glow.addColorStop(0.45, LAMP_ON);
+    glow.addColorStop(1, '#8f1108');
+    fallingCtx.fillStyle = glow;
+    fallingCtx.shadowColor = LAMP_ON;
+    fallingCtx.shadowBlur = (10 + 14 * lit) * s;
+    fallingCtx.globalAlpha = 0.55 + 0.45 * lit;
+  } else {
+    fallingCtx.fillStyle = LAMP_OFF;
+  }
+  fallingCtx.fill();
   fallingCtx.restore();
 }
 
