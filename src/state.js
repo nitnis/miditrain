@@ -29,6 +29,7 @@ const _state = {
     learnMode: false,       // wait at each note until it is played
     learnSectionBars: 0,    // 0 = learn the whole piece, otherwise section size
     recordHand: 'auto',     // 'auto' | 'left' | 'right' — the hand new notes are written to
+    practiceHand: 'both',   // 'both' | 'left' | 'right' — the hand train and learn work on
     metronomeEnabled: false,
     metronomeSubdivision: 1, // clicks per beat: 1 beat only, 2 eighths, 3 triplets, 4 sixteenths
     showBeatOverlay: true,  // the beat counter over the falling notes, seen without being heard

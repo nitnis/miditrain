@@ -1,6 +1,7 @@
 // Accuracy tracking: compare live MIDI input against expected notes during playback
 import { state, update, emit, on } from './state.js';
 import { quantizeNotes } from './quantizer.js';
+import { isPractised } from './hands.js';
 
 // Timing tiers, measured from the note's written position
 const PERFECT_MS = 50;
@@ -32,7 +33,11 @@ export function startAccuracy(composition, range = null) {
   const beatMs = (60 / tempo) * 1000;
 
   sessionRange = range;
+  // Practising one hand grades only that hand. The other one still sounds
+  // through playback, which is the point — you play your part against it.
+  const practised = new Set(composition.notes.filter(isPractised).map(n => n.id));
   expectedNotes = quantized
+    .filter(n => practised.has(n.id))
     .map(n => ({
       id: n.id,
       pitch: n.pitch,

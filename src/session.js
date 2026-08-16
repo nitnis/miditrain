@@ -42,6 +42,7 @@ const SETTINGS = {
   'ui.transpose': wholeRange(-12, 12),
   'ui.learnSectionBars': oneOf(0, 2, 4, 8),
   'ui.recordHand': oneOf('auto', 'left', 'right'),
+  'ui.practiceHand': oneOf('both', 'left', 'right'),
   'transport.loopEnabled': bool,
   'transport.loopStartBar': wholeRange(1, 999),
   'transport.loopEndBar': wholeRange(1, 999),

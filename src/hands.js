@@ -8,6 +8,7 @@
 //
 // A file that already knows is believed instead. Nothing inferred here beats
 // two tracks named "Piano right" and "Piano left".
+import { state } from './state.js';
 
 const MAX_HAND_SPAN = 14;   // a tenth, about as far as a hand stretches
 const MIN_GAP = 2;          // adjacent semitones are one shape, not two hands
@@ -23,6 +24,19 @@ export function handOf(note) {
 
 export function isRightHand(note) {
   return handOf(note) === 'right';
+}
+
+// Which hand the practice modes are working on. Hands are learned separately
+// long before they are put together, so training and learn mode can be pointed
+// at one of them; 'both' is the whole texture.
+export function practiceHand() {
+  const want = state.ui.practiceHand;
+  return want === 'left' || want === 'right' ? want : 'both';
+}
+
+export function isPractised(note) {
+  const want = practiceHand();
+  return want === 'both' || handOf(note) === want;
 }
 
 const median = (sorted) => sorted[Math.floor(sorted.length / 2)];
