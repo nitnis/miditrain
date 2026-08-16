@@ -3,6 +3,8 @@ import { state } from './state.js';
 import { getAccuracyResults } from './accuracy.js';
 import { setEditorLayout } from './note-editor.js';
 import { handOf } from './hands.js';
+import { detectChord } from './chords.js';
+import { subdivision } from './metronome.js';
 
 // Piano layout constants
 const MIDI_MIN = 21; // A0
@@ -413,6 +415,125 @@ export function drawFallingNotes(notes, composition, currentTimeMs, accuracyResu
     fallingCtx.fillStyle = grad2;
     fallingCtx.fillRect(keyInfo.x - 5, ch - 50, keyInfo.w + 10, 50);
   }
+
+  // Overlays last, so nothing falling is drawn over them
+  drawChordName(notes, composition, currentTimeMs, cw);
+  drawMetronome(composition, currentTimeMs, cw);
+}
+
+// ── Current chord ────────────────────────────────────────────────────────────
+// What is sounding right now, named at the top of the window. Large enough to
+// read at a glance from the keyboard, faint enough that the notes still show
+// through it.
+
+let chordCache = { key: '', label: null };
+
+function currentChordLabel(notes, currentTimeMs, keySignature) {
+  const pitches = [];
+  for (const note of notes) {
+    if (note.startTime <= currentTimeMs && note.startTime + note.duration > currentTimeMs) {
+      pitches.push(note.pitch);
+    }
+  }
+  pitches.sort((a, b) => a - b);
+  // Naming a chord is not free, and the sounding set changes far less often
+  // than this is drawn
+  const key = `${pitches.join(',')}|${keySignature}`;
+  if (key === chordCache.key) return chordCache.label;
+  chordCache = { key, label: pitches.length >= 2 ? detectChord(pitches, keySignature) : null };
+  return chordCache.label;
+}
+
+function drawChordName(notes, composition, currentTimeMs, cw) {
+  const label = currentChordLabel(notes, currentTimeMs, composition.keySignature);
+  if (!label) return;
+
+  fallingCtx.save();
+  fallingCtx.font = '600 34px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+  fallingCtx.textAlign = 'center';
+  fallingCtx.textBaseline = 'top';
+  fallingCtx.globalAlpha = 0.72;
+  fallingCtx.shadowColor = 'rgba(0,0,0,0.85)';
+  fallingCtx.shadowBlur = 10;
+  fallingCtx.fillStyle = '#8ad4f5';
+  fallingCtx.fillText(label, cw / 2, 10);
+  fallingCtx.restore();
+}
+
+// ── Metronome ────────────────────────────────────────────────────────────────
+// One dot per beat in the bar; the beat being counted lights up and swells on
+// its attack, so the eye catches the click rather than a lamp that is simply
+// on. The subdivision ticks show underneath when the metronome clicks them.
+// The dots count the same ticks the audible metronome does, so what you see
+// and what you hear cannot disagree.
+
+const METRO_DOT = 7;
+const METRO_GAP = 16;
+
+function drawMetronome(composition, currentTimeMs, cw) {
+  if (!state.ui.metronomeEnabled) return;
+
+  const { tempo, timeSignature } = composition;
+  const beatsPerBar = Math.max(1, timeSignature.numerator);
+  const subs = subdivision();
+  const beatMs = (60 / tempo) * 1000;
+
+  // Standing still between takes rather than counting a bar nobody is playing
+  const running = state.transport.mode !== 'stopped';
+  const beatPos = running ? currentTimeMs / beatMs : 0;
+  const beatIndex = ((Math.floor(beatPos) % beatsPerBar) + beatsPerBar) % beatsPerBar;
+  const intoBeat = running ? beatPos - Math.floor(beatPos) : 0;
+
+  const width = beatsPerBar * METRO_GAP + 14;
+  const height = subs > 1 ? 40 : 28;
+  const x = cw - width - 12;
+  const y = 10;
+
+  fallingCtx.save();
+  fallingCtx.globalAlpha = 0.8;
+  fallingCtx.fillStyle = 'rgba(13,13,26,0.55)';
+  fallingCtx.strokeStyle = 'rgba(120,120,168,0.35)';
+  fallingCtx.lineWidth = 1;
+  fallingCtx.beginPath();
+  fallingCtx.roundRect(x, y, width, height, 8);
+  fallingCtx.fill();
+  fallingCtx.stroke();
+
+  const cy = y + 14;
+  for (let b = 0; b < beatsPerBar; b++) {
+    const cx = x + 12 + b * METRO_GAP;
+    const isNow = running && b === beatIndex;
+    // The swell decays over the first third of the beat, so the eye catches
+    // the attack rather than a light that is simply on
+    const swell = isNow ? Math.max(0, 1 - intoBeat * 3) : 0;
+    const radius = METRO_DOT / 2 + swell * 3;
+
+    fallingCtx.beginPath();
+    fallingCtx.arc(cx, cy, radius, 0, Math.PI * 2);
+    if (isNow) {
+      fallingCtx.fillStyle = b === 0 ? '#f5b301' : '#5bc0eb';
+      fallingCtx.shadowColor = fallingCtx.fillStyle;
+      fallingCtx.shadowBlur = 6 + swell * 10;
+    } else {
+      fallingCtx.fillStyle = b === 0 ? 'rgba(245,179,1,0.35)' : 'rgba(120,120,168,0.45)';
+      fallingCtx.shadowBlur = 0;
+    }
+    fallingCtx.fill();
+  }
+  fallingCtx.shadowBlur = 0;
+
+  if (subs > 1) {
+    const subIndex = Math.floor(intoBeat * subs);
+    const ticksY = y + height - 9;
+    const span = (beatsPerBar - 1) * METRO_GAP;
+    for (let s = 0; s < subs; s++) {
+      const tx = x + 12 + (span * s) / Math.max(1, subs - 1);
+      const on = running && s === subIndex;
+      fallingCtx.fillStyle = on ? 'rgba(91,192,235,0.95)' : 'rgba(120,120,168,0.35)';
+      fallingCtx.fillRect(tx - 3, ticksY, 6, on ? 4 : 2);
+    }
+  }
+  fallingCtx.restore();
 }
 
 function startAnimation() {

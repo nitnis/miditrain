@@ -30,6 +30,7 @@ const SETTINGS = {
   'ui.trainMode': bool,
   'ui.learnMode': bool,
   'ui.metronomeEnabled': bool,
+  'ui.metronomeSubdivision': oneOf(1, 2, 3, 4),
   'ui.muted': bool,
   'ui.volume': range(0, 1),
   'ui.clicksOnly': bool,

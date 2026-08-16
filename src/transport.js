@@ -28,7 +28,7 @@ function restartAt(ms) {
   update('transport.currentTime', Math.max(0, ms));
   perfStart = performance.now();
   posStart = state.transport.currentTime;
-  if (state.ui.metronomeEnabled) startMetronome(0);
+  if (state.ui.metronomeEnabled) startMetronome(state.transport.currentTime);
   if (state.transport.mode === 'playing') startPlaybackAudio(state.transport.currentTime);
   rafId = requestAnimationFrame(loop);
 }
@@ -74,7 +74,7 @@ export function record() {
   posStart = state.transport.currentTime;
   activeRecordNotes.clear();
 
-  if (state.ui.metronomeEnabled) startMetronome(0);
+  if (state.ui.metronomeEnabled) startMetronome(posStart);
 
   // Listen for MIDI notes
   on('midi:noteon', handleRecordNoteOn);
@@ -92,7 +92,7 @@ export function play() {
   perfStart = performance.now();
   posStart = state.transport.currentTime;
 
-  if (state.ui.metronomeEnabled) startMetronome(0);
+  if (state.ui.metronomeEnabled) startMetronome(posStart);
   startPlaybackAudio(posStart);
 
   rafId = requestAnimationFrame(loop);

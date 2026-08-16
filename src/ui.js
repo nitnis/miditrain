@@ -151,6 +151,7 @@ function applyStateToControls() {
   applyClicksOnly();
   document.getElementById('btn-clicks-only').classList.toggle('active', ui.clicksOnly);
   document.getElementById('btn-metronome').classList.toggle('active', ui.metronomeEnabled);
+  document.getElementById('metro-subdivision').value = String(ui.metronomeSubdivision);
   document.getElementById('btn-count-in').classList.toggle('active', ui.countInEnabled);
   setPracticeMode(ui.trainMode ? 'train' : ui.learnMode ? 'learn' : null);
 
@@ -920,13 +921,35 @@ function toggleCountIn() {
   showToast(enabled ? 'Count-in on' : 'Count-in off', 1200);
 }
 
+const SUBDIVISIONS = [1, 2, 3, 4];
+const SUBDIVISION_NAME = { 1: 'the beat only', 2: 'eighths', 3: 'triplets', 4: 'sixteenths' };
+
+function setSubdivision(value) {
+  const subs = SUBDIVISIONS.includes(Number(value)) ? Number(value) : 1;
+  update('ui.metronomeSubdivision', subs);
+  document.getElementById('metro-subdivision').value = String(subs);
+  // Ticks are counted in the old division, so a running metronome has to be
+  // re-anchored rather than left to carry a stale count into the new one
+  if (state.ui.metronomeEnabled && state.transport.mode !== 'stopped') {
+    startMetronome(state.transport.currentTime);
+  }
+  showToast(`Metronome clicks ${SUBDIVISION_NAME[subs]}`, 1500);
+}
+
+function cycleSubdivision() {
+  const i = SUBDIVISIONS.indexOf(state.ui.metronomeSubdivision);
+  setSubdivision(SUBDIVISIONS[(i + 1) % SUBDIVISIONS.length]);
+}
+
 function toggleMetronome() {
   const enabled = !state.ui.metronomeEnabled;
   update('ui.metronomeEnabled', enabled);
   document.getElementById('btn-metronome').classList.toggle('active', enabled);
   if (enabled) {
     // Turning it on mid-take should be audible straight away
-    if (state.transport.mode === 'playing' || state.transport.mode === 'recording') startMetronome(0);
+    if (state.transport.mode === 'playing' || state.transport.mode === 'recording') {
+      startMetronome(state.transport.currentTime);
+    }
   } else {
     stopMetronome();
   }
@@ -1112,6 +1135,7 @@ function bindToolbar() {
 
   document.getElementById('btn-metronome').onclick = toggleMetronome;
   document.getElementById('btn-clicks-only').onclick = toggleClicksOnly;
+  document.getElementById('metro-subdivision').onchange = (e) => setSubdivision(e.target.value);
   document.getElementById('btn-learn-mode').onclick = toggleLearnMode;
 
   const speedSlider = document.getElementById('speed-slider');
@@ -1462,6 +1486,10 @@ function shortcutActions() {
       section: 'Options', label: 'Toggle metronome',
       defaultBindings: [{ code: 'KeyM' }],
       run: () => toggleMetronome() },
+    { id: 'metro-subdivision', group: 'global', hint: 'metro-subdivision',
+      section: 'Options', label: 'Metronome subdivision',
+      defaultBindings: [{ code: 'KeyM', shift: true }],
+      run: () => cycleSubdivision() },
     { id: 'record-hand', group: 'global', hint: 'record-hand',
       section: 'Options', label: 'Which hand new notes are written to',
       defaultBindings: [{ code: 'KeyH' }],

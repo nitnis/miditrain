@@ -3,17 +3,27 @@ import { state } from './state.js';
 import { getAudioContext, getClickBus } from './audio.js';
 
 let schedulerTimer = null;
-let nextBeatTime = 0;
-let beatCount = 0;
+let nextTickTime = 0;
+let tickCount = 0;
 
 const LOOKAHEAD_MS = 100;
 const SCHEDULE_INTERVAL_MS = 25;
+
+// Three weights, so the bar has a shape: the downbeat lands hardest, the other
+// beats sit under it, and a subdivision is a light tick you can follow without
+// it competing with the beat it divides.
+const CLICKS = {
+  downbeat: { freq: 1400, gain: 0.34, decay: 0.045 },
+  beat:     { freq: 900,  gain: 0.26, decay: 0.040 },
+  sub:      { freq: 1750, gain: 0.09, decay: 0.022 },
+};
 
 // Clicks run on their own bus under the same master, so mute and volume cover
 // them while "clicks only" — which closes the note bus — leaves them audible
 function getAudioCtx() { return getAudioContext(); }
 
-function scheduleClick(time, isDownbeat) {
+function scheduleClick(time, kind) {
+  const { freq, gain: peak, decay } = CLICKS[kind] || CLICKS.beat;
   const ctx = getAudioCtx();
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
@@ -21,37 +31,64 @@ function scheduleClick(time, isDownbeat) {
   osc.connect(gain);
   gain.connect(getClickBus());
 
-  osc.frequency.value = isDownbeat ? 1200 : 800;
-  gain.gain.setValueAtTime(0.3, time);
-  gain.gain.exponentialRampToValueAtTime(0.001, time + 0.04);
+  osc.frequency.value = freq;
+  gain.gain.setValueAtTime(peak, time);
+  gain.gain.exponentialRampToValueAtTime(0.001, time + decay);
 
   osc.start(time);
-  osc.stop(time + 0.05);
+  osc.stop(time + decay + 0.01);
   osc.addEventListener('ended', () => { osc.disconnect(); gain.disconnect(); });
+}
+
+// How many clicks to the beat, and what each of them is
+export function subdivision() {
+  return Math.max(1, Math.min(4, state.ui.metronomeSubdivision || 1));
+}
+
+export function clickKind(tick, subs, beatsPerBar) {
+  if (tick % subs !== 0) return 'sub';
+  return Math.floor(tick / subs) % beatsPerBar === 0 ? 'downbeat' : 'beat';
+}
+
+// A tick is counted in composition time, so tick 0 is the start of the piece
+// and every downbeat lands on a bar line wherever playback happened to begin.
+function tickMs() {
+  return (60000 / state.composition.tempo) / subdivision();
+}
+
+// ...and heard in real time, which the speed control stretches
+function realSeconds(ms) {
+  return ms / 1000 / (state.transport.speed || 1);
 }
 
 function scheduler() {
   if (!state.ui.metronomeEnabled) return;
 
   const ctx = getAudioCtx();
-  const { tempo, timeSignature } = state.composition;
-  const beatInterval = 60 / tempo;
-  const beatsPerBar = timeSignature.numerator;
+  const beatsPerBar = Math.max(1, state.composition.timeSignature.numerator);
+  const subs = subdivision();
+  // Recomputed every pass, so changing the tempo or the subdivision takes
+  // effect at the next tick rather than at the next bar
+  const step = realSeconds(tickMs());
 
-  while (nextBeatTime < ctx.currentTime + LOOKAHEAD_MS / 1000) {
-    const isDownbeat = beatCount % beatsPerBar === 0;
-    scheduleClick(nextBeatTime, isDownbeat);
-    nextBeatTime += beatInterval;
-    beatCount++;
+  while (nextTickTime < ctx.currentTime + LOOKAHEAD_MS / 1000) {
+    scheduleClick(nextTickTime, clickKind(tickCount, subs, beatsPerBar));
+    nextTickTime += step;
+    tickCount++;
   }
 }
 
-export function startMetronome(offsetMs = 0) {
+// `positionMs` is where in the piece the transport is starting from; the first
+// click is the next tick at or after it, so what you hear agrees with the beat
+// the animation is showing.
+export function startMetronome(positionMs = 0) {
   const ctx = getAudioCtx();
   if (ctx.state === 'suspended') ctx.resume();
 
-  beatCount = 0;
-  nextBeatTime = ctx.currentTime + offsetMs / 1000;
+  const step = tickMs();
+  const ticksIn = Math.max(0, positionMs) / step;
+  tickCount = Math.ceil(ticksIn - 1e-6);
+  nextTickTime = ctx.currentTime + realSeconds((tickCount - ticksIn) * step);
 
   clearInterval(schedulerTimer);
   schedulerTimer = setInterval(scheduler, SCHEDULE_INTERVAL_MS);
@@ -75,8 +112,10 @@ export function scheduleCountInClicks(beats, tempo, timeSignature) {
   const interval = 60 / tempo;
   const perBar = Math.max(1, timeSignature.numerator);
 
+  // The count-in stays on plain beats: it is a countdown, and subdividing it
+  // would make it harder to count rather than easier
   for (let i = 0; i < beats; i++) {
-    scheduleClick(ctx.currentTime + lead + i * interval, i % perBar === 0);
+    scheduleClick(ctx.currentTime + lead + i * interval, i % perBar === 0 ? 'downbeat' : 'beat');
   }
   return lead;
 }
