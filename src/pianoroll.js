@@ -322,7 +322,25 @@ function getNoteColor(midi, alpha = 1) {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
-const LOOKAHEAD_MS = 2500; // how many ms of notes are shown above the keyboard
+// How much music is shown above the keyboard — beats, not seconds.
+//
+// A fixed number of milliseconds meant the notes crossed the window at the
+// same speed whatever the tempo: setting 60 BPM to work something out gave you
+// half as many notes rushing past just as fast, when the whole point of slowing
+// down is to have longer to see each one coming. Five beats is what 2500ms was
+// at 120 BPM, so nothing moves at the tempo the app starts on, and every other
+// tempo now behaves the way it reads.
+const LOOKAHEAD_BEATS = 5;
+// Guards, not policy: a window under a second is unreadable and one over ten
+// leaves the notes hanging motionless at the top.
+const MIN_LOOKAHEAD_MS = 1000;
+const MAX_LOOKAHEAD_MS = 10000;
+
+function lookaheadMs() {
+  const tempo = state.composition.tempo || 120;
+  const beatMs = 60000 / tempo;
+  return Math.max(MIN_LOOKAHEAD_MS, Math.min(MAX_LOOKAHEAD_MS, LOOKAHEAD_BEATS * beatMs));
+}
 
 // Which note is under a point on the falling window. Picking the ends of a
 // loop means pointing at the music itself, so the hit test has to agree with
@@ -330,7 +348,7 @@ const LOOKAHEAD_MS = 2500; // how many ms of notes are shown above the keyboard
 export function noteAtFallingPoint(px, py, notes, currentTimeMs) {
   if (!fallingCanvas || !keyLayout.length) return null;
   const ch = fallingCanvas.height;
-  const pixelsPerMs = ch / LOOKAHEAD_MS;
+  const pixelsPerMs = ch / lookaheadMs();
   let best = null;
   for (const note of notes) {
     const keyInfo = keyMap.get(note.pitch);
@@ -356,7 +374,7 @@ const HIT_SLOP = 3;   // a note is a few pixels wide; a fingertip is not
 // instead of by some second, invented rate.
 export function fallingMsPerPixel() {
   const h = fallingCanvas ? fallingCanvas.height : 0;
-  return h > 0 ? LOOKAHEAD_MS / h : 0;
+  return h > 0 ? lookaheadMs() / h : 0;
 }
 
 export function drawFallingNotes(notes, composition, currentTimeMs, accuracyResults = null, trainMode = false) {
@@ -393,12 +411,13 @@ export function drawFallingNotes(notes, composition, currentTimeMs, accuracyResu
   fallingCtx.lineTo(cw, ch - 4);
   fallingCtx.stroke();
 
-  const pixelsPerMs = ch / LOOKAHEAD_MS;
+  const lookahead = lookaheadMs();
+  const pixelsPerMs = ch / lookahead;
 
-  // Draw notes in window [currentTime - pastWindow, currentTime + LOOKAHEAD_MS]
+  // Draw notes in window [currentTime - pastWindow, currentTime + lookahead]
   const pastWindow = 300; // show recently played notes briefly
   const windowStart = currentTimeMs - pastWindow;
-  const windowEnd = currentTimeMs + LOOKAHEAD_MS;
+  const windowEnd = currentTimeMs + lookahead;
 
   const dimOthers = (state.ui.trainMode || state.ui.learnMode) && practiceHand() !== 'both';
 

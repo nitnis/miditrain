@@ -97,6 +97,11 @@ export function clusterMs() {
 // Clusters sit on the metrical grid — a one-bar cluster is a bar, not the first
 // bar's worth of notes wherever they happen to start. A window with nothing in
 // it is not a cluster at all, so silence is skipped rather than sat through.
+//
+// The last one is the whole section, played the same three ways. Learning a
+// passage a bar at a time and never once playing it through is how people end
+// up able to play every bar of something and not the thing itself — the joins
+// are the hard part, and nothing before this pass has asked for them.
 function buildClusters() {
   const size = clusterMs();
   if (!size || !groups.length) return [];
@@ -109,7 +114,23 @@ function buildClusters() {
     out.push({ from, to, startMs: edge - size, endMs: edge });
     from = to + 1;
   }
+  // Only worth doing when the section was actually broken up; one cluster and
+  // the whole section are the same pass twice
+  if (out.length > 1) {
+    out.push({
+      from: 0,
+      to: groups.length - 1,
+      startMs: out[0].startMs,
+      endMs: out[out.length - 1].endMs,
+      whole: true,
+    });
+  }
   return out;
+}
+
+// How many of them are pieces of the section rather than the section itself
+function pieceCount() {
+  return clusters.filter(c => !c.whole).length;
 }
 
 function cluster() { return clusters[clusterIndex] || null; }
@@ -207,7 +228,8 @@ function announcePhase() {
   emit('learn:phase', {
     phase,
     cluster: clusterIndex,
-    clusters: clusters.length,
+    clusters: pieceCount(),
+    whole: Boolean(cluster() && cluster().whole),
     // Nothing may be shown while it is being played from memory — not the
     // falling notes and not the chord being spelled out at the top of them
     blind: phase === 'memory',
@@ -273,7 +295,7 @@ function beginGuided() {
 function beginMemory() {
   clearPrompt();
   phase = 'memory';
-  say('memory');
+  say(cluster().whole ? 'memoryWhole' : 'memory');
   announcePhase();
   stepMemory(cluster().from);
   playPrompt(groups[cluster().from]);
@@ -316,7 +338,7 @@ function finish(completed) {
   emit('learn:waiting', { pitches: [], done: index, total: groups.length, looping, pass, slips });
   if (completed) {
     emit('learn:pass', { pass, slips, clean: slips === 0, total: groups.length });
-    emit('learn:complete', { total: groups.length, passes: pass, looping });
+    emit('learn:complete', { total: groups.length, passes: pass, looping, clusters: pieceCount() });
   }
   // Already out of the mode when something else stopped us — saying so twice
   // would bounce back through the mode listener
@@ -397,7 +419,9 @@ function announce() {
     pass,
     slips,
     phase,
-    cluster: here ? { index: clusterIndex, total: clusters.length, from: here.from, to: here.to } : null,
+    cluster: here
+      ? { index: clusterIndex, total: pieceCount(), from: here.from, to: here.to, whole: Boolean(here.whole) }
+      : null,
   });
 }
 
