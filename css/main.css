@@ -646,6 +646,26 @@ select:focus { outline: 1px solid var(--accent); }
   50%, 100% { background: rgba(13, 13, 26, 0.72); }
 }
 
+/* What the memory pass is asking for, said across the middle of the window it
+   just emptied. Big, because the player is looking at their hands. */
+.learn-banner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 6;
+  pointer-events: none;
+  white-space: nowrap;
+  font-size: clamp(22px, 4.2vw, 44px);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--accent);
+  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.85);
+}
+.learn-banner.hidden { display: none; }
+.learn-banner.good   { color: var(--green); }
+.learn-banner.almost { color: var(--yellow); }
+
 .accuracy-gauge {
   position: absolute;
   top: 42px;
@@ -666,10 +686,11 @@ select:focus { outline: 1px solid var(--accent); }
 .accuracy-gauge.hidden { display: none; }
 
 /* Learn mode: how far through, and what the piece is waiting for */
+/* Clear of the Start loop button, which shares this corner */
 .learn-status {
   position: absolute;
-  top: 10px;
-  left: 10px;
+  top: 8px;
+  left: 116px;
   display: flex;
   align-items: center;
   gap: 10px;
