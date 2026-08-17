@@ -41,6 +41,7 @@ const SETTINGS = {
   'ui.quantize': oneOf(1, 2, 4, 8, 16, 32),
   'ui.transpose': wholeRange(-12, 12),
   'ui.learnSectionBars': oneOf(0, 2, 4, 8),
+  'ui.learnCluster': oneOf('off', 'halfBeat', 'beat', 'twoBeats', 'bar', 'twoBars'),
   'ui.recordHand': oneOf('auto', 'left', 'right'),
   'ui.practiceHand': oneOf('both', 'left', 'right'),
   'transport.loopEnabled': bool,

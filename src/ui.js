@@ -2,8 +2,8 @@
 import { state, update, emit, on } from './state.js';
 import { record, play, stop, stopAndRewind, startCountIn, playRange, seekTo, seekToStart, seekToEnd, clearAllNotes, transposeNotes, transposeAll, setNotesHand, applyLegato, deleteNotes, changeTempo, getCompositionDuration } from './transport.js';
 import { renderSheet, initSheet, getChordOverlayData, getStaveGeometry, movePlayhead, markLoopRange } from './sheet.js';
-import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWaitingPitches, fallingMsPerPixel } from './pianoroll.js';
-import { startLearn, stopLearn } from './learn.js';
+import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWaitingPitches, setFallingBlind, fallingMsPerPixel } from './pianoroll.js';
+import { startLearn, stopLearn, CLUSTERS } from './learn.js';
 import {
   startSectionWalk, stopSectionWalk, repeatSection, advanceSection,
   handOverForTraining, isWalking,
@@ -118,8 +118,13 @@ export function initUI() {
       : `Learn mode — ${total} note${total === 1 ? '' : 's'} to play`, 2000);
   });
   on('learn:waiting', (info) => {
-    if (info.pitches.length) updateLearnStatus(info);
+    if (info.pitches.length || info.phase === 'memory' || info.phase === 'listen') updateLearnStatus(info);
     else setWaitingPitches([]);
+  });
+  // The memory pass shows nothing, so the window has to be told to show nothing
+  on('learn:phase', ({ phase, blind, cluster, clusters }) => {
+    setFallingBlind(blind);
+    setLearnPhase(clusters ? `${CLUSTER_PHASE[phase] || ''} · cluster ${cluster + 1}/${clusters}` : '');
   });
   on('learn:hit', ({ pitch }) => spawnKeyEffect(pitch, 'good'));
   on('learn:wrong', ({ pitch }) => spawnKeyEffect(pitch, 'wrong'));
@@ -160,6 +165,7 @@ function applyStateToControls() {
   document.getElementById('learn-sections').value = String(ui.learnSectionBars);
   syncRecordHand();
   syncPracticeHand();
+  document.getElementById('learn-cluster').value = ui.learnCluster;
   document.getElementById('legato-toggle').checked = ui.stepLegato;
 
   applyMuteUI(ui.muted);
@@ -430,6 +436,17 @@ function syncPracticeHand() {
 function cyclePracticeHand() {
   const next = PRACTICE_CYCLE[(PRACTICE_CYCLE.indexOf(state.ui.practiceHand) + 1) % PRACTICE_CYCLE.length];
   setPracticeHand(next);
+}
+
+// How much learn mode takes at once. Remembered like every other option, so
+// the way somebody has settled on learning is the way the next song starts.
+function setLearnCluster(value) {
+  const choice = CLUSTERS[value] ? value : 'off';
+  update('ui.learnCluster', choice);
+  document.getElementById('learn-cluster').value = choice;
+  showToast(choice === 'off'
+    ? 'Learn one note at a time'
+    : `Learn in ${CLUSTERS[choice].name.toLowerCase().replace(' clusters', '-long clusters')}`, 1800);
 }
 
 function assignSelectedHand(hand) {
@@ -948,12 +965,21 @@ function showLearnStatus(visible) {
   if (!visible) setWaitingPitches([]);
 }
 
-function updateLearnStatus({ pitches, done, total, looping, pass, slips }) {
+// What each pass of a cluster is called, and what it asks of the player
+const CLUSTER_PHASE = { listen: 'Listen', guided: 'Follow it', memory: 'From memory' };
+const CLUSTER_HINT = {
+  listen: 'Listen to the cluster',
+  memory: 'Now play the cluster again from memory',
+};
+
+function updateLearnStatus({ pitches, done, total, looping, pass, slips, phase, cluster }) {
   setWaitingPitches(pitches);
-  document.getElementById('learn-count').textContent = `${done + 1} / ${total}`;
-  document.getElementById('learn-hint').textContent = pitches.length === 1
+  document.getElementById('learn-count').textContent = cluster
+    ? `${done - cluster.from + 1} / ${cluster.to - cluster.from + 1}`
+    : `${done + 1} / ${total}`;
+  document.getElementById('learn-hint').textContent = CLUSTER_HINT[phase] || (pitches.length === 1
     ? 'Play the highlighted key'
-    : `Play the ${pitches.length} highlighted keys together`;
+    : `Play the ${pitches.length} highlighted keys together`);
 
   const passEl = document.getElementById('learn-pass');
   passEl.classList.toggle('hidden', !looping);
@@ -1319,6 +1345,7 @@ function bindToolbar() {
 
   document.getElementById('record-hand').onchange = (e) => setRecordHand(e.target.value);
   document.getElementById('practice-hand').onchange = (e) => setPracticeHand(e.target.value);
+  document.getElementById('learn-cluster').onchange = (e) => setLearnCluster(e.target.value);
   document.getElementById('btn-mute').onclick = toggleMute;
   applyMuteUI(state.ui.muted);
   document.getElementById('volume-slider').oninput = (e) => setVolume(e.target.value);

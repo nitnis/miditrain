@@ -180,6 +180,17 @@ export function setWaitingPitches(pitches) {
   waitingPitches = new Set(pitches || []);
 }
 
+// ── Blind ────────────────────────────────────────────────────────────────────
+// Learn mode's memory pass asks for a phrase back without showing it, so the
+// window keeps its keyboard and its beat and gives away nothing else: no
+// falling notes, and no chord named at the top of them either.
+
+let blind = false;
+
+export function setFallingBlind(hidden) {
+  blind = Boolean(hidden);
+}
+
 const WAIT_COLOR = '#f5b301';
 
 function drawWaitingKey(ctx, key, pulse) {
@@ -355,7 +366,7 @@ export function drawFallingNotes(notes, composition, currentTimeMs, accuracyResu
 
   const dimOthers = (state.ui.trainMode || state.ui.learnMode) && practiceHand() !== 'both';
 
-  const visibleNotes = notes.filter(n =>
+  const visibleNotes = blind ? [] : notes.filter(n =>
     n.startTime < windowEnd && (n.startTime + n.duration) > windowStart
   );
 
@@ -479,7 +490,7 @@ function resetChordLabel() {
 }
 
 function drawChordName(notes, composition, currentTimeMs, cw, ch) {
-  if (!state.ui.showChordOverlay) return;
+  if (!state.ui.showChordOverlay || blind) return;
   const label = currentChordLabel(notes, currentTimeMs, composition.keySignature);
   if (!label) return;
 
