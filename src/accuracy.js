@@ -17,6 +17,12 @@ const GRADE_CREDIT = { perfect: 1, good: 1, almost: 0.5, miss: 0 };
 // one that hit nothing it shouldn't have. Each extra costs a flat slice.
 export const EXTRA_PENALTY_PCT = 3;
 
+// How near an unplayed note a stray keypress has to be to have been played
+// instead of it. A beat is the unit at which "instead of" means anything —
+// never tighter than the grading window itself, and never so loose that a slow
+// tempo excuses a keypress a second and a half from anything.
+const SUBSTITUTION_MAX_MS = 1000;
+
 function scoreFor(credit, divisor, extras) {
   const earned = divisor ? (credit / divisor) * 100 : 100;
   return Math.max(0, Math.round(earned - extras * EXTRA_PENALTY_PCT));
@@ -26,6 +32,7 @@ let expectedNotes = []; // { id, pitch, startTimeMs, durationMs, grade, latencyM
 let playedNotes = [];   // { pitch, time, matched }
 let cleanupFns = [];
 let sessionRange = null; // { startMs, endMs } when training a section
+let sessionBeatMs = 500; // the beat this run was played at
 
 export function startAccuracy(composition, range = null) {
   const { tempo, timeSignature } = composition;
@@ -33,6 +40,7 @@ export function startAccuracy(composition, range = null) {
   const beatMs = (60 / tempo) * 1000;
 
   sessionRange = range;
+  sessionBeatMs = beatMs;
   // Practising one hand grades only that hand. The other one still sounds
   // through playback, which is the point — you play your part against it.
   const practised = new Set(composition.notes.filter(isPractised).map(n => n.id));
@@ -104,10 +112,43 @@ function checkHit(pitch, time, playedNote) {
   emitProgress();
 }
 
+// ── Extras ───────────────────────────────────────────────────────────────────
+// A wrong note and the note it replaced are one mistake, not two. Playing D
+// where C was written leaves C ungraded — a miss, worth nothing — and the D
+// unmatched; charging the D as an extra on top bills the same slip twice, and
+// a run played consistently late was billed twice on every single note.
+//
+// So a stray keypress with an unplayed note near it is a substitution, already
+// paid for by that miss. Only the keypresses with nothing missing near them are
+// extras: the notes genuinely played on top of the ones that were wanted.
+//
+// Recomputed from the current grades every time rather than decided once, so a
+// stray note temporarily excused by a note not yet played goes back to being an
+// extra the moment that note is played properly.
+function countExtras() {
+  const window = Math.max(ALMOST_MS, Math.min(SUBSTITUTION_MAX_MS, sessionBeatMs));
+  const unplayed = expectedNotes
+    .filter(n => n.grade === null || n.grade === 'miss')
+    .map(n => ({ at: n.startTimeMs, taken: false }));
+
+  // Earliest unclaimed rather than nearest. Both are in time order, and taking
+  // the nearest lets each keypress claim the note in front of it, shunting the
+  // whole run along by one and leaving the last keypress with nothing — which
+  // is how a run played uniformly late still came out with an extra on it.
+  let extras = 0;
+  for (const played of playedNotes) {
+    if (played.matched) continue;
+    const stoodInFor = unplayed.find(c => !c.taken && Math.abs(c.at - played.time) <= window);
+    if (stoodInFor) stoodInFor.taken = true;
+    else extras += 1;
+  }
+  return extras;
+}
+
 // Running score, for the live gauge
 function emitProgress() {
   const graded = expectedNotes.filter(n => n.grade !== null);
-  const wrong = playedNotes.filter(n => !n.matched).length;
+  const wrong = countExtras();
   const credit = graded.reduce((sum, n) => sum + GRADE_CREDIT[n.grade], 0);
 
   emit('accuracy:progress', {
@@ -147,7 +188,7 @@ function computeResults() {
   const good = countGrade('good');
   const almost = countGrade('almost');
   const missed = countGrade('miss');
-  const extra = playedNotes.filter(n => !n.matched).length;
+  const extra = countExtras();
 
   const latencies = expectedNotes.filter(n => n.latencyMs !== null).map(n => Math.abs(n.latencyMs));
   const avgLatencyMs = latencies.length
