@@ -121,6 +121,8 @@ export function initUI() {
     if (info.pitches.length || info.phase === 'memory' || info.phase === 'listen') updateLearnStatus(info);
     else setWaitingPitches([]);
   });
+  // learn.js says what happened; the wording is this layer's business
+  on('learn:say', ({ tone }) => showLearnBanner(tone));
   // The memory pass shows nothing, so the window has to be told to show nothing
   on('learn:phase', ({ phase, blind, cluster, clusters }) => {
     setFallingBlind(blind);
@@ -963,6 +965,23 @@ function trainCurrentSection() {
 function showLearnStatus(visible) {
   document.getElementById('learn-status').classList.toggle('hidden', !visible);
   if (!visible) setWaitingPitches([]);
+}
+
+// Said large across the middle of the falling window, where somebody looking
+// at their hands will still catch it
+const BANNER = {
+  memory: 'Now try from memory',
+  good: 'Good job!',
+  almost: 'Almost…',
+};
+
+function showLearnBanner(tone) {
+  const el = document.getElementById('learn-banner');
+  const text = BANNER[tone];
+  el.classList.toggle('hidden', !text);
+  el.classList.toggle('good', tone === 'good');
+  el.classList.toggle('almost', tone === 'almost');
+  el.textContent = text || '';
 }
 
 // What each pass of a cluster is called, and what it asks of the player

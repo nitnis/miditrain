@@ -78,6 +78,12 @@ let clusters = [];      // [{ from, to, startMs, endMs }] — indices into group
 let clusterIndex = 0;
 let phase = 'walk';     // walk | listen | guided | memory
 let listenAt = 0;       // the next group the listen pass has still to sound
+let hinting = false;    // the memory pass is showing where to start
+let holding = null;     // a message being read; input waits for it
+
+// Long enough to read and to land, short enough not to be in the way
+const GOOD_MS = 1000;
+const ALMOST_MS = 1000;
 
 export function clusterMs() {
   const choice = CLUSTERS[state.ui.learnCluster];
@@ -186,6 +192,17 @@ export function startLearn(bars = null) {
 
 // ── The three passes ─────────────────────────────────────────────────────────
 
+// The banner over the falling window. learn.js says what happened; the words
+// are the interface's business.
+function say(tone) {
+  emit('learn:say', { tone: tone || null });
+}
+
+function hold(ms, then) {
+  clearTimeout(holding);
+  holding = setTimeout(() => { holding = null; then(); }, ms);
+}
+
 function announcePhase() {
   emit('learn:phase', {
     phase,
@@ -199,10 +216,14 @@ function announcePhase() {
 
 function beginCluster(k) {
   clearPrompt();
+  clearTimeout(holding);
+  holding = null;
   if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
   clusterIndex = k;
   if (k >= clusters.length) { finish(true); return; }
 
+  say(null);
+  hinting = false;
   phase = 'listen';
   listenAt = clusters[k].from;
   index = clusters[k].from;
@@ -246,16 +267,21 @@ function beginGuided() {
   goTo(cluster().from);
 }
 
-// Now without the guide
+// Now without the guide — except for where to start. A phrase you cannot find
+// the first note of is not a memory test, it is a guessing game, so the opening
+// note or chord is lit and sounded once and everything after it is on you.
 function beginMemory() {
   clearPrompt();
   phase = 'memory';
+  say('memory');
   announcePhase();
   stepMemory(cluster().from);
+  playPrompt(groups[cluster().from]);
 }
 
 function stepMemory(i) {
   index = i;
+  hinting = i === cluster().from;
   struck.clear();
   pending = new Set(groups[i].pitches);
   announce();
@@ -278,6 +304,10 @@ function releaseListeners() {
 function finish(completed) {
   if (rafId !== null) cancelAnimationFrame(rafId);
   rafId = null;
+  clearTimeout(holding);
+  holding = null;
+  hinting = false;
+  say(null);
   clearPrompt();
   releaseListeners();
   pending.clear();
@@ -360,7 +390,7 @@ function announce() {
   emit('learn:waiting', {
     // Nothing is highlighted while it is being played from memory, and nothing
     // is highlighted while the cluster is playing itself either
-    pitches: phase === 'memory' || phase === 'listen' ? [] : [...pending],
+    pitches: phase === 'listen' || (phase === 'memory' && !hinting) ? [] : [...pending],
     done: index,
     total: groups.length,
     looping,
@@ -393,16 +423,25 @@ function clearPrompt() {
 }
 
 function handleNoteOn({ pitch }) {
-  // Input counts only at the wait, never while the notes are still falling
-  if (state.transport.mode !== 'learning' || rafId !== null) return;
+  // Input counts only at the wait, never while the notes are still falling and
+  // never while a message is still being read
+  if (state.transport.mode !== 'learning' || rafId !== null || holding) return;
   if (!groups[index]) return;
 
   if (!groups[index].pitches.has(pitch)) {
     slips += 1;
     emit('learn:wrong', { pitch, slips });
     // A wrong note from memory means it is not learned yet, so the cluster
-    // goes back to being played to you
-    if (phase === 'memory') { beginCluster(clusterIndex); return; }
+    // goes back to being played to you — after long enough to read why
+    if (phase === 'memory') {
+      clearPrompt();
+      hinting = false;
+      announce();
+      say('almost');
+      const k = clusterIndex;
+      hold(ALMOST_MS, () => beginCluster(k));
+      return;
+    }
     if (looping) announce();
     return;
   }
@@ -419,14 +458,22 @@ function handleNoteOn({ pitch }) {
 
 function advance() {
   if (phase !== 'memory') { goTo(index + 1); return; }
-  if (index >= cluster().to) { beginCluster(clusterIndex + 1); return; }
+  if (index >= cluster().to) {
+    clearPrompt();
+    pending.clear();
+    announce();
+    say('good');
+    const next = clusterIndex + 1;
+    hold(GOOD_MS, () => beginCluster(next));
+    return;
+  }
   stepMemory(index + 1);
 }
 
 // Letting go of part of a chord un-plays it, so the highlight comes back and
 // the step waits again rather than banking the notes already pressed
 function handleNoteOff({ pitch }) {
-  if (state.transport.mode !== 'learning' || rafId !== null) return;
+  if (state.transport.mode !== 'learning' || rafId !== null || holding) return;
   if (!groups[index]) return;
   if (!struck.delete(pitch)) return;
   refreshPending();
