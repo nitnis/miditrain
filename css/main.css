@@ -535,6 +535,37 @@ select:focus { outline: 1px solid var(--accent); }
   pointer-events: none;
   z-index: 3;
 }
+/* Grab either end of the stroke to widen or narrow it. Solid rather than
+   blended, because a handle is a control and not a mark on the paper. */
+.sheet-loop-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: auto;
+  cursor: ew-resize;
+  z-index: 4;
+  border-radius: 4px;
+  background:
+    linear-gradient(180deg, rgba(255, 214, 51, 0.16), rgba(255, 214, 51, 0.16))
+      no-repeat center / 3px 100%,
+    transparent;
+  touch-action: none;
+}
+.sheet-loop-handle::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 9px;
+  height: 34px;
+  border-radius: 5px;
+  background: rgba(255, 214, 51, 0.9);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
+}
+.sheet-loop-handle:hover::before,
+.sheet-loop-handle.dragging::before { background: #ffe27a; }
+
 .sheet-loop-band {
   position: absolute;
   top: 0;

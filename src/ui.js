@@ -1,7 +1,7 @@
 // UI updates: DOM manipulation, modals, controls
 import { state, update, emit, on } from './state.js';
 import { record, play, stop, stopAndRewind, startCountIn, playRange, seekTo, seekToStart, seekToEnd, clearAllNotes, transposeNotes, transposeAll, setNotesHand, applyLegato, deleteNotes, changeTempo, getCompositionDuration } from './transport.js';
-import { renderSheet, initSheet, getChordOverlayData, getStaveGeometry, movePlayhead, markLoopRange } from './sheet.js';
+import { renderSheet, initSheet, getChordOverlayData, getStaveGeometry, movePlayhead, markLoopRange, barAtPoint } from './sheet.js';
 import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWaitingPitches, setFallingBlind, setLoopPick, noteAtFallingPoint, fallingMsPerPixel } from './pianoroll.js';
 import { startLearn, stopLearn, CLUSTERS } from './learn.js';
 import {
@@ -59,6 +59,7 @@ export function initUI() {
   bindStaffHint();
   bindPianoResizer();
   bindFallingScrub();
+  bindLoopHandles();
   bindShortcutsPanel();
   bindSectionWalk();
   bindProfiles();
@@ -96,7 +97,7 @@ export function initUI() {
   // However the loop range is set — the fields, the checkbox, a click on the
   // falling notes, a restored session — the marking on the score follows it
   for (const path of ['loopEnabled', 'loopStartBar', 'loopEndBar']) {
-    on(`change:transport.${path}`, () => { refreshLoopMarker(); syncLoopPickButton(); });
+    on(`change:transport.${path}`, () => { refreshLoopMarker(); syncLoopControls(); });
   }
   on('change:midi.connected', ({ value }) => updateMidiStatus(value));
   on('change:midi.inputs', ({ value }) => updateMidiInputsList(value));
@@ -1595,6 +1596,49 @@ function pickNoteForLoop(x, y) {
   endPicking();
   syncLoopControls();
   showToast(`${rangeName()} bars ${startBar}–${endBar}`, 2000);
+}
+
+// ── Dragging the loop's edges ────────────────────────────────────────────────
+// The handles are rebuilt every time the range moves, so the listeners live on
+// the scrolling container and find them by class rather than being attached to
+// elements that will not survive the next redraw.
+
+function bindLoopHandles() {
+  const box = document.getElementById('sheet-container');
+  let edge = null;
+
+  box.addEventListener('pointerdown', (e) => {
+    const handle = e.target.closest && e.target.closest('.sheet-loop-handle');
+    if (!handle) return;
+    edge = handle.dataset.edge;
+    handle.classList.add('dragging');
+    // Captured on the container rather than the handle: the handle is redrawn
+    // the moment the range moves, and a capture on it would go with it
+    box.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+
+  box.addEventListener('pointermove', (e) => {
+    if (!edge) return;
+    const bar = barAtPoint(e.clientX, e.clientY);
+    if (!bar) return;
+    const { loopStartBar, loopEndBar } = state.transport;
+    // Bars are the unit, so this snaps on its own; the ends cannot cross
+    const path = edge === 'start' ? 'transport.loopStartBar' : 'transport.loopEndBar';
+    const want = edge === 'start' ? Math.min(bar, loopEndBar) : Math.max(bar, loopStartBar);
+    // Every change redraws the bands, and a pointer moving within one bar has
+    // nothing to redraw
+    if (want !== state.transport[edge === 'start' ? 'loopStartBar' : 'loopEndBar']) update(path, want);
+  });
+
+  const release = (e) => {
+    if (!edge) return;
+    edge = null;
+    if (box.hasPointerCapture(e.pointerId)) box.releasePointerCapture(e.pointerId);
+    showToast(`${rangeName()} bars ${state.transport.loopStartBar}–${state.transport.loopEndBar}`, 1600);
+  };
+  box.addEventListener('pointerup', release);
+  box.addEventListener('pointercancel', release);
 }
 
 function syncLoopControls() {

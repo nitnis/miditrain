@@ -308,19 +308,73 @@ export function markLoopRange(startBar, endBar) {
   // One band per bar. Bars on the same system abut exactly, so they read as a
   // single stroke; a range that wraps to the next system breaks where the
   // music does, which is what a pen would have done too.
+  let first = null;
+  let last = null;
   for (let measure = startBar - 1; measure <= endBar - 1; measure++) {
     const treble = _staveGeom.find(g => g.measure === measure && g.clef === 'treble');
     const bass = _staveGeom.find(g => g.measure === measure && g.clef === 'bass');
     if (!treble || !bass) continue;
     const top = treble.y - 8;
+    const height = (bass.y + 95) - top;
     const band = document.createElement('div');
     band.className = 'sheet-loop-band';
     band.style.transform =
       `translate(${treble.x + container.offsetLeft}px, ${top + container.offsetTop}px)`;
     band.style.width = `${treble.w}px`;
-    band.style.height = `${(bass.y + 95) - top}px`;
+    band.style.height = `${height}px`;
     loopLayer.appendChild(band);
+    const box = { x: treble.x, right: treble.x + treble.w, top, height };
+    if (!first) first = box;
+    last = box;
   }
+
+  // A stroke you can take hold of by either end. The range is the thing being
+  // worked on and the score is where it means something, so it is adjusted
+  // there rather than only in two number fields at the top of the window.
+  if (first) addLoopHandle('start', first.x, first.top, first.height);
+  if (last) addLoopHandle('end', last.right, last.top, last.height);
+}
+
+const HANDLE_W = 12;
+
+function addLoopHandle(edge, x, top, height) {
+  const handle = document.createElement('div');
+  handle.className = 'sheet-loop-handle';
+  handle.id = `loop-handle-${edge}`;
+  handle.dataset.edge = edge;
+  handle.title = edge === 'start' ? 'Drag to move the start of the loop' : 'Drag to move the end of the loop';
+  handle.style.transform =
+    `translate(${x - HANDLE_W / 2 + container.offsetLeft}px, ${top + container.offsetTop}px)`;
+  handle.style.width = `${HANDLE_W}px`;
+  handle.style.height = `${height}px`;
+  loopLayer.appendChild(handle);
+}
+
+// Which bar a point on the page is over, 1-based. The nearest one rather than
+// only a direct hit, so dragging an edge past the end of a system still lands
+// somewhere sensible instead of stalling.
+export function barAtPoint(clientX, clientY) {
+  if (!container || !_staveGeom.length) return null;
+  const scroller = container.parentElement;
+  const box = scroller.getBoundingClientRect();
+  const px = clientX - box.left + scroller.scrollLeft - container.offsetLeft;
+  const py = clientY - box.top + scroller.scrollTop - container.offsetTop;
+
+  let best = null;
+  let bestScore = Infinity;
+  for (const g of _staveGeom) {
+    if (g.clef !== 'treble') continue;
+    const bass = _staveGeom.find(o => o.measure === g.measure && o.clef === 'bass');
+    const top = g.y - 8;
+    const bottom = (bass ? bass.y : g.y) + 95;
+    const dy = py < top ? top - py : (py > bottom ? py - bottom : 0);
+    const dx = px < g.x ? g.x - px : (px > g.x + g.w ? px - (g.x + g.w) : 0);
+    // Which system the pointer is on settles it before which bar across it —
+    // otherwise a drag drifting vertically snaps to the wrong line of music
+    const score = dy * 1000 + dx;
+    if (score < bestScore) { bestScore = score; best = g; }
+  }
+  return best ? best.measure + 1 : null;
 }
 
 // ── Slurs ────────────────────────────────────────────────────────────────────
