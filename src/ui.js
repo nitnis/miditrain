@@ -124,9 +124,11 @@ export function initUI() {
   // learn.js says what happened; the wording is this layer's business
   on('learn:say', ({ tone }) => showLearnBanner(tone));
   // The memory pass shows nothing, so the window has to be told to show nothing
-  on('learn:phase', ({ phase, blind, cluster, clusters }) => {
+  on('learn:phase', ({ phase, blind, cluster, clusters, whole }) => {
     setFallingBlind(blind);
-    setLearnPhase(clusters ? `${CLUSTER_PHASE[phase] || ''} · cluster ${cluster + 1}/${clusters}` : '');
+    if (!clusters) { setLearnPhase(''); return; }
+    const which = whole ? 'the whole section' : `cluster ${cluster + 1}/${clusters}`;
+    setLearnPhase(`${CLUSTER_PHASE[phase] || ''} · ${which}`);
   });
   on('learn:hit', ({ pitch }) => spawnKeyEffect(pitch, 'good'));
   on('learn:wrong', ({ pitch }) => spawnKeyEffect(pitch, 'wrong'));
@@ -136,7 +138,8 @@ export function initUI() {
     if (clean) return;
     showToast(`${slips} slip${slips === 1 ? '' : 's'} on pass ${pass} — from the top`, 1800);
   });
-  on('learn:complete', ({ total, passes, looping }) => {
+  on('learn:complete', ({ total, passes, looping, clusters }) => {
+    learnedInClusters = Boolean(clusters);
     showToast(looping
       ? `Clean pass — ${total} played in ${passes} attempt${passes === 1 ? '' : 's'}`
       : `Learn complete — ${total} played`, 2400);
@@ -882,6 +885,19 @@ function setLearnPhase(text) {
   el.textContent = text || '';
 }
 
+// Which button the section-end choice lands on, and which key Space follows
+let learnedInClusters = false;
+
+function setSectionDefault(which) {
+  const again = document.getElementById('btn-section-again');
+  const next = document.getElementById('btn-section-next');
+  again.classList.toggle('primary', which === 'again');
+  next.classList.toggle('primary', which === 'next');
+  // The key hint moves with the default, so the label never lies about it
+  again.querySelector('.kbd-hint').textContent = which === 'again' ? 'Space' : 'A';
+  next.querySelector('.kbd-hint').textContent = which === 'next' ? 'Space' : 'N';
+}
+
 function barsLabel({ startBar, endBar }) {
   return startBar === endBar ? `bar ${startBar}` : `bars ${startBar}–${endBar}`;
 }
@@ -911,6 +927,10 @@ function bindSectionWalk() {
   on('sections:done', (s) => {
     setLearnPhase('');
     showLearnStatus(false);
+    // Learning it again is the default when the section was walked note by
+    // note. In clusters it has just been played through whole from memory, so
+    // going on is what somebody is reaching for.
+    setSectionDefault(learnedInClusters ? 'next' : 'again');
     document.getElementById('section-title').textContent =
       `${barsLabel(s).replace(/^b/, 'B')} done`;
     document.getElementById('section-sub').textContent = s.last
@@ -971,6 +991,7 @@ function showLearnStatus(visible) {
 // at their hands will still catch it
 const BANNER = {
   memory: 'Now try from memory',
+  memoryWhole: 'Now the whole section from memory',
   good: 'Good job!',
   almost: 'Almost…',
 };
@@ -1732,12 +1753,18 @@ function shortcutActions() {
 
   return [
     // While the end-of-section choice is up these shadow the global keys, the
-    // same way Space retries while the results are showing
-    // Going again is the default: a section you have just stumbled through is
-    // more likely to want repeating than leaving behind
+    // same way Space retries while the results are showing.
+    //
+    // Space takes whichever choice is highlighted, and which that is depends on
+    // how the section was learned: note by note it is worth going again, but a
+    // section just played through whole from memory is finished with.
+    { id: 'section-default', group: 'sections', scope: sectionUp,
+      section: 'Training', label: 'Take the highlighted choice',
+      defaultBindings: [{ code: 'Space' }, { code: 'Enter' }],
+      run: () => (learnedInClusters ? advanceSection() : repeatSection()) },
     { id: 'section-again', group: 'sections', scope: sectionUp, hint: 'btn-section-again',
       section: 'Training', label: 'Learn this section again',
-      defaultBindings: [{ code: 'Space' }, { code: 'Enter' }, { code: 'KeyR' }],
+      defaultBindings: [{ code: 'KeyA' }, { code: 'KeyR' }],
       run: () => repeatSection() },
     { id: 'section-train', group: 'sections', scope: sectionUp, hint: 'btn-section-train',
       section: 'Training', label: 'Train over this section',
