@@ -2,7 +2,7 @@
 import { state, update, emit, on } from './state.js';
 import { record, play, stop, stopAndRewind, startCountIn, playRange, seekTo, seekToStart, seekToEnd, clearAllNotes, transposeNotes, transposeAll, setNotesHand, applyLegato, deleteNotes, changeTempo, getCompositionDuration } from './transport.js';
 import { renderSheet, initSheet, getChordOverlayData, getStaveGeometry, movePlayhead, markLoopRange } from './sheet.js';
-import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWaitingPitches, setFallingBlind, fallingMsPerPixel } from './pianoroll.js';
+import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWaitingPitches, setFallingBlind, setLoopPick, noteAtFallingPoint, fallingMsPerPixel } from './pianoroll.js';
 import { startLearn, stopLearn, CLUSTERS } from './learn.js';
 import {
   startSectionWalk, stopSectionWalk, repeatSection, advanceSection,
@@ -96,7 +96,7 @@ export function initUI() {
   // However the loop range is set — the fields, the checkbox, a click on the
   // falling notes, a restored session — the marking on the score follows it
   for (const path of ['loopEnabled', 'loopStartBar', 'loopEndBar']) {
-    on(`change:transport.${path}`, refreshLoopMarker);
+    on(`change:transport.${path}`, () => { refreshLoopMarker(); syncLoopPickButton(); });
   }
   on('change:midi.connected', ({ value }) => updateMidiStatus(value));
   on('change:midi.inputs', ({ value }) => updateMidiInputsList(value));
@@ -1425,9 +1425,10 @@ function bindLoopControls() {
 }
 
 // ── The falling window as a control surface ──────────────────────────────────
-// Scroll it to move through the piece, click it to mark out a stretch of bars.
-// Between them that is the whole "find the hard four bars and drill them" loop
-// without touching a number field.
+// Scroll it to move through the piece, and — once Start loop has been pressed
+// — point at the notes a passage runs between. Between them that is the whole
+// "find the hard four bars and drill them" loop without touching a number
+// field, and it takes a button press first so that no stray click can do it.
 
 // Modes that are driving the playhead themselves; scrubbing would be pulling
 // against them
@@ -1442,6 +1443,8 @@ function wheelPixels(e, viewportH) {
 
 function bindFallingScrub() {
   const canvas = document.getElementById('falling-canvas');
+  loopPickButton().onclick = toggleLoopPicking;
+  syncLoopPickButton();
   let pending = 0;
   let frame = null;
 
@@ -1465,12 +1468,22 @@ function bindFallingScrub() {
     if (!frame) frame = requestAnimationFrame(apply);
   }, { passive: false });
 
-  canvas.addEventListener('click', () => markRangeEdge());
+  canvas.addEventListener('click', (e) => {
+    // Only while a loop is being marked. A bare click used to set a range,
+    // which meant every stray click on the window set one.
+    if (!picking) return;
+    const box = canvas.getBoundingClientRect();
+    pickNoteForLoop(e.clientX - box.left, e.clientY - box.top);
+  });
 }
 
-// Which end the next click sets. Marking a start arms the end, so two clicks
-// either side of a passage are the whole gesture.
-let nextRangeEdge = 'start';
+// ── Marking a loop ───────────────────────────────────────────────────────────
+// Point at the note the passage starts on, scroll, point at the note it ends
+// on. Two deliberate acts with a button pressed first, rather than something a
+// misplaced click can do by accident.
+
+let picking = false;      // a selection is under way
+let firstPick = null;     // the note chosen as one end of it
 
 // What the range is for, which is whatever mode is armed. All three read the
 // same loop bars, so this only changes what the message calls it.
@@ -1480,32 +1493,75 @@ function rangeName() {
   return 'Loop';
 }
 
-function markRangeEdge() {
-  if (!state.composition.notes.length) return;
-  const { tempo, timeSignature } = state.composition;
-  const bar = barAtMs(state.transport.currentTime, tempo, timeSignature);
+function loopPickButton() { return document.getElementById('btn-loop-pick'); }
 
-  if (nextRangeEdge === 'start') {
-    update('transport.loopStartBar', bar);
-    // A start on its own is a one-bar range, so the state is always a range
-    // somebody could press Play on
-    update('transport.loopEndBar', Math.max(bar, state.transport.loopEndBar));
-    update('transport.loopEnabled', true);
-    nextRangeEdge = 'end';
-    showToast(`${rangeName()} from bar ${bar} — click again for the end`, 2200);
-  } else {
-    const startBar = state.transport.loopStartBar;
-    update('transport.loopEndBar', Math.max(startBar, bar));
-    nextRangeEdge = 'start';
-    showToast(`${rangeName()} bars ${startBar}–${Math.max(startBar, bar)}`, 2000);
+function syncLoopPickButton() {
+  const btn = loopPickButton();
+  btn.classList.toggle('picking', picking);
+  btn.classList.toggle('armed', !picking && state.transport.loopEnabled);
+  btn.textContent = picking
+    ? (firstPick ? 'Pick the last note' : 'Pick the first note')
+    : (state.transport.loopEnabled ? 'Cancel loop' : 'Start loop');
+}
+
+function toggleLoopPicking() {
+  // Pressing it while it is blinking abandons the selection, which is the way
+  // out of having started one by mistake
+  if (picking) { endPicking(); showToast('Loop selection cancelled', 1400); return; }
+  if (state.transport.loopEnabled) {
+    update('transport.loopEnabled', false);
+    syncLoopControls();
+    showToast('Loop off', 1200);
+    return;
   }
+  if (!state.composition.notes.length) { showToast('Nothing to loop yet', 1600); return; }
+  picking = true;
+  firstPick = null;
+  setLoopPick(null);
+  document.getElementById('falling-canvas').classList.add('picking');
+  syncLoopPickButton();
+  showToast('Click the note the passage starts on', 2400);
+}
+
+function endPicking() {
+  picking = false;
+  firstPick = null;
+  setLoopPick(null);
+  document.getElementById('falling-canvas').classList.remove('picking');
+  syncLoopPickButton();
+}
+
+function pickNoteForLoop(x, y) {
+  const note = noteAtFallingPoint(x, y, state.composition.notes, state.transport.currentTime);
+  if (!note) { showToast('Click one of the falling notes', 1600); return; }
+
+  const { tempo, timeSignature } = state.composition;
+  const bar = barAtMs(note.startTime, tempo, timeSignature);
+
+  if (!firstPick) {
+    firstPick = { note, bar };
+    setLoopPick(note.id);
+    syncLoopPickButton();
+    showToast(`From bar ${bar} — now the note it ends on`, 2400);
+    return;
+  }
+
+  // Picked back to front is still a range; the ends sort themselves out
+  const startBar = Math.min(firstPick.bar, bar);
+  const endBar = Math.max(firstPick.bar, bar);
+  update('transport.loopStartBar', startBar);
+  update('transport.loopEndBar', endBar);
+  update('transport.loopEnabled', true);
+  endPicking();
   syncLoopControls();
+  showToast(`${rangeName()} bars ${startBar}–${endBar}`, 2000);
 }
 
 function syncLoopControls() {
   document.getElementById('loop-start').value = String(state.transport.loopStartBar);
   document.getElementById('loop-end').value = String(state.transport.loopEndBar);
   updateLoopDisplay();
+  syncLoopPickButton();
 }
 
 // The looped bars, marked on the score. Only when the loop is on: an unused

@@ -191,7 +191,16 @@ export function setFallingBlind(hidden) {
   blind = Boolean(hidden);
 }
 
+// The note picked as one end of a loop, ringed so the choice is visible before
+// the other end is chosen
+let pickedNoteId = null;
+
+export function setLoopPick(noteId) {
+  pickedNoteId = noteId || null;
+}
+
 const WAIT_COLOR = '#f5b301';
+const LOOP_PICK_COLOR = '#ffd166';
 
 function drawWaitingKey(ctx, key, pulse) {
   ctx.save();
@@ -315,6 +324,33 @@ function getNoteColor(midi, alpha = 1) {
 
 const LOOKAHEAD_MS = 2500; // how many ms of notes are shown above the keyboard
 
+// Which note is under a point on the falling window. Picking the ends of a
+// loop means pointing at the music itself, so the hit test has to agree with
+// the drawing exactly — same lookahead, same key positions, same widths.
+export function noteAtFallingPoint(px, py, notes, currentTimeMs) {
+  if (!fallingCanvas || !keyLayout.length) return null;
+  const ch = fallingCanvas.height;
+  const pixelsPerMs = ch / LOOKAHEAD_MS;
+  let best = null;
+  for (const note of notes) {
+    const keyInfo = keyMap.get(note.pitch);
+    if (!keyInfo) continue;
+    const bottom = ch - (note.startTime - currentTimeMs) * pixelsPerMs;
+    const top = bottom - note.duration * pixelsPerMs;
+    if (py < top - HIT_SLOP || py > bottom + HIT_SLOP) continue;
+    const isBlack = !IS_WHITE[note.pitch % 12];
+    const fullW = Math.max(keyInfo.w - 2, 4);
+    const w = isBlack ? Math.max(4, fullW * BLACK_NOTE_WIDTH) : fullW;
+    const x = keyInfo.x + (fullW - w) / 2;
+    if (px < x - HIT_SLOP || px > x + w + HIT_SLOP) continue;
+    // Black keys are drawn over white ones, so they win where they overlap
+    if (!best || (isBlack && !best.black)) best = { note, black: isBlack };
+  }
+  return best ? best.note : null;
+}
+
+const HIT_SLOP = 3;   // a note is a few pixels wide; a fingertip is not
+
 // What a pixel of the falling window is worth in time. Scrubbing asks, so that
 // dragging the view moves the music by exactly as much as it was dragged
 // instead of by some second, invented rate.
@@ -413,6 +449,17 @@ export function drawFallingNotes(notes, composition, currentTimeMs, accuracyResu
     // Highlight top edge
     fallingCtx.fillStyle = 'rgba(255,255,255,0.3)';
     fallingCtx.fillRect(x + 2, visibleTop, Math.max(1, w - 4), 2);
+
+    if (note.id === pickedNoteId) {
+      fallingCtx.strokeStyle = LOOP_PICK_COLOR;
+      fallingCtx.lineWidth = 2;
+      fallingCtx.shadowColor = LOOP_PICK_COLOR;
+      fallingCtx.shadowBlur = 10;
+      fallingCtx.beginPath();
+      fallingCtx.roundRect(x - 1, visibleTop - 2, Math.max(4, w), noteH + 4, 4);
+      fallingCtx.stroke();
+      fallingCtx.shadowBlur = 0;
+    }
   }
   fallingCtx.globalAlpha = 1;
 

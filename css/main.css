@@ -614,11 +614,41 @@ select:focus { outline: 1px solid var(--accent); }
 }
 
 /* Live accuracy gauge, shown only while training */
-/* Left, because the crossing signal has the right-hand corner and a score
-   sitting on top of the beat helps nobody */
+/* Marking a loop. Top left, out of the crossing signal's corner, and below it
+   the gauge — which only appears while training, but the button is always
+   there and the two cannot share a corner. */
+.loop-pick-btn {
+  position: absolute;
+  top: 8px;
+  left: 10px;
+  z-index: 5;
+  height: 26px;
+  padding: 0 12px;
+  background: rgba(13, 13, 26, 0.72);
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  backdrop-filter: blur(3px);
+}
+.loop-pick-btn:hover { color: var(--accent); border-color: var(--accent); }
+/* Blinking says the window is waiting to be pointed at */
+.loop-pick-btn.picking {
+  color: #ffd166;
+  border-color: #ffd166;
+  animation: loop-pick-blink 1s steps(1, end) infinite;
+}
+.loop-pick-btn.armed { color: #ffd166; border-color: rgba(255, 209, 102, 0.5); }
+@keyframes loop-pick-blink {
+  0%, 49% { background: rgba(255, 209, 102, 0.22); }
+  50%, 100% { background: rgba(13, 13, 26, 0.72); }
+}
+
 .accuracy-gauge {
   position: absolute;
-  top: 10px;
+  top: 42px;
   left: 10px;
   bottom: 10px;
   width: 58px;
@@ -836,9 +866,11 @@ select:focus { outline: 1px solid var(--accent); }
   display: block;
   width: 100%;
   height: 100%;
-  /* Scroll it to move through the piece, click it to mark a range */
-  cursor: crosshair;
 }
+/* The crosshair belongs to picking the ends of a loop, not to the window at
+   large — the window is for scrolling through, and a pointer that always says
+   "click me" is what made stray clicks so easy */
+#falling-canvas.picking { cursor: crosshair; }
 
 #piano-keyboard-container {
   height: 90px;
