@@ -28,6 +28,7 @@ const _state = {
     trainMode: false,
     learnMode: false,       // wait at each note until it is played
     learnSectionBars: 0,    // 0 = learn the whole piece, otherwise section size
+    learnCluster: 'off',    // how much is learned at once: 'off' is note by note
     recordHand: 'auto',     // 'auto' | 'left' | 'right' — the hand new notes are written to
     practiceHand: 'both',   // 'both' | 'left' | 'right' — the hand train and learn work on
     metronomeEnabled: false,
