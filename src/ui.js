@@ -2,7 +2,7 @@
 import { state, update, emit, on } from './state.js';
 import { record, play, stop, stopAndRewind, startCountIn, playRange, seekTo, seekToStart, seekToEnd, clearAllNotes, transposeNotes, transposeAll, setNotesHand, applyLegato, deleteNotes, changeTempo, getCompositionDuration } from './transport.js';
 import { renderSheet, initSheet, getChordOverlayData, getStaveGeometry, movePlayhead, markLoopRange, barAtPoint } from './sheet.js';
-import { refreshSuggestions } from './autofinger.js';
+import { refreshSuggestions, hasSuggestions } from './autofinger.js';
 import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWaitingPitches, setFallingBlind, setLoopPick, noteAtFallingPoint, fallingMsPerPixel } from './pianoroll.js';
 import { startLearn, stopLearn, CLUSTERS } from './learn.js';
 import {
@@ -1226,7 +1226,21 @@ function toggleOverlay(which) {
   update(path, shown);
   document.getElementById(button).classList.toggle('active', shown);
   if (redrawsSheet) scheduleSheetRender();
+
+  // Switching a display on and seeing nothing appear reads as a broken switch,
+  // and there is no way to tell from the button — which is lit either way —
+  // that the piece simply has nothing to show. Say so, and say what would.
+  if (shown && which === 'fingering' && !fingeringAvailable()) {
+    showToast('Fingering on — this piece has none written. Turn on Suggest for an automated one.', 3000);
+    return;
+  }
   showToast(shown ? on : off, 1200);
+}
+
+// Whether there is any fingering to draw: one the piece carries, or one the
+// suggester has worked out
+function fingeringAvailable() {
+  return hasSuggestions() || state.composition.notes.some(n => n.finger);
 }
 
 // ── Suggested fingering ──────────────────────────────────────────────────────
