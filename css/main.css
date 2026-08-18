@@ -594,6 +594,9 @@ select:focus { outline: 1px solid var(--accent); }
 #vexflow-output svg text  { fill: #dde; }
 /* Chord label text keeps its own color (set as style attribute inline) */
 #vexflow-output svg text.chord-label { fill: #5bc0eb; }
+/* Fingering: its own colour so the row of digits reads as a separate layer
+   from the notes it belongs to, rather than as something on the staff */
+#vexflow-output svg g.vf-annotation text { fill: #9fb4ff; }
 
 /* ── PIANO SECTION ── */
 #piano-resizer {

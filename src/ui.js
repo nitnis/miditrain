@@ -1210,14 +1210,17 @@ function cycleSubdivision() {
 const OVERLAYS = {
   beat:      { path: 'ui.showBeatOverlay',  button: 'btn-beat-overlay',  on: 'Beat counter on',  off: 'Beat counter off' },
   chord:     { path: 'ui.showChordOverlay', button: 'btn-chord-overlay', on: 'Chord names on',   off: 'Chord names off' },
-  fingering: { path: 'ui.showFingering',    button: 'btn-fingering',     on: 'Fingering on',     off: 'Fingering off' },
+  // The falling notes are redrawn every frame and pick their overlays up for
+  // free; the score is drawn on demand and has to be asked again
+  fingering: { path: 'ui.showFingering',    button: 'btn-fingering',     on: 'Fingering on',     off: 'Fingering off', redrawsSheet: true },
 };
 
 function toggleOverlay(which) {
-  const { path, button, on, off } = OVERLAYS[which];
+  const { path, button, on, off, redrawsSheet } = OVERLAYS[which];
   const shown = !state.ui[path.split('.')[1]];
   update(path, shown);
   document.getElementById(button).classList.toggle('active', shown);
+  if (redrawsSheet) scheduleSheetRender();
   showToast(shown ? on : off, 1200);
 }
 
