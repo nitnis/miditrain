@@ -12,6 +12,7 @@
 // out of a scale. Direction decides whether it is walked up, down, or both.
 // Hands place the result on the keyboard.
 import { spellPitchClass } from './chords.js';
+import { fingersByRung } from './fingering.js';
 
 // ── What to play ─────────────────────────────────────────────────────────────
 // Semitones above the tonic, tonic excluded at the top — the ladder repeats it
@@ -186,10 +187,15 @@ export const ROOTS = NOTE_NAMES.map((name, pc) => ({ pc, name }));
 const LOWEST = 21;   // A0
 const HIGHEST = 108; // C8
 
-// The pitches of one pass, in playing order. The ladder is always built
-// upwards from `lowMidi`; going down is that same ladder read backwards.
+// One pass, in playing order. The ladder is always built upwards from
+// `lowMidi`; going down is that same ladder read backwards.
+//
+// Each note carries the rung it came from, because that is what the fingering
+// is attached to. A run in thirds jumps about the ladder, but every note keeps
+// the finger it has in the scale — which is the whole point of practising the
+// scale that way rather than as a new set of notes.
 function pass(lowMidi, steps, octaves, pattern, descending) {
-  const ladder = buildLadder(lowMidi, steps, octaves);
+  const ladder = buildLadder(lowMidi, steps, octaves).map((pitch, rung) => ({ pitch, rung }));
   const rungs = descending ? [...ladder].reverse() : ladder;
   const order = (PATTERNS[pattern] || PATTERNS.straight).indices(rungs.length);
   return order.map(i => rungs[i]);
@@ -217,7 +223,7 @@ function partFor(rootMidi, scale, octaves, pattern, direction, reversed) {
     const steps = descending && scale.down ? scale.down : scale.steps;
     const half = pass(lowMidi, steps, octaves, pattern, descending);
     // The turn is one note, not two
-    if (out.length && half.length && out[out.length - 1] === half[0]) half.shift();
+    if (out.length && half.length && out[out.length - 1].pitch === half[0].pitch) half.shift();
     out.push(...half);
   }
   return out;
@@ -258,8 +264,8 @@ export function keySignatureFor(rootPc, steps) {
 function fitToKeyboard(pitches) {
   if (!pitches.length) return 0;
   let shift = 0;
-  let lo = Math.min(...pitches);
-  let hi = Math.max(...pitches);
+  const lo = Math.min(...pitches);
+  const hi = Math.max(...pitches);
   while (lo + shift < LOWEST && hi + shift + 12 <= HIGHEST) shift += 12;
   while (hi + shift > HIGHEST && lo + shift - 12 >= LOWEST) shift -= 12;
   return shift;
@@ -317,14 +323,30 @@ export function buildExercise({
     if (map) for (const [pc, name] of map) if (!spellAs.has(pc)) spellAs.set(pc, name);
   }
 
+  // The fingering of a scale that changes on the way down is the fingering of
+  // its descending form, used both ways: a melodic minor is fingered as the
+  // natural minor it comes back as, and the raised sixth and seventh going up
+  // take whatever finger their degree already had.
+  const fingeredSteps = kind === 'arpeggio' ? turned.steps : (chosen.down || chosen.steps);
+
   const notes = [];
   let count = 0;
   for (const part of parts) {
-    const pitches = partFor(part.root, scale, octaves, pattern, direction, part.reversed);
-    const shift = fitToKeyboard(pitches);
-    pitches.forEach((pitch, i) => {
+    const played = partFor(part.root, scale, octaves, pattern, direction, part.reversed);
+    const shift = fitToKeyboard(played.map(p => p.pitch));
+    // Shifting the part by whole octaves to fit the keyboard cannot change the
+    // fingering, so this is asked once per part rather than once per note
+    const fingers = fingersByRung({
+      hand: part.hand,
+      kind,
+      rootPc: (((part.root % 12) + 12) % 12),
+      steps: fingeredSteps,
+      octaves,
+    });
+    played.forEach(({ pitch, rung }, i) => {
       const midi = pitch + shift;
       const spelling = spellAs.get(((midi % 12) + 12) % 12);
+      const finger = fingers ? fingers[rung] : null;
       notes.push({
         id: `gen-${part.hand}-${i}`,
         pitch: midi,
@@ -333,9 +355,10 @@ export function buildExercise({
         duration: noteMs,
         hand: part.hand,
         ...(spelling ? { spelling } : {}),
+        ...(finger ? { finger } : {}),
       });
     });
-    count = Math.max(count, pitches.length);
+    count = Math.max(count, played.length);
   }
 
   const rootName = spellPitchClass(rootPc, keySignature).name;

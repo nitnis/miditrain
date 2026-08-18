@@ -159,7 +159,79 @@ export function drawKeyboard(activeNotes = null) {
     }
   }
 
+  drawFingerings();
+
   if (effects.length) drawEffects(performance.now());
+}
+
+// ── Fingering ────────────────────────────────────────────────────────────────
+// Which finger to use, written on the key it belongs to. On the keyboard rather
+// than on the falling note, because the number is an instruction to the hand
+// and the hand is looking at the keys.
+//
+// Only the notes at the playhead — the ones being played or waited for. A
+// column of numbers stretching up the window would be the fingering of music
+// that has not arrived yet, which is exactly the reading-ahead that practising
+// a scale is meant to make unnecessary.
+
+const FINGER_ON_WHITE = '#1b3a5c';
+const FINGER_ON_BLACK = '#e8f2ff';
+const FINGER_HALO = 'rgba(255,255,255,0.9)';
+
+// Rebuilt each frame by drawFallingNotes, which runs first and already has both
+// the notes and the time to pick them out with
+let fingerByPitch = new Map();
+
+// How far ahead of the playhead a note still counts as "here". Learn mode holds
+// the transport a hair short of the note it is waiting on, so an exact test
+// would show nothing at the moment the number is most wanted.
+const FINGER_LEAD_MS = 120;
+
+function collectFingerings(notes, currentTimeMs) {
+  fingerByPitch = new Map();
+  // The memory pass is asking for the phrase back without showing it. A
+  // fingering on the keys would be the answer written out.
+  if (blind || !state.ui.showFingering) return;
+
+  for (const note of notes) {
+    if (!note.finger) continue;
+    const sounding = note.startTime <= currentTimeMs &&
+                     note.startTime + note.duration > currentTimeMs;
+    const imminent = note.startTime > currentTimeMs &&
+                     note.startTime - currentTimeMs <= FINGER_LEAD_MS;
+    const wanted = waitingPitches.has(note.pitch) &&
+                   Math.abs(note.startTime - currentTimeMs) <= FINGER_LEAD_MS;
+    if (sounding || imminent || wanted) fingerByPitch.set(note.pitch, note.finger);
+  }
+}
+
+function drawFingerings() {
+  if (!fingerByPitch.size) return;
+
+  for (const [midi, finger] of fingerByPitch) {
+    const key = keyMap.get(midi);
+    if (!key) continue;
+
+    const size = Math.max(9, Math.min(18, Math.round(key.w * (key.isWhite ? 0.62 : 0.78))));
+    const cx = key.x + key.w / 2;
+    // Low on a white key, where nothing else is drawn and the hand can see it
+    // past its own fingers; just above the tip of a black one
+    const cy = key.isWhite ? key.h - size * 0.85 : key.h - size * 0.75;
+
+    kbCtx.save();
+    kbCtx.font = `600 ${size}px system-ui, sans-serif`;
+    kbCtx.textAlign = 'center';
+    kbCtx.textBaseline = 'middle';
+    // A rim in the key's own colour, so the digit reads over the pulsing
+    // amber of a waiting key as well as over the plain one
+    kbCtx.lineWidth = Math.max(2, size * 0.22);
+    kbCtx.strokeStyle = key.isWhite ? FINGER_HALO : 'rgba(0,0,0,0.85)';
+    kbCtx.lineJoin = 'round';
+    kbCtx.strokeText(String(finger), cx, cy);
+    kbCtx.fillStyle = key.isWhite ? FINGER_ON_WHITE : FINGER_ON_BLACK;
+    kbCtx.fillText(String(finger), cx, cy);
+    kbCtx.restore();
+  }
 }
 
 // ── Key effects ──────────────────────────────────────────────────────────────
@@ -420,6 +492,10 @@ export function drawFallingNotes(notes, composition, currentTimeMs, accuracyResu
   const windowEnd = currentTimeMs + lookahead;
 
   const dimOthers = (state.ui.trainMode || state.ui.learnMode) && practiceHand() !== 'both';
+
+  // Picked out here rather than in drawKeyboard: this runs first in the frame
+  // and is already holding the notes and the time that decide it
+  collectFingerings(notes, currentTimeMs);
 
   const visibleNotes = blind ? [] : notes.filter(n =>
     n.startTime < windowEnd && (n.startTime + n.duration) > windowStart

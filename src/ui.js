@@ -182,6 +182,7 @@ function applyStateToControls() {
   document.getElementById('metro-subdivision').value = String(ui.metronomeSubdivision);
   document.getElementById('btn-beat-overlay').classList.toggle('active', ui.showBeatOverlay);
   document.getElementById('btn-chord-overlay').classList.toggle('active', ui.showChordOverlay);
+  document.getElementById('btn-fingering').classList.toggle('active', ui.showFingering);
   document.getElementById('btn-count-in').classList.toggle('active', ui.countInEnabled);
   setPracticeMode(ui.trainMode ? 'train' : ui.learnMode ? 'learn' : null);
 
@@ -1202,12 +1203,14 @@ function cycleSubdivision() {
   setSubdivision(SUBDIVISIONS[(i + 1) % SUBDIVISIONS.length]);
 }
 
-// The two readouts over the falling notes. Each is its own switch: the beat
-// counter is worth watching whether or not the clicks are audible, and either
-// can go when the notes are all you want to see.
+// What is written over the playing, beyond the notes themselves. Each is its
+// own switch: the beat counter is worth watching whether or not the clicks are
+// audible, the finger numbers are a crutch to be put down at some point, and
+// any of them can go when the notes are all you want to see.
 const OVERLAYS = {
-  beat:  { path: 'ui.showBeatOverlay',  button: 'btn-beat-overlay',  on: 'Beat counter on',  off: 'Beat counter off' },
-  chord: { path: 'ui.showChordOverlay', button: 'btn-chord-overlay', on: 'Chord names on',   off: 'Chord names off' },
+  beat:      { path: 'ui.showBeatOverlay',  button: 'btn-beat-overlay',  on: 'Beat counter on',  off: 'Beat counter off' },
+  chord:     { path: 'ui.showChordOverlay', button: 'btn-chord-overlay', on: 'Chord names on',   off: 'Chord names off' },
+  fingering: { path: 'ui.showFingering',    button: 'btn-fingering',     on: 'Fingering on',     off: 'Fingering off' },
 };
 
 function toggleOverlay(which) {
@@ -1411,6 +1414,7 @@ function bindToolbar() {
   document.getElementById('metro-subdivision').onchange = (e) => setSubdivision(e.target.value);
   document.getElementById('btn-beat-overlay').onclick = () => toggleOverlay('beat');
   document.getElementById('btn-chord-overlay').onclick = () => toggleOverlay('chord');
+  document.getElementById('btn-fingering').onclick = () => toggleOverlay('fingering');
   document.getElementById('btn-learn-mode').onclick = toggleLearnMode;
 
   const speedSlider = document.getElementById('speed-slider');
@@ -1969,6 +1973,10 @@ function shortcutActions() {
       section: 'Options', label: 'Show the chord over the falling notes',
       defaultBindings: [{ code: 'KeyC', shift: true }],
       run: () => toggleOverlay('chord') },
+    { id: 'fingering', group: 'global', hint: 'btn-fingering',
+      section: 'Options', label: 'Show fingering on the keyboard',
+      defaultBindings: [{ code: 'KeyF', shift: true }],
+      run: () => toggleOverlay('fingering') },
     { id: 'record-hand', group: 'global', hint: 'record-hand',
       section: 'Options', label: 'Which hand new notes are written to',
       defaultBindings: [{ code: 'KeyH' }],

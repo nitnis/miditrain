@@ -33,6 +33,7 @@ const SETTINGS = {
   'ui.metronomeSubdivision': oneOf(1, 2, 3, 4),
   'ui.showBeatOverlay': bool,
   'ui.showChordOverlay': bool,
+  'ui.showFingering': bool,
   'ui.muted': bool,
   'ui.volume': range(0, 1),
   'ui.clicksOnly': bool,

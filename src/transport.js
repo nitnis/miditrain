@@ -310,7 +310,11 @@ export function deleteNotes(noteIds) {
 // impossible to undo by dragging back.
 export function transposeAll(semitones) {
   if (!semitones) return;
-  for (const note of state.composition.notes) { note.pitch += semitones; delete note.spelling; }
+  for (const note of state.composition.notes) {
+    note.pitch += semitones;
+    delete note.spelling;
+    delete note.finger;
+  }
   emit('transport:noteschanged', state.composition.notes);
 }
 
@@ -330,9 +334,14 @@ export function setNotesHand(noteIds, hand) {
 export function transposeNotes(noteIds, semitones) {
   for (const id of noteIds) {
     const note = state.composition.notes.find(n => n.id === id);
-    // A spelling belongs to the pitch it was written for; moving the note
-    // makes it a lie, so it goes back to being the key's business
-    if (note) { note.pitch = Math.max(21, Math.min(108, note.pitch + semitones)); delete note.spelling; }
+    // A spelling — and a fingering — belongs to the pitch it was written for;
+    // moving the note makes it a lie, so the spelling goes back to being the
+    // key's business and the fingering stops being shown
+    if (note) {
+      note.pitch = Math.max(21, Math.min(108, note.pitch + semitones));
+      delete note.spelling;
+      delete note.finger;
+    }
   }
   emit('transport:noteschanged', state.composition.notes);
 }
