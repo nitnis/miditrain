@@ -39,6 +39,11 @@ const BLACK_NOTE_WIDTH = 0.72;
 
 let fallingCanvas = null;
 let kbCanvas = null;
+// The hands get their own canvas: it reaches from the keys down past the
+// bottom of them, so one drawing can put a wrist below the keyboard and a
+// fingertip on a key without being cut in half at the edge of either.
+let handCanvas = null;
+let handCtx = null;
 let kbCtx = null;
 let fallingCtx = null;
 let keyLayout = []; // { midi, x, w, isWhite }
@@ -55,12 +60,18 @@ export function initPianoRoll(fallingEl, keyboardEl) {
   keyboardEl.appendChild(kbCanvas);
   kbCtx = kbCanvas.getContext('2d');
 
+  handCanvas = document.getElementById('hand-canvas');
+  handCtx = handCanvas ? handCanvas.getContext('2d') : null;
+
   resizePiano();
   // The piano section is user-resizable, so watch the containers themselves
   // rather than only the window.
   const ro = new ResizeObserver(resizePiano);
   ro.observe(fallingCanvas.parentElement);
   ro.observe(keyboardEl);
+  // The stage opens and closes with the switch, and the hand canvas is sized
+  // from it, so it has to be watched as well as the two that were always there
+  if (handCanvas) ro.observe(handCanvas.parentElement);
   // A held chord name outlives the notes that earned it, so it has to go when
   // they do
   on('transport:noteschanged', resetChordLabel);
@@ -84,6 +95,16 @@ function resizePiano() {
   }
   fallingCanvas.width = fallBox.clientWidth;
   fallingCanvas.height = fallBox.clientHeight;
+
+  if (handCanvas) {
+    const stage = handCanvas.parentElement.clientHeight;
+    const wanted = kbH + stage;
+    if (handCanvas.width !== w || handCanvas.height !== wanted) {
+      handCanvas.width = w;
+      handCanvas.height = wanted;
+    }
+    handCanvas.style.height = `${wanted}px`;
+  }
 
   drawKeyboard();
 }
@@ -279,15 +300,16 @@ function crossingInto(hand, slot) {
   return null;
 }
 
-// Geometry the hand overlay needs, without giving it the key layout to poke at
+// Geometry the hand overlay needs, without giving it the key layout to poke at.
+// Its canvas is taller than the keyboard — the keys occupy the top of it and
+// the stage below the keys is the rest.
 function keyboardGeometry() {
   const whiteWidth = keyLayout.length ? keyLayout.find(k => k.isWhite).w : 0;
   return {
-    width: kbCanvas.width,
-    height: kbCanvas.height,
+    width: handCanvas.width,
+    height: handCanvas.height,
+    keyboardH: kbCanvas.height,
     whiteWidth,
-    whiteDepth: kbCanvas.height - whiteWidth * 0.55,
-    blackDepth: kbCanvas.height * 0.62 - whiteWidth * 0.45,
     centreOf: (midi) => { const k = keyMap.get(midi); return k ? k.x + k.w / 2 : null; },
     keyAt: (x) => {
       // Black keys sit on top, so they win where the two overlap
@@ -304,9 +326,12 @@ function keyboardGeometry() {
 
 function drawFingerings() {
   if (state.ui.handOverlay) {
-    if (handPlans.length) drawHands(kbCtx, handPlans, keyboardGeometry(), performance.now());
+    if (!handCtx) return;
+    handCtx.clearRect(0, 0, handCanvas.width, handCanvas.height);
+    if (handPlans.length) drawHands(handCtx, handPlans, keyboardGeometry(), performance.now());
     return;
   }
+  if (handCtx) handCtx.clearRect(0, 0, handCanvas.width, handCanvas.height);
   if (!fingerByPitch.size) return;
 
   for (const [midi, [finger, guessed]] of fingerByPitch) {

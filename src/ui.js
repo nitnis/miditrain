@@ -189,6 +189,7 @@ function applyStateToControls() {
   document.getElementById('btn-fingering').classList.toggle('active', ui.showFingering);
   document.getElementById('btn-suggest-fingering').classList.toggle('active', ui.suggestFingering);
   document.getElementById('btn-hand-overlay').classList.toggle('active', ui.handOverlay);
+  syncHandStage();
   document.getElementById('btn-count-in').classList.toggle('active', ui.countInEnabled);
   setPracticeMode(ui.trainMode ? 'train' : ui.learnMode ? 'learn' : null);
 
@@ -1268,6 +1269,10 @@ function rebuildFingeringSuggestions() {
 // The same fingering, shown as a hand on the keys rather than a digit. It says
 // the thing a digit cannot: which way the hand is facing, and when the thumb
 // has to travel under it to reach the next note.
+function syncHandStage() {
+  document.body.classList.toggle('hands-shown', state.ui.handOverlay && state.ui.showFingering);
+}
+
 function toggleHandOverlay() {
   const on = !state.ui.handOverlay;
   update('ui.handOverlay', on);
@@ -1279,6 +1284,7 @@ function toggleHandOverlay() {
     document.getElementById('btn-fingering').classList.add('active');
     scheduleSheetRender();
   }
+  syncHandStage();
   showToast(on ? 'Hands on the keys' : 'Finger numbers on the keys', 1400);
 }
 
@@ -1492,7 +1498,9 @@ function bindToolbar() {
   document.getElementById('metro-subdivision').onchange = (e) => setSubdivision(e.target.value);
   document.getElementById('btn-beat-overlay').onclick = () => toggleOverlay('beat');
   document.getElementById('btn-chord-overlay').onclick = () => toggleOverlay('chord');
-  document.getElementById('btn-fingering').onclick = () => { toggleOverlay('fingering'); syncFingeringGuessNote(); };
+  document.getElementById('btn-fingering').onclick = () => {
+    toggleOverlay('fingering'); syncFingeringGuessNote(); syncHandStage();
+  };
   document.getElementById('btn-suggest-fingering').onclick = toggleSuggestFingering;
   document.getElementById('btn-hand-overlay').onclick = toggleHandOverlay;
   document.getElementById('btn-learn-mode').onclick = toggleLearnMode;

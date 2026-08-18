@@ -23,9 +23,14 @@ const DEFAULT_SPACING = 1.0;
 // stops looking like a hand
 const MAX_SPREAD = 2.6;
 
+// A hand is a hand in both cases; which one it is shows in the outline and in
+// the colour of the finger that has landed, so the two are told apart the same
+// way the falling notes tell them apart.
+const SKIN = '#e6c9b4';
+const SKIN_FINGER = '#d9b59c';
 const COLORS = {
-  right: { skin: 'rgba(61,139,253,0.30)', edge: 'rgba(125,180,255,0.85)', live: '#9ecbff' },
-  left:  { skin: 'rgba(244,114,182,0.30)', edge: 'rgba(255,163,209,0.85)', live: '#ffc2e0' },
+  right: { fill: SKIN, finger: SKIN_FINGER, edge: '#4f8fe0', live: '#3d8bfd' },
+  left:  { fill: SKIN, finger: SKIN_FINGER, edge: '#e0679f', live: '#f472b6' },
 };
 
 // ── Fitting a hand through the notes it is playing ───────────────────────────
@@ -93,128 +98,157 @@ export function forgetHands() {
 }
 
 // ── Drawing ──────────────────────────────────────────────────────────────────
+//
+// The hands come from where the player's hands come from: below the keyboard,
+// wrists nearest, fingers reaching away onto the keys. Drawn the other way up —
+// palm at the back of the keys, fingers reaching towards you — the picture is
+// of somebody else's hands seen across the piano, which is not the view anyone
+// learns from.
+//
+// The hand is opaque. A thumb passing under it disappears, which is what a
+// thumb passing under a hand does; the dashed path it takes is drawn first so
+// the palm covers the middle of it, and what matters is where the thumb comes
+// out, which is on a key and in plain sight.
 
-function fingerTip(x, geo) {
+// Where a fingertip rests. Black keys are at the far side of the keyboard, so
+// reaching one means reaching further away — a smaller y — than a white key,
+// whose free front half is nearest the player.
+function tipY(x, geo) {
   const key = geo.keyAt(x);
-  const onBlack = key && !key.isWhite;
-  return { y: onBlack ? geo.blackDepth : geo.whiteDepth, onBlack };
+  return key && !key.isWhite ? geo.keyboardH * 0.44 : geo.keyboardH * 0.80;
 }
 
-function palmBox(xs, hand, geo) {
-  // The palm spans the four fingers; the thumb hangs off its near side
+function handShape(xs, hand, geo) {
   const knuckles = xs.slice(1);
   const left = Math.min(...knuckles);
   const right = Math.max(...knuckles);
-  const pad = geo.whiteWidth * 0.35;
+  const pad = geo.whiteWidth * 0.42;
+  const stage = geo.height - geo.keyboardH;
   return {
-    x0: left - pad, x1: right + pad,
-    y0: geo.height * 0.05, y1: geo.height * 0.30,
+    x0: left - pad,
+    x1: right + pad,
+    // Back of the hand nearest the keys, wrist end nearest the player
+    knuckleY: geo.keyboardH + stage * 0.20,
+    wristY: geo.keyboardH + stage * 0.62,
+    cuffY: geo.height,
     thumbSide: hand === 'left' ? right + pad : left - pad,
   };
 }
 
-function drawFinger(ctx, fromX, fromY, toX, toY, width, color, dashed) {
+// Outlined, then filled. A bare stroke of skin colour against a dark stage
+// reads as a smear; the same stroke with an edge around it reads as a finger,
+// and four of them beside each other read as a hand rather than a paw.
+function drawFinger(ctx, fromX, fromY, toX, toY, width, color, edge) {
   ctx.save();
-  ctx.strokeStyle = color;
-  ctx.lineWidth = width;
   ctx.lineCap = 'round';
-  if (dashed) ctx.setLineDash([3, 3]);
   ctx.beginPath();
   ctx.moveTo(fromX, fromY);
-  // A finger bends; a straight line reads as a stick
-  ctx.quadraticCurveTo(fromX + (toX - fromX) * 0.35, fromY + (toY - fromY) * 0.75, toX, toY);
+  // A finger bends at the knuckle and straightens towards the tip
+  ctx.quadraticCurveTo(fromX + (toX - fromX) * 0.55, fromY - (fromY - toY) * 0.45, toX, toY);
+  ctx.strokeStyle = edge;
+  ctx.lineWidth = width + 2.6;
+  ctx.stroke();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
   ctx.stroke();
   ctx.restore();
 }
 
-function drawTip(ctx, x, y, r, color, live, edge) {
+// The key a finger has landed on, marked on the key itself. The whole point of
+// the picture is seeing the right finger on the right key, and a fingertip
+// floating over a key is not the same as one resting on it.
+function drawKeyLanding(ctx, x, geo, color) {
+  const key = geo.keyAt(x);
+  if (!key) return;
+  const w = key.w * 0.74;
+  const top = key.isWhite ? geo.keyboardH * 0.60 : geo.keyboardH * 0.30;
+  const bottom = key.isWhite ? geo.keyboardH - 3 : geo.keyboardH * 0.62 - 3;
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(key.x + (key.w - w) / 2, top, w, bottom - top, 4);
+  ctx.fillStyle = color;
+  ctx.globalAlpha = 0.5;
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.lineWidth = 1.6;
+  ctx.strokeStyle = color;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawTip(ctx, x, y, r, live, skin) {
   ctx.beginPath();
   ctx.arc(x, y, r, 0, TAU);
-  ctx.fillStyle = live ? color : 'rgba(255,255,255,0.10)';
+  ctx.fillStyle = live ? skin.live : skin.fill;
   ctx.fill();
-  ctx.lineWidth = live ? 2 : 1;
-  ctx.strokeStyle = live ? color : edge;
+  ctx.lineWidth = live ? 2 : 1.2;
+  ctx.strokeStyle = live ? skin.live : skin.edge;
   ctx.stroke();
 }
 
-// The crossing, which is the thing the numbers could never show. Going up, the
-// thumb travels beneath the hand and comes out the far side; coming down, the
-// third or fourth finger lifts over the top of it. Drawn as an arc from where
-// the hand was to where the crossing finger lands — under the knuckles for a
-// thumb, over the top of them for a finger.
-function drawCrossing(ctx, crossing, xs, geo, color, phase) {
-  // Where the hand came from, not where the fit has since put that finger. The
-  // hand has already moved on by the time the thumb lands, so reading the pivot
-  // out of the current shape draws the arc a couple of keys past the note it
-  // actually left.
-  const pivotX = crossing.fromX;
+// The crossing. Going up, the thumb travels under the hand and comes out the
+// far side; coming down, a finger lifts over the top of it. There is room below
+// the keys for a real curve now, so both get one — the thumb's dipping towards
+// the player and passing behind the palm, the finger's rising over the back of
+// the hand and drawn on top of it.
+function drawCrossing(ctx, crossing, xs, geo, skin, phase) {
+  // Where the hand came from, not where the fit has since put that finger: the
+  // hand has already moved on by the time the crossing finger lands.
+  const fromX = crossing.fromX;
   const toX = xs[crossing.finger - 1];
-  if (pivotX == null || toX == null) return;
+  if (fromX == null || toX == null) return;
 
   const under = crossing.kind === 'thumbUnder';
-  const midX = (pivotX + toX) / 2;
+  const shape = handShape(xs, crossing.hand, geo);
+  const midX = (fromX + toX) / 2;
+  const startY = tipY(fromX, geo);
+  const endY = tipY(toX, geo);
+  const arcY = under ? shape.wristY + 6 : geo.keyboardH * 0.06;
 
   ctx.save();
-  // Seen from above, the near edge of the keys is the bottom of the picture, so
-  // a thumb travelling under the hand travels downwards. Only the thumb gets a
-  // path drawn: it disappears behind the palm and needs one to explain where it
-  // went. A finger crossing over is already drawn lying across the thumb, and
-  // an arc for it would have to peak above the palm — which, on a keyboard this
-  // short, is off the top of the picture.
-  if (under) {
-    const endY = geo.whiteDepth - 8;
-    ctx.strokeStyle = color;
-    ctx.shadowColor = color;
-    ctx.shadowBlur = 6;
-    ctx.lineWidth = 2.4;
-    ctx.lineCap = 'round';
-    ctx.setLineDash([5, 4]);
-    ctx.lineDashOffset = -phase * 9;
-    ctx.beginPath();
-    ctx.moveTo(pivotX, geo.height * 0.42);
-    ctx.quadraticCurveTo(midX, geo.height * 0.99, toX, endY);
-    ctx.stroke();
-    ctx.setLineDash([]);
+  ctx.strokeStyle = skin.live;
+  ctx.shadowColor = skin.live;
+  ctx.shadowBlur = 7;
+  ctx.lineWidth = 2.6;
+  ctx.lineCap = 'round';
+  ctx.setLineDash([6, 5]);
+  ctx.lineDashOffset = -phase * 11;
+  ctx.beginPath();
+  ctx.moveTo(fromX, startY);
+  ctx.quadraticCurveTo(midX, arcY, toX, endY);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+}
 
-    // An arrowhead at the landing, so which way it travels is not left to be
-    // worked out from a curve a single key wide
-    const dir = Math.sign(toX - pivotX) || 1;
-    ctx.beginPath();
-    ctx.moveTo(toX + dir * 4, endY);
-    ctx.lineTo(toX - dir * 3, endY - 4.5);
-    ctx.lineTo(toX - dir * 3, endY + 4.5);
-    ctx.closePath();
-    ctx.fillStyle = color;
-    ctx.fill();
-    ctx.shadowBlur = 0;
-  }
-
-  // Two adjacent keys leave a curve barely wider than one, which on its own is
-  // not enough to tell a crossing from a smudge. It happens rarely enough that
-  // naming it costs nothing.
-  const label = under ? 'under' : 'over';
-  const size = Math.max(7, Math.min(10, geo.whiteWidth * 0.38));
+function drawCrossingLabel(ctx, crossing, xs, geo, skin) {
+  const fromX = crossing.fromX;
+  const toX = xs[crossing.finger - 1];
+  if (fromX == null || toX == null) return;
+  const under = crossing.kind === 'thumbUnder';
+  const size = Math.max(9, Math.min(13, geo.whiteWidth * 0.46));
+  ctx.save();
   ctx.font = `600 ${size}px system-ui, sans-serif`;
   ctx.textAlign = 'center';
-  // Out at the edge the arc reaches for rather than across the hand, which on a
-  // keyboard this short is entirely fingers
-  ctx.textBaseline = under ? 'bottom' : 'top';
-  const labelY = under ? geo.height - 3 : 2;
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = 'rgba(6,10,24,0.85)';
+  ctx.textBaseline = 'top';
+  // Set back at the note being left rather than the one landed on, so it never
+  // sits on the fingertip that has just arrived; and below the keys, where the
+  // stage is empty and dark, rather than lost among the black keys
+  const x = fromX - Math.sign(toX - fromX) * geo.whiteWidth * 1.1;
+  const y = geo.keyboardH + 6;
+  ctx.lineWidth = 3.5;
   ctx.lineJoin = 'round';
-  // Set back at the note the hand is leaving rather than the one it lands on,
-  // which for two adjacent keys is the only room there is to not sit on the
-  // fingertip that just arrived
-  const labelX = pivotX - Math.sign(toX - pivotX) * geo.whiteWidth * 0.5;
-  ctx.strokeText(label, labelX, labelY);
-  ctx.fillStyle = color;
-  ctx.fillText(label, labelX, labelY);
+  ctx.strokeStyle = 'rgba(6,10,24,0.9)';
+  const label = under ? 'thumb under' : 'over the thumb';
+  ctx.strokeText(label, x, y);
+  ctx.fillStyle = skin.live;
+  ctx.fillText(label, x, y);
   ctx.restore();
 }
 
 // One hand. `plan` is { hand, anchors: Map<finger,pitch>, live: Set<finger>,
-// crossing: { kind, finger, fromPitch } | null }
+// crossing: { kind, finger, fromFinger, fromPitch } | null }
 function drawHand(ctx, plan, geo, phase) {
   const fit = fitHand(plan.anchors, plan.hand, geo.whiteWidth, geo.centreOf);
   if (!fit) return;
@@ -223,83 +257,92 @@ function drawHand(ctx, plan, geo, phase) {
   for (let f = 1; f <= 5; f++) {
     const anchored = plan.anchors.get(f);
     const x = anchored != null ? geo.centreOf(anchored) : fit.base + fit.step * (f - 1);
-    targets.push(Math.max(-20, Math.min(geo.width + 20, x)));
+    targets.push(Math.max(-40, Math.min(geo.width + 40, x)));
   }
   const xs = easeTowards(plan.hand, targets);
 
   const skin = COLORS[plan.hand] || COLORS.right;
-  const palm = palmBox(xs, plan.hand, geo);
+  const shape = handShape(xs, plan.hand, geo);
   const crossing = plan.crossing
-    ? { ...plan.crossing, fromX: geo.centreOf(plan.crossing.fromPitch) }
+    ? { ...plan.crossing, hand: plan.hand, fromX: geo.centreOf(plan.crossing.fromPitch) }
     : null;
-  const thumbUnder = crossing && crossing.kind === 'thumbUnder';
   const fingerOver = crossing && crossing.kind === 'fingerOver';
+
+  // The key each landed finger is resting on, marked first so the hand sits on
+  // top of its own marks rather than the other way round
+  for (let f = 1; f <= 5; f++) {
+    if (plan.live.has(f)) drawKeyLanding(ctx, xs[f - 1], geo, skin.live);
+  }
+
+  // The travelling path goes down before the hand does, so the palm covers the
+  // middle of it and the thumb really does disappear under the hand
+  if (crossing) drawCrossing(ctx, crossing, xs, geo, skin, phase);
 
   ctx.save();
 
-  // The thumb goes down first when it is passing under, so the palm is painted
-  // over its base and it really does disappear beneath the hand
-  // The thumb comes off the side of the hand, not the end of it, and is thicker
-  // and shorter than the fingers. Drawn like a fifth finger it reads as one,
-  // and then nothing about the picture says which way round the hand is.
-  const drawThumb = () => {
-    const tip = fingerTip(xs[0], geo);
-    drawFinger(ctx, palm.thumbSide, palm.y0 + (palm.y1 - palm.y0) * 0.62,
-               xs[0], tip.y - 3, geo.whiteWidth * 0.52, skin.edge, false);
-  };
-  if (thumbUnder) drawThumb();
-
-  // Palm
+  // Wrist and forearm, running off the bottom of the picture
+  const wristHalf = (shape.x1 - shape.x0) * 0.30;
+  const wristMid = (shape.x0 + shape.x1) / 2;
   ctx.beginPath();
-  ctx.roundRect(palm.x0, palm.y0, palm.x1 - palm.x0, palm.y1 - palm.y0,
-                Math.min(10, (palm.y1 - palm.y0) / 2));
-  ctx.fillStyle = skin.skin;
+  ctx.moveTo(wristMid - wristHalf, shape.wristY);
+  ctx.lineTo(wristMid + wristHalf, shape.wristY);
+  ctx.lineTo(wristMid + wristHalf * 1.12, shape.cuffY);
+  ctx.lineTo(wristMid - wristHalf * 1.12, shape.cuffY);
+  ctx.closePath();
+  ctx.fillStyle = skin.fill;
   ctx.fill();
   ctx.strokeStyle = skin.edge;
-  ctx.lineWidth = 1.4;
+  ctx.lineWidth = 1.5;
   ctx.stroke();
 
-  if (!thumbUnder) drawThumb();
-
-  // Fingers 2..5. Each leaves the palm above its own key rather than from the
-  // middle of it — knuckles are spread across the back of a hand, and fanning
-  // four fingers out of one point makes it something other than a hand.
-  const palmMid = (palm.x0 + palm.x1) / 2;
+  // Fingers, from the back of the hand up onto their keys. Drawn before the
+  // palm so their roots vanish into it.
+  const palmMid = (shape.x0 + shape.x1) / 2;
   for (let f = 2; f <= 5; f++) {
-    if (fingerOver && f === crossing.finger) continue;   // drawn last, on top
-    const tip = fingerTip(xs[f - 1], geo);
-    drawFinger(ctx, xs[f - 1] * 0.78 + palmMid * 0.22, palm.y1 - 2,
-               xs[f - 1], tip.y - 3, geo.whiteWidth * 0.34, skin.edge, false);
+    if (fingerOver && f === crossing.finger) continue;   // over the top, so last
+    drawFinger(ctx, xs[f - 1] * 0.72 + palmMid * 0.28, shape.knuckleY + 4,
+               xs[f - 1], tipY(xs[f - 1], geo), geo.whiteWidth * 0.36, skin.finger, skin.edge);
   }
+  // The thumb comes off the side of the hand, thicker than a finger and rooted
+  // further down it, which is most of what says which hand this is
+  drawFinger(ctx, shape.thumbSide, shape.knuckleY + (shape.wristY - shape.knuckleY) * 0.62,
+             xs[0], tipY(xs[0], geo), geo.whiteWidth * 0.62, skin.finger, skin.edge);
 
-  // ...and the one crossing over, drawn above the palm so it reads as over
+  // The back of the hand, over the roots of everything attached to it
+  ctx.beginPath();
+  ctx.roundRect(shape.x0, shape.knuckleY, shape.x1 - shape.x0, shape.wristY - shape.knuckleY,
+                [geo.whiteWidth * 0.55, geo.whiteWidth * 0.55, geo.whiteWidth * 0.3, geo.whiteWidth * 0.3]);
+  ctx.fillStyle = skin.fill;
+  ctx.fill();
+  ctx.strokeStyle = skin.edge;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // ...and the finger that crosses over it, which has to lie on top to read as
+  // going over rather than through
   if (fingerOver) {
-    const f = crossing.finger;
-    const tip = fingerTip(xs[f - 1], geo);
-    drawFinger(ctx, palm.thumbSide, palm.y0 + 2, xs[f - 1], tip.y - 3,
-               geo.whiteWidth * 0.34, skin.live, false);
+    drawFinger(ctx, shape.thumbSide, shape.knuckleY + 4,
+               xs[crossing.finger - 1], tipY(xs[crossing.finger - 1], geo),
+               geo.whiteWidth * 0.36, skin.finger, skin.live);
   }
 
-  // Before the fingertips, so the tip that lands stays on top of the path that
-  // brought it there rather than being buried under the label
-  if (crossing) drawCrossing(ctx, crossing, xs, geo, skin.live, phase);
-
-  // Fingertips: solid on the keys actually being played, hollow on the rest
+  // Fingertips: solid where the finger has landed, faint where it is only
+  // resting somewhere plausible
   for (let f = 1; f <= 5; f++) {
     const live = plan.live.has(f);
-    const tip = fingerTip(xs[f - 1], geo);
-    drawTip(ctx, xs[f - 1], tip.y, live ? geo.whiteWidth * 0.30 : geo.whiteWidth * 0.20,
-            skin.live, live, skin.edge);
+    const y = tipY(xs[f - 1], geo);
+    drawTip(ctx, xs[f - 1], y, geo.whiteWidth * (live ? 0.32 : 0.24), live, skin);
     if (live) {
       ctx.fillStyle = '#0b1020';
-      ctx.font = `700 ${Math.max(8, Math.round(geo.whiteWidth * 0.5))}px system-ui, sans-serif`;
+      ctx.font = `700 ${Math.max(9, Math.round(geo.whiteWidth * 0.46))}px system-ui, sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(String(f), xs[f - 1], tip.y + 0.5);
+      ctx.fillText(String(f), xs[f - 1], y + 0.5);
     }
   }
-
   ctx.restore();
+
+  if (crossing) drawCrossingLabel(ctx, crossing, xs, geo, skin);
 }
 
 export function drawHands(ctx, plans, geo, nowMs) {
