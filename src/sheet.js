@@ -77,7 +77,17 @@ export function initSheet(el) {
   el.innerHTML = '';
 }
 
-export function renderSheet(notes, composition, currentTimeMs = null) {
+// How much room the music above the first staff has turned out to need. A
+// scale reaching the top of the keyboard hangs thirteen ledger lines above the
+// treble staff, and the fingering sits above that again — more than any fixed
+// margin guessed before the drawing exists. It is measured from what was
+// actually drawn and kept, so the correction is paid for once rather than on
+// every redraw.
+let topMargin = 0;
+const BASE_TOP = 55;
+const TOP_PAD = 6;
+
+export function renderSheet(notes, composition, currentTimeMs = null, retry = false) {
   _chordOverlayData = [];
   _staveGeom = [];
   if (!container || !window.Vex) return;
@@ -109,31 +119,50 @@ export function renderSheet(notes, composition, currentTimeMs = null) {
   // Layout
   const cw = container.clientWidth || 900;
   const MEASURES_PER_LINE = Math.max(2, Math.floor((cw - 60) / 280));
-  const STAVE_W = Math.floor((cw - 40) / MEASURES_PER_LINE);
-  const TREBLE_Y = 55;
+  const TREBLE_Y = BASE_TOP + topMargin;
   const BASS_OFFSET = 115; // pixels below treble stave top
-  const SYSTEM_H = 220;    // pixels per system (treble + bass + gap)
   const MX = 10;
 
+  // Fingering is written outside the staves — above the treble, below the bass —
+  // so a system carrying it needs headroom that the notes alone do not. Without
+  // it, one system's left-hand numbers land on the next system's right-hand
+  // ones. Whatever a deep run of ledger lines pushes past this allowance is
+  // caught by growToFitOverflow at the end.
+  const FINGER_ROOM = 40;
+  const fingered = state.ui.showFingering && segments.some(s => s.finger && !s.tiedFromPrev);
+  const SYSTEM_H = 220 + (fingered ? FINGER_ROOM : 0); // treble + bass + gap
+
   const numLines = Math.ceil(totalMeasures / MEASURES_PER_LINE);
-  const totalH = numLines * SYSTEM_H + 60;
+  const totalH = topMargin + numLines * SYSTEM_H + 60;
 
   container.innerHTML = '';
   renderer = new Renderer(container, Renderer.Backends.SVG);
   renderer.resize(cw, totalH);
   svgCtx = renderer.getContext();
 
+  // How wide each measure is drawn. Sharing a line equally is wrong, because
+  // the first measure of a line spends part of its width on a clef, and the
+  // first of the piece on a key and time signature as well — leaving it less
+  // room for notes than its neighbours. A bar with enough notes in it then
+  // overflows its own barline and lands on top of the next bar's first note.
+  // So the *note* space is what gets shared equally, and the furniture is paid
+  // for out of the line before the split.
+  const measureWidths = planMeasureWidths(
+    totalMeasures, MEASURES_PER_LINE, cw - 2 * MX, Stave, keySignature, timeSignature
+  );
+
   for (let m = 0; m < totalMeasures; m++) {
     const line = Math.floor(m / MEASURES_PER_LINE);
     const col  = m % MEASURES_PER_LINE;
-    const x = MX + col * STAVE_W;
+    const x = MX + measureWidths.offsetOf(m);
+    const w = measureWidths.widthOf(m);
     const tY = TREBLE_Y + line * SYSTEM_H;
     const bY = tY + BASS_OFFSET;
     const isFirst = m === 0;
     const isFirstInLine = col === 0;
 
-    const trebleStave = new Stave(x, tY, STAVE_W);
-    const bassStave   = new Stave(x, bY, STAVE_W);
+    const trebleStave = new Stave(x, tY, w);
+    const bassStave   = new Stave(x, bY, w);
 
     if (isFirstInLine) {
       trebleStave.addClef('treble');
@@ -192,9 +221,103 @@ export function renderSheet(notes, composition, currentTimeMs = null) {
   drawTies(segments, segmentPlacement);
   drawSlurs(notes, segmentPlacement);
 
+  // Anything hanging off the top means the whole drawing has to start further
+  // down, which only a second pass can do. Once, never twice: the margin it
+  // settles on is remembered, so the next redraw is right the first time.
+  if (!retry && absorbTopOverflow()) {
+    renderSheet(notes, composition, currentTimeMs, true);
+    return;
+  }
+  growToFitOverflow(cw, totalH);
+
   playheadBeatsPerMeasure = beatsPerMeasure;
   playheadBeatMs = (60 / tempo) * 1000;
   movePlayhead(stepping ? null : currentTimeMs);
+}
+
+// ── Measure widths ───────────────────────────────────────────────────────────
+// What a stave spends before its first note can be drawn: a clef on the first
+// measure of every line, and a key and time signature as well on the first of
+// the piece. Measured from a real Stave rather than guessed, because the answer
+// depends on how many accidentals the key signature carries and on which clef
+// is the wider of the two.
+function furnitureWidth(Stave, keySignature, timeSignature, withKeyAndTime) {
+  let widest = 0;
+  for (const clef of ['treble', 'bass']) {
+    const probe = new Stave(0, 0, 400);
+    probe.addClef(clef);
+    if (withKeyAndTime) {
+      probe.addKeySignature(keySignature);
+      probe.addTimeSignature(`${timeSignature.numerator}/${timeSignature.denominator}`);
+    }
+    try { widest = Math.max(widest, probe.getNoteStartX() - probe.getX()); } catch (_) {}
+  }
+  return widest;
+}
+
+// Widths for every measure, such that each one on a line gets the same amount
+// of room for its notes whatever furniture it is also carrying.
+function planMeasureWidths(totalMeasures, perLine, lineWidth, Stave, keySignature, timeSignature) {
+  const withClef = furnitureWidth(Stave, keySignature, timeSignature, false);
+  const withAll  = furnitureWidth(Stave, keySignature, timeSignature, true);
+
+  const widths = [];
+  for (let m = 0; m < totalMeasures; m++) {
+    const line = Math.floor(m / perLine);
+    const col = m % perLine;
+    const count = Math.min(perLine, totalMeasures - line * perLine);
+
+    // Everything the measures on this line must pay for before any notes
+    let lineFurniture = withClef;                       // the clef on column 0
+    if (line === 0) lineFurniture = withAll;            // plus key and time
+    const noteRoom = Math.max(60, (lineWidth - lineFurniture) / count);
+
+    let width = noteRoom;
+    if (col === 0) width += lineFurniture;
+    widths.push(Math.floor(width));
+  }
+
+  // Offsets, so rounding never leaves a gap or an overlap at a barline
+  const offsets = [];
+  let x = 0;
+  for (let m = 0; m < totalMeasures; m++) {
+    if (m % perLine === 0) x = 0;
+    offsets.push(x);
+    x += widths[m];
+  }
+
+  return { widthOf: (m) => widths[m], offsetOf: (m) => offsets[m] };
+}
+
+// Set the top margin from what the drawing turned out to need. Returns true if
+// it changed enough to be worth laying the score out again — both when the
+// music runs off the top and when a previous piece's margin is no longer
+// earned, so a high exercise does not leave a gap above every one after it.
+function absorbTopOverflow() {
+  const svg = container.querySelector('svg');
+  if (!svg) return false;
+  let box;
+  try { box = svg.getBBox(); } catch (_) { return false; }
+  if (!box || !box.height) return false;
+
+  const wanted = Math.max(0, Math.round(topMargin + TOP_PAD - box.y));
+  if (Math.abs(wanted - topMargin) <= TOP_PAD) return false;
+  topMargin = wanted;
+  return true;
+}
+
+// The drawing is laid out from a height guessed before any of it exists, and
+// anything hanging below the last system — a fingering under a bass note deep
+// in the ledger lines — is simply clipped off by the SVG's own edge. Measuring
+// what was actually drawn and growing the box is safe because every coordinate
+// is absolute: the height changes, nothing moves.
+function growToFitOverflow(width, plannedHeight) {
+  const svg = container.querySelector('svg');
+  if (!svg) return;
+  let box;
+  try { box = svg.getBBox(); } catch (_) { return; }
+  const needed = Math.ceil(box.y + box.height) + 6;
+  if (needed > plannedHeight) renderer.resize(width, needed);
 }
 
 // ── Playhead ─────────────────────────────────────────────────────────────────
@@ -522,6 +645,44 @@ function drawTies(segments, placement) {
   }
 }
 
+// Fingering on the page, where it is engraved: a row above the treble staff for
+// the right hand and below the bass staff for the left.
+//
+// Annotation rather than the FretHandFinger modifier, which is the one actually
+// named for the job. FretHandFinger hangs the number off the notehead itself,
+// so a scale's numbers zigzag along with the tune and end up threaded through
+// its own beams. Annotation clears the staff and the stems first, so the digits
+// stay outside the music: still rising and falling with a run that climbs into
+// the ledger lines, but never inside it.
+//
+// On a note written across a barline the number goes on the head that is
+// actually struck, not on the tied continuation of it.
+const FINGER_FONT = { family: 'system-ui, sans-serif', size: 11, weight: '600' };
+
+function addFingerings(note, group, clef) {
+  if (!state.ui.showFingering) return;
+  const { Annotation } = VF();
+  const below = clef === 'bass';
+
+  // Read outwards from the staff in the order the notes are stacked: nearest
+  // the staff is the top note of a left-hand chord and the bottom note of a
+  // right-hand one, which is the order the annotations are added in
+  const stack = below ? [...group].reverse() : group;
+
+  for (const seg of stack) {
+    if (!seg.finger || seg.tiedFromPrev) continue;
+    try {
+      const mark = new Annotation(String(seg.finger));
+      mark.setVerticalJustification(below ? Annotation.VerticalJustify.BOTTOM
+                                          : Annotation.VerticalJustify.TOP);
+      mark.setFont(FINGER_FONT.family, FINGER_FONT.size, FINGER_FONT.weight);
+      note.addModifier(mark, group.indexOf(seg));
+    } catch (e) {
+      console.warn('Fingering:', seg.finger, e.message);
+    }
+  }
+}
+
 function buildTickables(staveNotes, beatsPerMeasure, clef, keySignature, segmentPlacement, line) {
   const { StaveNote } = VF();
   const chordGroups = groupIntoChords(staveNotes);
@@ -552,6 +713,9 @@ function buildTickables(staveNotes, beatsPerMeasure, clef, keySignature, segment
         // The 'd' suffix already carries the tick count; the dot itself is a
         // modifier and has to be attached to be drawn
         if (vexDuration.includes('d')) VF().Dot.buildAndAttach([note], { all: true });
+        // Before the Formatter runs, so the numbers are given room rather than
+        // laid over whatever ends up next to them
+        addFingerings(note, group, clef);
         tickables.push(note);
 
         if (segmentPlacement) {
