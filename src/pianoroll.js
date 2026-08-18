@@ -5,6 +5,7 @@ import { setEditorLayout } from './note-editor.js';
 import { handOf, isPractised, practiceHand } from './hands.js';
 import { detectChord } from './chords.js';
 import { subdivision } from './metronome.js';
+import { suggestedFinger } from './autofinger.js';
 
 // Piano layout constants
 const MIDI_MIN = 21; // A0
@@ -177,9 +178,13 @@ export function drawKeyboard(activeNotes = null) {
 const FINGER_ON_WHITE = '#1b3a5c';
 const FINGER_ON_BLACK = '#e8f2ff';
 const FINGER_HALO = 'rgba(255,255,255,0.9)';
+// A worked-out fingering is drawn in a different ink from a known one, and
+// underlined, so a guess never passes for the answer at a glance
+const GUESS_ON_WHITE = '#6b5bd6';
+const GUESS_ON_BLACK = '#cdc2ff';
 
 // Rebuilt each frame by drawFallingNotes, which runs first and already has both
-// the notes and the time to pick them out with
+// the notes and the time to pick them out with. Each entry is [finger, guessed].
 let fingerByPitch = new Map();
 
 // How far ahead of the playhead a note still counts as "here". Learn mode holds
@@ -194,21 +199,23 @@ function collectFingerings(notes, currentTimeMs) {
   if (blind || !state.ui.showFingering) return;
 
   for (const note of notes) {
-    if (!note.finger) continue;
+    const guess = note.finger ? null : suggestedFinger(note.id);
+    const finger = note.finger || guess;
+    if (!finger) continue;
     const sounding = note.startTime <= currentTimeMs &&
                      note.startTime + note.duration > currentTimeMs;
     const imminent = note.startTime > currentTimeMs &&
                      note.startTime - currentTimeMs <= FINGER_LEAD_MS;
     const wanted = waitingPitches.has(note.pitch) &&
                    Math.abs(note.startTime - currentTimeMs) <= FINGER_LEAD_MS;
-    if (sounding || imminent || wanted) fingerByPitch.set(note.pitch, note.finger);
+    if (sounding || imminent || wanted) fingerByPitch.set(note.pitch, [finger, Boolean(guess)]);
   }
 }
 
 function drawFingerings() {
   if (!fingerByPitch.size) return;
 
-  for (const [midi, finger] of fingerByPitch) {
+  for (const [midi, [finger, guessed]] of fingerByPitch) {
     const key = keyMap.get(midi);
     if (!key) continue;
 
@@ -228,8 +235,21 @@ function drawFingerings() {
     kbCtx.strokeStyle = key.isWhite ? FINGER_HALO : 'rgba(0,0,0,0.85)';
     kbCtx.lineJoin = 'round';
     kbCtx.strokeText(String(finger), cx, cy);
-    kbCtx.fillStyle = key.isWhite ? FINGER_ON_WHITE : FINGER_ON_BLACK;
+    kbCtx.fillStyle = guessed
+      ? (key.isWhite ? GUESS_ON_WHITE : GUESS_ON_BLACK)
+      : (key.isWhite ? FINGER_ON_WHITE : FINGER_ON_BLACK);
     kbCtx.fillText(String(finger), cx, cy);
+    if (guessed) {
+      // Underlined the way an editor's addition is, rather than left to a
+      // colour that a glance at a small key will not register
+      const half = size * 0.32;
+      kbCtx.lineWidth = Math.max(1, size * 0.09);
+      kbCtx.strokeStyle = kbCtx.fillStyle;
+      kbCtx.beginPath();
+      kbCtx.moveTo(cx - half, cy + size * 0.46);
+      kbCtx.lineTo(cx + half, cy + size * 0.46);
+      kbCtx.stroke();
+    }
     kbCtx.restore();
   }
 }

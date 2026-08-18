@@ -238,6 +238,13 @@
           </svg>
           <span class="btn-label">Fingering</span>
         </button>
+        <button class="toggle-btn icon-only" id="btn-suggest-fingering" title="Work out a fingering for a piece that has none — an automated suggestion, not an editorial fingering (Shift+G)">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9.5 16a5.5 5.5 0 1 1 5 0v2.5a1.5 1.5 0 0 1-1.5 1.5h-2a1.5 1.5 0 0 1-1.5-1.5V16Z"/>
+            <line x1="10" y1="22" x2="14" y2="22"/>
+          </svg>
+          <span class="btn-label">Suggest</span>
+        </button>
       </div>
 
       <!-- Speed -->
@@ -354,6 +361,9 @@
         <button class="small-btn" id="btn-clear" style="margin-left:auto">Clear All</button>
       </div>
       <div id="sheet-container">
+        <p class="sheet-guess-note hidden" id="fingering-guess-note">
+          The fingering shown in italics is worked out automatically — a suggestion, not an editorial fingering. Try it, and use whatever your hand prefers.
+        </p>
         <div id="vexflow-output"></div>
         <div id="chord-labels-overlay"></div>
         <div id="chord-tooltip" class="chord-tooltip hidden"></div>
