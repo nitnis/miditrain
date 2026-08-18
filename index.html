@@ -53,21 +53,29 @@
   <div id="toolbar">
     <div class="toolbar-row">
 
-      <!-- Transport -->
+      <!-- Transport, with the one recording option that belongs under it -->
       <div class="tool-group transport-group">
-        <button class="transport-btn" id="btn-to-start" title="Go to start (Home) — arrows nudge the playhead, Shift+arrow by a bar">&#9664;&#9664;</button>
-        <button class="transport-btn" id="btn-stop" title="Stop and rewind to the beginning">&#9632;</button>
-        <button class="transport-btn" id="btn-pause" title="Pause — hold position">&#10073;&#10073;</button>
-        <button class="transport-btn record-btn" id="btn-record" title="Record (R)">&#9679;</button>
-        <button class="transport-btn step-btn" id="btn-step-record" title="Step Record — write one note/chord per step (Shift+R)">&#9655;&#9679;</button>
-        <button class="transport-btn play-btn" id="btn-play" title="Play/Pause (Space)">&#9654;</button>
-        <button class="transport-btn" id="btn-to-end" title="Go to end">&#9654;&#9654;</button>
-        <span class="tool-label" style="margin-left:8px">HAND</span>
-        <select id="record-hand" title="Which hand new notes are written to. Auto works it out from the texture.">
-          <option value="auto">Auto</option>
-          <option value="left">Left</option>
-          <option value="right">Right</option>
-        </select>
+        <div class="transport-stack">
+          <div class="transport-buttons">
+            <button class="transport-btn" id="btn-to-start" title="Go to start (Home) — arrows nudge the playhead, Shift+arrow by a bar">&#9664;&#9664;</button>
+            <button class="transport-btn" id="btn-stop" title="Stop and rewind to the beginning">&#9632;</button>
+            <button class="transport-btn" id="btn-pause" title="Pause — hold position">&#10073;&#10073;</button>
+            <button class="transport-btn record-btn" id="btn-record" title="Record (R)">&#9679;</button>
+            <button class="transport-btn step-btn" id="btn-step-record" title="Step Record — write one note/chord per step (Shift+R)">&#9655;&#9679;</button>
+            <button class="transport-btn play-btn" id="btn-play" title="Play/Pause (Space)">&#9654;</button>
+            <button class="transport-btn" id="btn-to-end" title="Go to end">&#9654;&#9654;</button>
+          </div>
+          <div class="record-options">
+            <span class="tool-label">RECORD TO</span>
+            <div class="hand-switch" id="record-hand" role="group"
+                 aria-label="Which hand new notes are written to"
+                 title="Which hand new notes are written to. Auto works it out from the texture.">
+              <button class="hand-opt" data-hand="auto">Auto</button>
+              <button class="hand-opt" data-hand="left">L.H.</button>
+              <button class="hand-opt" data-hand="right">R.H.</button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Step controls (visible only in step-recording mode) -->
