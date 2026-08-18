@@ -6,6 +6,7 @@ import { handOf, isPractised, practiceHand } from './hands.js';
 import { detectChord } from './chords.js';
 import { subdivision } from './metronome.js';
 import { suggestedFinger } from './autofinger.js';
+import { drawHands, forgetHands } from './hand-overlay.js';
 
 // Piano layout constants
 const MIDI_MIN = 21; // A0
@@ -63,6 +64,9 @@ export function initPianoRoll(fallingEl, keyboardEl) {
   // A held chord name outlives the notes that earned it, so it has to go when
   // they do
   on('transport:noteschanged', resetChordLabel);
+  // A hand eases towards where it should be; a different piece is not somewhere
+  // to ease towards from, so it starts where it starts
+  on('transport:noteschanged', forgetHands);
   startAnimation();
 }
 
@@ -192,11 +196,24 @@ let fingerByPitch = new Map();
 // would show nothing at the moment the number is most wanted.
 const FINGER_LEAD_MS = 120;
 
+// The hands to draw this frame, built alongside the digits from the same pass
+let handPlans = [];
+
+// Two attacks closer together than this are one hand shape, not a move
+const SAME_ATTACK_MS = 40;
+
 function collectFingerings(notes, currentTimeMs) {
   fingerByPitch = new Map();
+  handPlans = [];
   // The memory pass is asking for the phrase back without showing it. A
   // fingering on the keys would be the answer written out.
   if (blind || !state.ui.showFingering) return;
+
+  // What each hand is playing now, and what it played immediately before —
+  // which is the only way to know a crossing is happening, since a thumb on a
+  // key looks the same as any other thumb until you know where it came from
+  const recent = { left: { atNow: -1, now: [], atWas: -1, was: [] },
+                   right: { atNow: -1, now: [], atWas: -1, was: [] } };
 
   for (const note of notes) {
     const guess = note.finger ? null : suggestedFinger(note.id);
@@ -209,10 +226,87 @@ function collectFingerings(notes, currentTimeMs) {
     const wanted = waitingPitches.has(note.pitch) &&
                    Math.abs(note.startTime - currentTimeMs) <= FINGER_LEAD_MS;
     if (sounding || imminent || wanted) fingerByPitch.set(note.pitch, [finger, Boolean(guess)]);
+
+    if (note.startTime > currentTimeMs + FINGER_LEAD_MS) continue;
+    const slot = recent[handOf(note)];
+    const at = note.startTime;
+    const entry = { finger, pitch: note.pitch, live: sounding || imminent || wanted };
+    if (at > slot.atNow + SAME_ATTACK_MS) {
+      slot.atWas = slot.atNow; slot.was = slot.now;
+      slot.atNow = at; slot.now = [entry];
+    } else if (at > slot.atNow - SAME_ATTACK_MS) {
+      slot.now.push(entry);
+    } else if (at > slot.atWas + SAME_ATTACK_MS) {
+      slot.atWas = at; slot.was = [entry];
+    } else if (at > slot.atWas - SAME_ATTACK_MS) {
+      slot.was.push(entry);
+    }
+  }
+
+  if (!state.ui.handOverlay) return;
+  for (const hand of ['left', 'right']) {
+    const slot = recent[hand];
+    if (!slot.now.length) continue;
+    const anchors = new Map();
+    const live = new Set();
+    for (const e of slot.now) {
+      if (!anchors.has(e.finger)) anchors.set(e.finger, e.pitch);
+      if (e.live) live.add(e.finger);
+    }
+    handPlans.push({ hand, anchors, live, crossing: crossingInto(hand, slot) });
   }
 }
 
+// Whether getting from the previous note to this one means going under or over.
+//
+// The left hand is the right hand in a mirror, so "up" for it is down the
+// keyboard — take that out first and one test does both. Going up onto the
+// thumb, the thumb passes beneath the hand; coming down off it, a finger
+// crosses over the top.
+function crossingInto(hand, slot) {
+  if (!slot.was.length || !slot.now.length) return null;
+  const from = slot.was[slot.was.length - 1];
+  const to = slot.now[0];
+  const rising = hand === 'left' ? from.pitch - to.pitch : to.pitch - from.pitch;
+  if (rising === 0) return null;
+
+  if (rising > 0 && to.finger === 1 && from.finger > 1) {
+    return { kind: 'thumbUnder', finger: 1, fromFinger: from.finger, fromPitch: from.pitch };
+  }
+  if (rising < 0 && from.finger === 1 && to.finger > 1) {
+    return { kind: 'fingerOver', finger: to.finger, fromFinger: 1, fromPitch: from.pitch };
+  }
+  return null;
+}
+
+// Geometry the hand overlay needs, without giving it the key layout to poke at
+function keyboardGeometry() {
+  const whiteWidth = keyLayout.length ? keyLayout.find(k => k.isWhite).w : 0;
+  return {
+    width: kbCanvas.width,
+    height: kbCanvas.height,
+    whiteWidth,
+    whiteDepth: kbCanvas.height - whiteWidth * 0.55,
+    blackDepth: kbCanvas.height * 0.62 - whiteWidth * 0.45,
+    centreOf: (midi) => { const k = keyMap.get(midi); return k ? k.x + k.w / 2 : null; },
+    keyAt: (x) => {
+      // Black keys sit on top, so they win where the two overlap
+      for (const k of keyLayout) {
+        if (!k.isWhite && x >= k.x && x <= k.x + k.w) return k;
+      }
+      for (const k of keyLayout) {
+        if (k.isWhite && x >= k.x && x <= k.x + k.w) return k;
+      }
+      return null;
+    },
+  };
+}
+
 function drawFingerings() {
+  if (state.ui.handOverlay) {
+    if (handPlans.length) drawHands(kbCtx, handPlans, keyboardGeometry(), performance.now());
+    return;
+  }
   if (!fingerByPitch.size) return;
 
   for (const [midi, [finger, guessed]] of fingerByPitch) {

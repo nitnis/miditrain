@@ -188,6 +188,7 @@ function applyStateToControls() {
   document.getElementById('btn-chord-overlay').classList.toggle('active', ui.showChordOverlay);
   document.getElementById('btn-fingering').classList.toggle('active', ui.showFingering);
   document.getElementById('btn-suggest-fingering').classList.toggle('active', ui.suggestFingering);
+  document.getElementById('btn-hand-overlay').classList.toggle('active', ui.handOverlay);
   document.getElementById('btn-count-in').classList.toggle('active', ui.countInEnabled);
   setPracticeMode(ui.trainMode ? 'train' : ui.learnMode ? 'learn' : null);
 
@@ -1263,6 +1264,24 @@ function rebuildFingeringSuggestions() {
   syncFingeringGuessNote();
 }
 
+// ── Hands instead of numbers ─────────────────────────────────────────────────
+// The same fingering, shown as a hand on the keys rather than a digit. It says
+// the thing a digit cannot: which way the hand is facing, and when the thumb
+// has to travel under it to reach the next note.
+function toggleHandOverlay() {
+  const on = !state.ui.handOverlay;
+  update('ui.handOverlay', on);
+  document.getElementById('btn-hand-overlay').classList.toggle('active', on);
+
+  // Hands are a way of showing the fingering, so asking for them asks for it
+  if (on && !state.ui.showFingering) {
+    update('ui.showFingering', true);
+    document.getElementById('btn-fingering').classList.add('active');
+    scheduleSheetRender();
+  }
+  showToast(on ? 'Hands on the keys' : 'Finger numbers on the keys', 1400);
+}
+
 function toggleSuggestFingering() {
   const on = !state.ui.suggestFingering;
   update('ui.suggestFingering', on);
@@ -1475,6 +1494,7 @@ function bindToolbar() {
   document.getElementById('btn-chord-overlay').onclick = () => toggleOverlay('chord');
   document.getElementById('btn-fingering').onclick = () => { toggleOverlay('fingering'); syncFingeringGuessNote(); };
   document.getElementById('btn-suggest-fingering').onclick = toggleSuggestFingering;
+  document.getElementById('btn-hand-overlay').onclick = toggleHandOverlay;
   document.getElementById('btn-learn-mode').onclick = toggleLearnMode;
 
   const speedSlider = document.getElementById('speed-slider');
@@ -2037,6 +2057,10 @@ function shortcutActions() {
       section: 'Options', label: 'Show fingering on the keyboard',
       defaultBindings: [{ code: 'KeyF', shift: true }],
       run: () => toggleOverlay('fingering') },
+    { id: 'hand-overlay', group: 'global', hint: 'btn-hand-overlay',
+      section: 'Options', label: 'Hands on the keys instead of numbers',
+      defaultBindings: [{ code: 'KeyD', shift: true }],
+      run: () => toggleHandOverlay() },
     { id: 'suggest-fingering', group: 'global', hint: 'btn-suggest-fingering',
       section: 'Options', label: 'Suggest a fingering for this piece',
       defaultBindings: [{ code: 'KeyG', shift: true }],

@@ -37,6 +37,7 @@ const _state = {
     showChordOverlay: true, // the name of the chord under the playhead
     showFingering: true,    // finger numbers on the keys, where the exercise carries them
     suggestFingering: false, // work out a fingering for a piece that has none: a guess, off by default
+    handOverlay: false,     // draw hands on the keys instead of finger numbers
     muted: false,           // master audio mute; audible by default
     volume: 1,              // 0..1, applied at the master gain
     clicksOnly: false,      // silence the notes, keep the metronome and count-in
