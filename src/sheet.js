@@ -335,7 +335,7 @@ export function markLoopRange(startBar, endBar) {
   if (last) addLoopHandle('end', last.right, last.top, last.height);
 }
 
-const HANDLE_W = 12;
+const HANDLE_W = 16;
 
 function addLoopHandle(edge, x, top, height) {
   const handle = document.createElement('div');
@@ -350,10 +350,20 @@ function addLoopHandle(edge, x, top, height) {
   loopLayer.appendChild(handle);
 }
 
-// Which bar a point on the page is over, 1-based. The nearest one rather than
-// only a direct hit, so dragging an edge past the end of a system still lands
-// somewhere sensible instead of stalling.
-export function barAtPoint(clientX, clientY) {
+// Which bar a dragged loop edge should land on, 1-based.
+//
+// The nearest bar *boundary*, not the bar the pointer happens to be inside.
+// What is being dragged is a line between two bars, and asking which bar the
+// pointer is in gets that wrong twice over: the answer only changes after a
+// whole bar has been crossed — a third of the width of a system, so the range
+// sits still while you drag and the handle looks stuck — and the handle itself
+// straddles the boundary, so its own position reads as the bar before, and
+// merely taking hold of it and twitching left threw the range back a bar.
+//
+// A start edge snaps to a bar's left-hand side and an end edge to its right,
+// so both follow the pointer within half a bar and neither moves at all when
+// the pointer has not.
+export function barAtPoint(clientX, clientY, edge = 'start') {
   if (!container || !_staveGeom.length) return null;
   const scroller = container.parentElement;
   const box = scroller.getBoundingClientRect();
@@ -368,7 +378,7 @@ export function barAtPoint(clientX, clientY) {
     const top = g.y - 8;
     const bottom = (bass ? bass.y : g.y) + 95;
     const dy = py < top ? top - py : (py > bottom ? py - bottom : 0);
-    const dx = px < g.x ? g.x - px : (px > g.x + g.w ? px - (g.x + g.w) : 0);
+    const dx = Math.abs(px - (edge === 'end' ? g.x + g.w : g.x));
     // Which system the pointer is on settles it before which bar across it —
     // otherwise a drag drifting vertically snaps to the wrong line of music
     const score = dy * 1000 + dx;

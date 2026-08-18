@@ -1620,7 +1620,7 @@ function bindLoopHandles() {
 
   box.addEventListener('pointermove', (e) => {
     if (!edge) return;
-    const bar = barAtPoint(e.clientX, e.clientY);
+    const bar = barAtPoint(e.clientX, e.clientY, edge);
     if (!bar) return;
     const { loopStartBar, loopEndBar } = state.transport;
     // Bars are the unit, so this snaps on its own; the ends cannot cross
