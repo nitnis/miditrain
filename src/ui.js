@@ -406,10 +406,9 @@ function setRecordHand(hand) {
 }
 
 function syncRecordHand() {
-  const el = document.getElementById('record-hand');
-  el.value = state.ui.recordHand;
-  el.classList.toggle('left', state.ui.recordHand === 'left');
-  el.classList.toggle('right', state.ui.recordHand === 'right');
+  for (const opt of document.querySelectorAll('#record-hand .hand-opt')) {
+    opt.classList.toggle('on', opt.dataset.hand === state.ui.recordHand);
+  }
 }
 
 // Step through auto → left → right, so one key covers the whole control
@@ -1384,7 +1383,9 @@ function bindToolbar() {
     scheduleSheetRender();
   };
 
-  document.getElementById('record-hand').onchange = (e) => setRecordHand(e.target.value);
+  for (const opt of document.querySelectorAll('#record-hand .hand-opt')) {
+    opt.onclick = () => setRecordHand(opt.dataset.hand);
+  }
   document.getElementById('practice-hand').onchange = (e) => setPracticeHand(e.target.value);
   document.getElementById('learn-cluster').onchange = (e) => setLearnCluster(e.target.value);
   document.getElementById('btn-mute').onclick = toggleMute;

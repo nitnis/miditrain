@@ -1435,12 +1435,43 @@ input[type="number"] { -webkit-appearance: none; }
 /* Which hand new notes go to, and which hand is being practised. Both take the
    falling notes' own hand colours, so a control naming a hand and the notes of
    that hand agree. */
-#record-hand {
-  height: 28px;
-  font-size: 12px;
-  padding: 2px 4px;
+
+/* Recording's one option, stacked under the transport buttons rather than
+   sitting in the row beside them, where it read as a setting for the app at
+   large instead of for the red button two inches to its left. */
+.transport-stack { display: flex; flex-direction: column; gap: 5px; }
+.transport-buttons { display: flex; align-items: center; gap: 5px; }
+.record-options {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 2px;
 }
-#record-hand.left,
+
+.hand-switch {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.hand-opt {
+  min-width: 46px;
+  height: 24px;
+  padding: 0 8px;
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.hand-opt:last-child { border-right: none; }
+.hand-opt:hover { color: var(--text); background: var(--border); }
+.hand-opt.on { background: var(--muted); color: var(--bg); font-weight: 600; }
+/* The hand it names, in that hand's own colour */
+.hand-opt.on[data-hand="left"]  { background: #f472b6; color: #1a1024; }
+.hand-opt.on[data-hand="right"] { background: #3d8bfd; color: #06122a; }
+
 #practice-hand.left  { border-color: #f472b6; color: #f472b6; }
-#record-hand.right,
 #practice-hand.right { border-color: #3d8bfd; color: #3d8bfd; }
