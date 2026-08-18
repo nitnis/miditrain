@@ -2,6 +2,7 @@
 import { state, update, emit, on } from './state.js';
 import { record, play, stop, stopAndRewind, startCountIn, playRange, seekTo, seekToStart, seekToEnd, clearAllNotes, transposeNotes, transposeAll, setNotesHand, applyLegato, deleteNotes, changeTempo, getCompositionDuration } from './transport.js';
 import { renderSheet, initSheet, getChordOverlayData, getStaveGeometry, movePlayhead, markLoopRange, barAtPoint } from './sheet.js';
+import { refreshSuggestions } from './autofinger.js';
 import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWaitingPitches, setFallingBlind, setLoopPick, noteAtFallingPoint, fallingMsPerPixel } from './pianoroll.js';
 import { startLearn, stopLearn, CLUSTERS } from './learn.js';
 import {
@@ -72,7 +73,9 @@ export function initUI() {
     if (state.ui.view === 'piano-roll') scheduleSheetRender();
   }).observe(document.getElementById('roll-scroll'));
 
-  // Re-render sheet on notes change
+  // Re-render sheet on notes change. That pass also rebuilds any suggested
+  // fingering, which is worked out for the whole passage at once and would
+  // otherwise be left describing the notes as they used to be.
   on('transport:noteschanged', () => scheduleSheetRender());
   // Stopping used to repaint so the playhead would follow, and again to clear
   // it. The overlay does both for free now, so the only thing left that stop
@@ -151,6 +154,7 @@ export function initUI() {
 
   updateMidiStatus(false);
   applyStateToControls();
+  syncFingeringGuessNote();
   scheduleSheetRender();
 }
 
@@ -183,6 +187,7 @@ function applyStateToControls() {
   document.getElementById('btn-beat-overlay').classList.toggle('active', ui.showBeatOverlay);
   document.getElementById('btn-chord-overlay').classList.toggle('active', ui.showChordOverlay);
   document.getElementById('btn-fingering').classList.toggle('active', ui.showFingering);
+  document.getElementById('btn-suggest-fingering').classList.toggle('active', ui.suggestFingering);
   document.getElementById('btn-count-in').classList.toggle('active', ui.countInEnabled);
   setPracticeMode(ui.trainMode ? 'train' : ui.learnMode ? 'learn' : null);
 
@@ -1224,6 +1229,43 @@ function toggleOverlay(which) {
   showToast(shown ? on : off, 1200);
 }
 
+// ── Suggested fingering ──────────────────────────────────────────────────────
+// Working out a fingering for a piece nobody has fingered. Kept apart from the
+// Fingering switch above, which only decides whether to show numbers: this one
+// decides whether to invent them, and what it invents is a guess. It says so
+// on the button, in the toast, above the score, and in the italics the digits
+// are set in.
+
+function syncFingeringGuessNote() {
+  const note = document.getElementById('fingering-guess-note');
+  if (note) note.classList.toggle('hidden', !(state.ui.suggestFingering && state.ui.showFingering));
+}
+
+// The suggestion is for the whole passage at once, so any edit invalidates all
+// of it rather than just the note that moved. Called from the render pass,
+// after the hands have been inferred and no more than once per debounce.
+function rebuildFingeringSuggestions() {
+  refreshSuggestions(state.composition.notes);
+  syncFingeringGuessNote();
+}
+
+function toggleSuggestFingering() {
+  const on = !state.ui.suggestFingering;
+  update('ui.suggestFingering', on);
+  document.getElementById('btn-suggest-fingering').classList.toggle('active', on);
+
+  // Asking for a fingering and being shown nothing is not an answer, so turning
+  // this on turns the numbers on with it
+  if (on && !state.ui.showFingering) {
+    update('ui.showFingering', true);
+    document.getElementById('btn-fingering').classList.add('active');
+  }
+
+  syncFingeringGuessNote();
+  scheduleSheetRender();
+  showToast(on ? 'Suggested fingering on — an automated guess, not editorial' : 'Suggested fingering off', 2200);
+}
+
 function toggleMetronome() {
   const enabled = !state.ui.metronomeEnabled;
   update('ui.metronomeEnabled', enabled);
@@ -1417,7 +1459,8 @@ function bindToolbar() {
   document.getElementById('metro-subdivision').onchange = (e) => setSubdivision(e.target.value);
   document.getElementById('btn-beat-overlay').onclick = () => toggleOverlay('beat');
   document.getElementById('btn-chord-overlay').onclick = () => toggleOverlay('chord');
-  document.getElementById('btn-fingering').onclick = () => toggleOverlay('fingering');
+  document.getElementById('btn-fingering').onclick = () => { toggleOverlay('fingering'); syncFingeringGuessNote(); };
+  document.getElementById('btn-suggest-fingering').onclick = toggleSuggestFingering;
   document.getElementById('btn-learn-mode').onclick = toggleLearnMode;
 
   const speedSlider = document.getElementById('speed-slider');
@@ -1980,6 +2023,10 @@ function shortcutActions() {
       section: 'Options', label: 'Show fingering on the keyboard',
       defaultBindings: [{ code: 'KeyF', shift: true }],
       run: () => toggleOverlay('fingering') },
+    { id: 'suggest-fingering', group: 'global', hint: 'btn-suggest-fingering',
+      section: 'Options', label: 'Suggest a fingering for this piece',
+      defaultBindings: [{ code: 'KeyG', shift: true }],
+      run: () => toggleSuggestFingering() },
     { id: 'record-hand', group: 'global', hint: 'record-hand',
       section: 'Options', label: 'Which hand new notes are written to',
       defaultBindings: [{ code: 'KeyH' }],
@@ -2342,6 +2389,12 @@ function scheduleSheetRender() {
     // Which hand plays what is read off the texture, so it has to be up to
     // date before either view draws
     inferHands(state.composition.notes, (60 / state.composition.tempo) * 1000);
+    // ...and a suggested fingering is worked out per hand, so it has to come
+    // after that and not before, or a note whose hand was only just inferred
+    // gets fingered as though it belonged to the other one. Inside the debounce
+    // rather than on every note change, so holding a chord down while recording
+    // does not re-solve the whole piece once per key.
+    rebuildFingeringSuggestions();
     sheetShowsStepCursor = state.transport.mode === 'step-recording';
     const t = sheetShowsStepCursor ? null : state.transport.currentTime;
     if (state.ui.view !== 'piano-roll') {

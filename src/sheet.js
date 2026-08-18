@@ -1,6 +1,7 @@
 // VexFlow 4.x sheet music renderer (grand staff)
 import { state } from './state.js';
 import { quantizeNotes, groupByMeasure, groupIntoChords, fillWithRests, findBestDuration, splitAcrossBarlines } from './quantizer.js';
+import { suggestedFinger, hasSuggestions } from './autofinger.js';
 import { detectChordRuns, spellPitchClass } from './chords.js';
 import { isRightHand } from './hands.js';
 
@@ -90,6 +91,7 @@ const TOP_PAD = 6;
 export function renderSheet(notes, composition, currentTimeMs = null, retry = false) {
   _chordOverlayData = [];
   _staveGeom = [];
+  guessId = 0;
   if (!container || !window.Vex) return;
 
   const {
@@ -128,9 +130,14 @@ export function renderSheet(notes, composition, currentTimeMs = null, retry = fa
   // it, one system's left-hand numbers land on the next system's right-hand
   // ones. Whatever a deep run of ledger lines pushes past this allowance is
   // caught by growToFitOverflow at the end.
-  const FINGER_ROOM = 40;
-  const fingered = state.ui.showFingering && segments.some(s => s.finger && !s.tiedFromPrev);
-  const SYSTEM_H = 220 + (fingered ? FINGER_ROOM : 0); // treble + bass + gap
+  // A chord's fingering is a column of digits, not one, so the room a system
+  // needs depends on how many notes the thickest chord holds. Fixed at one
+  // row's worth, a left hand playing triads pushes its numbers down into the
+  // next system's chord labels.
+  const fingered = state.ui.showFingering &&
+    (hasSuggestions() || segments.some(s => s.finger && !s.tiedFromPrev));
+  const FINGER_ROOM = fingered ? 26 + 15 * deepestChord(segments) : 0;
+  const SYSTEM_H = 220 + FINGER_ROOM; // treble + bass + gap
 
   const numLines = Math.ceil(totalMeasures / MEASURES_PER_LINE);
   const totalH = topMargin + numLines * SYSTEM_H + 60;
@@ -233,6 +240,22 @@ export function renderSheet(notes, composition, currentTimeMs = null, retry = fa
   playheadBeatsPerMeasure = beatsPerMeasure;
   playheadBeatMs = (60 / tempo) * 1000;
   movePlayhead(stepping ? null : currentTimeMs);
+}
+
+// The most notes any one hand holds at once, which is how tall a stack of
+// finger numbers can get. Counted per staff, since the two staves' fingerings
+// go in opposite directions and never stack on each other.
+function deepestChord(segments) {
+  const counts = new Map();
+  let deepest = 1;
+  for (const seg of segments) {
+    if (seg.tiedFromPrev) continue;
+    const at = `${isRightHand(seg) ? 'r' : 'l'}:${seg.startBeats.toFixed(3)}`;
+    const n = (counts.get(at) || 0) + 1;
+    counts.set(at, n);
+    if (n > deepest) deepest = n;
+  }
+  return Math.min(5, deepest);
 }
 
 // ── Measure widths ───────────────────────────────────────────────────────────
@@ -657,7 +680,12 @@ function drawTies(segments, placement) {
 //
 // On a note written across a barline the number goes on the head that is
 // actually struck, not on the tied continuation of it.
+// A suggested fingering is set in italic, which is how an editor's addition has
+// always been marked off from the composer's own. The caption over the score
+// says so in words as well.
 const FINGER_FONT = { family: 'system-ui, sans-serif', size: 11, weight: '600' };
+const GUESS_FONT = { family: 'system-ui, sans-serif', size: 11, weight: '500' };
+let guessId = 0;
 
 function addFingerings(note, group, clef) {
   if (!state.ui.showFingering) return;
@@ -670,15 +698,23 @@ function addFingerings(note, group, clef) {
   const stack = below ? [...group].reverse() : group;
 
   for (const seg of stack) {
-    if (!seg.finger || seg.tiedFromPrev) continue;
+    if (seg.tiedFromPrev) continue;
+    const guess = seg.finger ? null : suggestedFinger(seg.id);
+    const finger = seg.finger || guess;
+    if (!finger) continue;
     try {
-      const mark = new Annotation(String(seg.finger));
+      const mark = new Annotation(String(finger));
       mark.setVerticalJustification(below ? Annotation.VerticalJustify.BOTTOM
                                           : Annotation.VerticalJustify.TOP);
-      mark.setFont(FINGER_FONT.family, FINGER_FONT.size, FINGER_FONT.weight);
+      const font = guess ? GUESS_FONT : FINGER_FONT;
+      mark.setFont(font.family, font.size, font.weight, guess ? 'italic' : 'normal');
+      // VexFlow puts an annotation's id on the group it draws into, which is
+      // the only hook the stylesheet gets: a guess is coloured apart from a
+      // fingering that is actually known.
+      if (guess) mark.setAttribute('id', `fingerguess-${guessId++}`);
       note.addModifier(mark, group.indexOf(seg));
     } catch (e) {
-      console.warn('Fingering:', seg.finger, e.message);
+      console.warn('Fingering:', finger, e.message);
     }
   }
 }

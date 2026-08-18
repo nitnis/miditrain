@@ -597,6 +597,23 @@ select:focus { outline: 1px solid var(--accent); }
 /* Fingering: its own colour so the row of digits reads as a separate layer
    from the notes it belongs to, rather than as something on the staff */
 #vexflow-output svg g.vf-annotation text { fill: #9fb4ff; }
+/* A worked-out fingering is somebody's guess, not the piece's own. Italic and
+   a different ink, the way an editorial addition has always been marked. */
+#vexflow-output svg g.vf-annotation[id^="vf-fingerguess-"] text { fill: #8f83c9; }
+
+/* Says in words what the italics say in convention. Sits above the score
+   rather than inside the drawing, so re-rendering never has to redraw it. */
+.sheet-guess-note {
+  padding: 5px 12px;
+  margin: 0 0 2px 10px;
+  font-size: 12px;
+  color: #8f83c9;
+  font-style: italic;
+  border-left: 3px solid #8f83c9;
+  background: rgba(143, 131, 201, 0.09);
+  border-radius: 0 4px 4px 0;
+}
+.sheet-guess-note.hidden { display: none; }
 
 /* ── PIANO SECTION ── */
 #piano-resizer {
