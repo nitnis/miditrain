@@ -545,8 +545,9 @@ select:focus { outline: 1px solid var(--accent); }
   cursor: ew-resize;
   z-index: 4;
   border-radius: 4px;
+  /* The whole edge reads as the thing you take hold of, not just the grip */
   background:
-    linear-gradient(180deg, rgba(255, 214, 51, 0.16), rgba(255, 214, 51, 0.16))
+    linear-gradient(180deg, rgba(255, 214, 51, 0.55), rgba(255, 214, 51, 0.55))
       no-repeat center / 3px 100%,
     transparent;
   touch-action: none;
@@ -557,10 +558,10 @@ select:focus { outline: 1px solid var(--accent); }
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 9px;
-  height: 34px;
+  width: 10px;
+  height: 46px;
   border-radius: 5px;
-  background: rgba(255, 214, 51, 0.9);
+  background: rgba(255, 214, 51, 0.92);
   box-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
 }
 .sheet-loop-handle:hover::before,
