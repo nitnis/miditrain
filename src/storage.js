@@ -70,6 +70,14 @@ export function compositionToJSON(composition) {
         // Only when the source actually said so — an inferred hand is derived
         // from the notes and would go stale the moment they are edited
         ...(n.hand ? { hand: n.hand } : {}),
+        // Things a note knows about itself that cannot be worked out again from
+        // its pitch. How it is spelled is the generator's decision — the
+        // seventh degree of A harmonic minor is a raised G, and nothing about
+        // the pitch says so — and which finger plays it is the fingering the
+        // exercise was written with. Left out of this list, both survived until
+        // the moment the piece was saved and were silently gone on the way back.
+        ...(n.spelling ? { spelling: n.spelling } : {}),
+        ...(n.finger ? { finger: n.finger } : {}),
       })),
     },
   }, null, 2);
@@ -98,6 +106,12 @@ export async function loadWorkingComposition() {
 
 const isFiniteNumber = (v) => typeof v === 'number' && Number.isFinite(v);
 
+// A note letter with at most a double accidental — the same shape the score
+// reader expects, so a malformed one cannot reach VexFlow
+const SPELLING = /^[A-G](##?|bb?|n)?$/;
+const isSpelling = (v) => typeof v === 'string' && SPELLING.test(v);
+const isFinger = (v) => Number.isInteger(v) && v >= 1 && v <= 5;
+
 // Throws with a message worth showing the user. Never returns a partly-valid
 // composition — a malformed file must not be able to half-load over their work.
 export function compositionFromJSON(text) {
@@ -124,6 +138,8 @@ export function compositionFromJSON(text) {
       startTime: Math.max(0, n.startTime),
       duration: Math.max(1, n.duration),
       ...(n.hand === 'left' || n.hand === 'right' ? { hand: n.hand } : {}),
+      ...(isSpelling(n.spelling) ? { spelling: n.spelling } : {}),
+      ...(isFinger(n.finger) ? { finger: n.finger } : {}),
     }))
     .sort((a, b) => a.startTime - b.startTime);
 
