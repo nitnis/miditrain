@@ -35,6 +35,7 @@ const SETTINGS = {
   'ui.showChordOverlay': bool,
   'ui.showFingering': bool,
   'ui.suggestFingering': bool,
+  'ui.handOverlay': bool,
   'ui.muted': bool,
   'ui.volume': range(0, 1),
   'ui.clicksOnly': bool,
