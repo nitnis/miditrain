@@ -202,6 +202,16 @@ function ctxTimeFor(compMs, speed) {
   return anchorCtxTime + (compMs - anchorMs) / (1000 * speed);
 }
 
+// Normally the piece. Set to something else — a recording of what the player
+// just did — to hear that instead, on the same clock and through the same
+// scheduler, so a replay is not a second sound path that can drift from the
+// first one.
+let playbackSource = null;
+
+export function setPlaybackSource(notes) {
+  playbackSource = notes && notes.length ? notes : null;
+}
+
 function pump() {
   const c = getAudioContext();
   const speed = state.transport.speed || 1;
@@ -209,7 +219,7 @@ function pump() {
   const horizonMs = nowMs + LOOKAHEAD_MS * speed;
   if (horizonMs <= scheduledUpToMs) return;
 
-  for (const note of state.composition.notes) {
+  for (const note of (playbackSource || state.composition.notes)) {
     if (note.startTime < scheduledUpToMs || note.startTime >= horizonMs) continue;
     const when = Math.max(ctxTimeFor(note.startTime, speed), c.currentTime);
     scheduleVoice(note.pitch, note.velocity ?? 90, when, note.duration / (1000 * speed));
