@@ -173,7 +173,11 @@ function checkHit(pitch, time, playedNote) {
 // Recomputed from the current grades every time rather than decided once, so a
 // stray note temporarily excused by a note not yet played goes back to being an
 // extra the moment that note is played properly.
-function countExtras() {
+// Which keypresses are actually extras, rather than how many. The replay
+// counts them off one at a time as it goes, and it has to arrive at the same
+// number the results screen shows — so both read the same answer rather than
+// each deciding for itself what an extra is.
+function classifyStrays() {
   const window = Math.max(ALMOST_MS, Math.min(SUBSTITUTION_MAX_MS, sessionBeatMs));
   const unplayed = expectedNotes
     .filter(n => n.grade === null || n.grade === 'miss')
@@ -183,14 +187,18 @@ function countExtras() {
   // the nearest lets each keypress claim the note in front of it, shunting the
   // whole run along by one and leaving the last keypress with nothing — which
   // is how a run played uniformly late still came out with an extra on it.
-  let extras = 0;
+  const strays = new Set();
   for (const played of playedNotes) {
     if (played.matched) continue;
     const stoodInFor = unplayed.find(c => !c.taken && Math.abs(c.at - played.time) <= window);
     if (stoodInFor) stoodInFor.taken = true;
-    else extras += 1;
+    else strays.add(played);
   }
-  return extras;
+  return strays;
+}
+
+function countExtras() {
+  return classifyStrays().size;
 }
 
 // Running score, for the live gauge
@@ -263,6 +271,7 @@ const REPLAY_DEFAULT_MS = 200;
 
 export function getTake() {
   if (!playedNotes.length) return null;
+  const strays = classifyStrays();
   return {
     range: sessionRange,
     notes: playedNotes.map((n, i) => ({
@@ -272,6 +281,17 @@ export function getTake() {
       startTime: n.time,
       duration: n.heldMs ?? REPLAY_DEFAULT_MS,
       matched: n.matched,
+      // Charged as an extra, as opposed to standing in for a note that was
+      // missed — the distinction the score already makes, passed on so the
+      // replay's running count lands on the same total
+      stray: strays.has(n),
+    })),
+    // What was written, with how each one turned out and when it was due, so a
+    // tally can be run forward alongside the replay
+    expected: expectedNotes.map(n => ({
+      pitch: n.pitch,
+      startTime: n.startTimeMs,
+      grade: n.grade,
     })),
   };
 }

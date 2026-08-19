@@ -755,6 +755,56 @@ select:focus { outline: 1px solid var(--accent); }
   backdrop-filter: blur(3px);
 }
 .learn-status.hidden { display: none; }
+
+/* Replay tally. The far corner belongs to the metronome, so this sits just
+   inside it — near enough to read as the same corner, clear enough not to
+   overlap the signal. */
+.replay-counters {
+  position: absolute;
+  top: 8px;
+  right: 112px;
+  display: flex;
+  gap: 10px;
+  padding: 6px 12px;
+  background: rgba(13, 13, 26, 0.78);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  pointer-events: none;
+  backdrop-filter: blur(3px);
+}
+.replay-counters.hidden { display: none; }
+.rc-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 34px;
+  line-height: 1.1;
+}
+.rc-item b {
+  font-size: 16px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.rc-item i {
+  font-style: normal;
+  font-size: 9px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.rc-item.perfect b { color: #3ee87a; }
+.rc-item.correct b { color: var(--green); }
+.rc-item.almost  b { color: var(--yellow); }
+.rc-item.missed  b { color: var(--red); }
+.rc-item.extra   b { color: #ff8c5a; }
+/* A count that has just gone up, so the moment it happens is visible rather
+   than only the total afterwards */
+.rc-item b.bumped { animation: rc-bump 0.35s ease-out; }
+@keyframes rc-bump {
+  0%   { transform: scale(1); }
+  35%  { transform: scale(1.45); }
+  100% { transform: scale(1); }
+}
 .learn-count {
   font-size: 14px;
   font-weight: 800;
