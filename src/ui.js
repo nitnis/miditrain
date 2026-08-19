@@ -3,7 +3,7 @@ import { state, update, emit, on } from './state.js';
 import { record, play, stop, stopAndRewind, startCountIn, playRange, seekTo, seekToStart, seekToEnd, clearAllNotes, transposeNotes, transposeAll, setNotesHand, applyLegato, deleteNotes, changeTempo, getCompositionDuration } from './transport.js';
 import { renderSheet, initSheet, getChordOverlayData, getStaveGeometry, movePlayhead, markLoopRange, barAtPoint } from './sheet.js';
 import { refreshSuggestions, hasSuggestions } from './autofinger.js';
-import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWaitingPitches, setFallingBlind, setLoopPick, noteAtFallingPoint, fallingMsPerPixel } from './pianoroll.js';
+import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWaitingPitches, setFallingBlind, setLoopPick, setTakeGhosts, noteAtFallingPoint, fallingMsPerPixel } from './pianoroll.js';
 import { startLearn, stopLearn, CLUSTERS } from './learn.js';
 import {
   startSectionWalk, stopSectionWalk, repeatSection, advanceSection,
@@ -11,9 +11,9 @@ import {
 } from './section-learn.js';
 import { saveComposition, listCompositions, deleteComposition, compositionToJSON, compositionFromJSON } from './storage.js';
 import { compositionToMidi, midiToComposition } from './midi-file.js';
-import { startAccuracy, stopAccuracy, getWorstSection, EXTRA_PENALTY_PCT } from './accuracy.js';
+import { startAccuracy, stopAccuracy, getWorstSection, getTake, EXTRA_PENALTY_PCT } from './accuracy.js';
 import { startMetronome, stopMetronome } from './metronome.js';
-import { resumeAudioContext, applyOutputLevel, applyClicksOnly } from './audio.js';
+import { resumeAudioContext, applyOutputLevel, applyClicksOnly, setPlaybackSource } from './audio.js';
 import { startStepRecord, stopStepRecord, stepInsertRest, stepGoBack, getStepMs } from './step-recorder.js';
 import { initNoteEditor, getSelectedIds, clearSelection } from './note-editor.js';
 import { staffPositionName, midiToNoteWithOctave } from './chords.js';
@@ -1371,6 +1371,7 @@ function startTrainingSession(bars = null) {
   if (!bars && lastTrainingBars) {
     showToast(`Training bars ${lastTrainingBars.startBar}–${lastTrainingBars.endBar}`, 1800);
   }
+  endReplay();
   clearKeyEffects();
   showGauge(true);
 
@@ -1386,6 +1387,54 @@ function startTrainingSession(bars = null) {
 
 function retryTraining() {
   startTrainingSession(lastTrainingBars);
+}
+
+// ── Replaying the take ───────────────────────────────────────────────────────
+// A score tells you how it went. It does not tell you where, and "68%" with a
+// note or two missed is a puzzle rather than a lesson. So the run is played
+// back: what the player actually pressed, sounding on the same clock, with
+// every keypress drawn as an outline over the note it was aimed at. A ring
+// trailing above its note is a note played late; one running ahead is a rush;
+// a red one on its own is a note that was not written at all.
+
+let replayStopper = null;
+// The last run's results, kept so the replay can put the screen back up
+let lastResults = null;
+
+function replayTake() {
+  const take = getTake();
+  if (!take || !take.notes.length) {
+    showToast('Nothing to replay — no keys were pressed in that run', 2200);
+    return;
+  }
+  document.getElementById('accuracy-modal').classList.add('hidden');
+  endReplay();
+
+  const range = take.range;
+  // Far enough back that the first keypress is not already at the hit line,
+  // and far enough on that the last one has somewhere to land
+  const first = Math.min(...take.notes.map(n => n.startTime));
+  const last = Math.max(...take.notes.map(n => n.startTime + n.duration));
+  const from = Math.max(0, Math.min(range ? range.startMs : first, first) - 200);
+  const to = Math.max(range ? range.endMs : last, last) + 700;
+
+  setTakeGhosts(take.notes);
+  setPlaybackSource(take.notes);
+  // Reaching the end puts the results back up, so Try Again and the practice
+  // suggestion are where they were rather than a screen the replay swallowed
+  replayStopper = on('transport:stop', () => endReplay(true));
+  showToast('Replaying your take — outlines are the keys you pressed', 2600);
+  playRange(from, to);
+}
+
+// Whatever ends the replay — it running out, the transport being stopped, a new
+// run being started — puts the sound and the drawing back to the piece
+function endReplay(reopenResults = false) {
+  const wasReplaying = Boolean(replayStopper);
+  if (replayStopper) { replayStopper(); replayStopper = null; }
+  setPlaybackSource(null);
+  setTakeGhosts([]);
+  if (wasReplaying && reopenResults && lastResults) showAccuracyResults(lastResults);
 }
 
 // ── Retry tempo ──────────────────────────────────────────────────────────────
@@ -2781,6 +2830,7 @@ function updateChordOverlay() {
 }
 
 function showAccuracyResults(results) {
+  lastResults = results;
   const modal = document.getElementById('accuracy-modal');
   const { score, perfect, good, almost, missed, extra, avgLatencyMs } = results;
 
@@ -2794,9 +2844,11 @@ function showAccuracyResults(results) {
   document.getElementById('stat-almost').textContent = almost;
   document.getElementById('stat-correct').textContent = good;
   document.getElementById('stat-missed').textContent = missed;
-  // Say what the extras cost, or the score looks like it lost marks nowhere
+  // Say what the extras actually cost. A handful are charged at what a missed
+  // note costs and no more; past a tenth of the piece they are charged in full,
+  // and the label says which of the two happened.
   document.getElementById('stat-extra').textContent = extra
-    ? `${extra} (−${extra * EXTRA_PENALTY_PCT}%)`
+    ? `${extra} (−${results.penalty}%${results.extrasCharged ? ', over 10%' : ''})`
     : '0';
   document.getElementById('stat-timing').textContent = `±${avgLatencyMs}ms`;
 
@@ -2811,6 +2863,7 @@ function showAccuracyResults(results) {
 
   // Offer the roughest couple of bars, when there is one worth repeating
   const worst = getWorstSection(state.composition);
+  document.getElementById('btn-replay-take').onclick = replayTake;
   const sectionBtn = document.getElementById('btn-train-section');
   if (worst) {
     sectionBtn.hidden = false;
