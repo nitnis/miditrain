@@ -1420,6 +1420,7 @@ function replayTake() {
 
   setTakeGhosts(take.notes);
   setPlaybackSource(take.notes);
+  startReplayCounters(take);
   // Reaching the end puts the results back up, so Try Again and the practice
   // suggestion are where they were rather than a screen the replay swallowed
   replayStopper = on('transport:stop', () => endReplay(true));
@@ -1434,7 +1435,74 @@ function endReplay(reopenResults = false) {
   if (replayStopper) { replayStopper(); replayStopper = null; }
   setPlaybackSource(null);
   setTakeGhosts([]);
+  stopReplayCounters();
   if (wasReplaying && reopenResults && lastResults) showAccuracyResults(lastResults);
+}
+
+// ── The tally, counted off as it goes ────────────────────────────────────────
+// The same numbers the results screen ends on, but arrived at in front of you:
+// the missed counter ticking up at the moment the note goes past unplayed says
+// where it went wrong far more plainly than the same figure does afterwards.
+//
+// Everything at or before the playhead is counted, rather than kept as a
+// running total that events push at — so scrubbing backwards during a replay
+// takes the counts back down with it instead of leaving them stranded high.
+
+const REPLAY_COUNTS = [
+  ['perfect', 'rc-perfect'],
+  ['good', 'rc-good'],
+  ['almost', 'rc-almost'],
+  ['missed', 'rc-missed'],
+  ['extra', 'rc-extra'],
+];
+
+let replayData = null;
+let replayTicker = null;
+let replayShown = {};
+
+function startReplayCounters(take) {
+  replayData = take;
+  replayShown = {};
+  document.getElementById('replay-counters').classList.remove('hidden');
+  for (const [, id] of REPLAY_COUNTS) document.getElementById(id).textContent = '0';
+  replayTicker = on('transport:tick', updateReplayCounters);
+  updateReplayCounters(state.transport.currentTime);
+}
+
+function stopReplayCounters() {
+  if (replayTicker) { replayTicker(); replayTicker = null; }
+  replayData = null;
+  document.getElementById('replay-counters').classList.add('hidden');
+}
+
+function updateReplayCounters(nowMs) {
+  if (!replayData) return;
+  const counts = { perfect: 0, good: 0, almost: 0, missed: 0, extra: 0 };
+
+  // A written note is accounted for once the playhead has passed it
+  for (const note of replayData.expected) {
+    if (note.startTime > nowMs) continue;
+    if (note.grade === 'perfect') counts.perfect++;
+    else if (note.grade === 'good') counts.good++;
+    else if (note.grade === 'almost') counts.almost++;
+    else counts.missed++;
+  }
+  // A stray is counted from the moment the key went down, which is where the
+  // outline for it is on screen
+  for (const note of replayData.notes) {
+    if (note.stray && note.startTime <= nowMs) counts.extra++;
+  }
+
+  for (const [key, id] of REPLAY_COUNTS) {
+    if (replayShown[key] === counts[key]) continue;
+    const el = document.getElementById(id);
+    el.textContent = counts[key];
+    // Restart the flash rather than letting a second bump inherit a running one
+    el.classList.remove('bumped');
+    void el.offsetWidth;
+    if (replayShown[key] !== undefined) el.classList.add('bumped');
+    replayShown[key] = counts[key];
+  }
 }
 
 // ── Retry tempo ──────────────────────────────────────────────────────────────
