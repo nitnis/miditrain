@@ -17,15 +17,50 @@ const GRADE_CREDIT = { perfect: 1, good: 1, almost: 0.5, miss: 0 };
 // one that hit nothing it shouldn't have. Each extra costs a flat slice.
 export const EXTRA_PENALTY_PCT = 3;
 
+// ...but a flat slice is the wrong price for a stray note in an ordinary run.
+// A missed note costs one note's worth of the piece — 100/total — so in
+// anything longer than about thirty notes a flat 3% made pressing a wrong key
+// cost more than not playing at all, which is backwards: the wrong note at
+// least shows the passage was attempted at tempo.
+//
+// So a few strays cost what a miss costs, and no more. What the flat slice is
+// actually there to stop is the other thing: covering the general area with
+// both hands so that something lands right. Past a tenth of the piece the
+// keypresses are not slips any more, and the full penalty comes back.
+const EXTRA_FREE_RATIO = 0.10;
+
+function extraCost(extras, total) {
+  if (!extras || !total) return { penalty: 0, dearer: false };
+  const full = extras * EXTRA_PENALTY_PCT;
+  const capped = extras * Math.min(EXTRA_PENALTY_PCT, 100 / total);
+  const over = extras > total * EXTRA_FREE_RATIO;
+  return {
+    penalty: over ? full : capped,
+    // Only worth telling the player the threshold was crossed when crossing it
+    // actually cost them something. In a piece of fewer than about thirty
+    // notes the two prices are the same, and a run with one slip in it would
+    // otherwise be labelled as though it had been gamed.
+    dearer: over && full > capped + 1e-6,
+  };
+}
+
+function extraPenalty(extras, total) {
+  return extraCost(extras, total).penalty;
+}
+
 // How near an unplayed note a stray keypress has to be to have been played
 // instead of it. A beat is the unit at which "instead of" means anything —
 // never tighter than the grading window itself, and never so loose that a slow
 // tempo excuses a keypress a second and a half from anything.
 const SUBSTITUTION_MAX_MS = 1000;
 
+// The penalty is always measured against the whole piece, not against however
+// much of it has been played so far: three strays in the first four notes are
+// still three strays in a hundred-note run, and charging them as though the
+// run were four notes long would empty the gauge on the first bar.
 function scoreFor(credit, divisor, extras) {
   const earned = divisor ? (credit / divisor) * 100 : 100;
-  return Math.max(0, Math.round(earned - extras * EXTRA_PENALTY_PCT));
+  return Math.max(0, Math.round(earned - extraPenalty(extras, expectedNotes.length)));
 }
 
 let expectedNotes = []; // { id, pitch, startTimeMs, durationMs, grade, latencyMs }
@@ -62,15 +97,28 @@ export function startAccuracy(composition, range = null) {
   update('accuracy.results', []);
   emitProgress();
 
-  const onNoteOn = ({ pitch }) => {
+  const onNoteOn = ({ pitch, velocity }) => {
     const currentTime = state.transport.currentTime;
-    const playedNote = { pitch, time: currentTime, matched: false };
+    const playedNote = { pitch, time: currentTime, velocity: velocity ?? 90, matched: false };
     playedNotes.push(playedNote);
     checkHit(pitch, currentTime, playedNote);
   };
 
+  // How long a key was held. Only wanted so the take can be played back at
+  // something like the length it was played, so a missing note-off — a key
+  // still down when the run ends — just keeps the default.
+  const onNoteOff = ({ pitch }) => {
+    for (let i = playedNotes.length - 1; i >= 0; i--) {
+      const n = playedNotes[i];
+      if (n.pitch === pitch && n.heldMs == null) {
+        n.heldMs = Math.max(60, state.transport.currentTime - n.time);
+        return;
+      }
+    }
+  };
+
   cleanupFns.forEach(fn => fn()); // clean up any previous session listener
-  cleanupFns = [on('midi:noteon', onNoteOn)];
+  cleanupFns = [on('midi:noteon', onNoteOn), on('midi:noteoff', onNoteOff)];
 }
 
 function gradeFor(distanceMs) {
@@ -197,7 +245,35 @@ function computeResults() {
   const credit = perfect + good + almost * GRADE_CREDIT.almost;
   const score = scoreFor(credit, total, extra);
 
-  return { score, perfect, good, almost, correct: perfect + good, missed, extra, avgLatencyMs, total };
+  return {
+    score, perfect, good, almost, correct: perfect + good, missed, extra, avgLatencyMs, total,
+    // What the extras actually cost, so the results screen can say it rather
+    // than recomputing a rule it does not own
+    penalty: Math.round(extraCost(extra, total).penalty),
+    extrasCharged: extraCost(extra, total).dearer,
+  };
+}
+
+// ── The take ─────────────────────────────────────────────────────────────────
+// What the player actually pressed, kept after the run so it can be played back
+// against the piece. A score says how it went; only hearing and seeing your own
+// take back says where.
+
+const REPLAY_DEFAULT_MS = 200;
+
+export function getTake() {
+  if (!playedNotes.length) return null;
+  return {
+    range: sessionRange,
+    notes: playedNotes.map((n, i) => ({
+      id: `take-${i}`,
+      pitch: n.pitch,
+      velocity: n.velocity ?? 90,
+      startTime: n.time,
+      duration: n.heldMs ?? REPLAY_DEFAULT_MS,
+      matched: n.matched,
+    })),
+  };
 }
 
 export function getAccuracyResults() {

@@ -190,6 +190,63 @@ export function drawKeyboard(activeNotes = null) {
   if (effects.length) drawEffects(performance.now());
 }
 
+// ── The take ─────────────────────────────────────────────────────────────────
+// What the player actually pressed, drawn over the notes they were meant to
+// press. Outlines rather than blocks: the written note keeps the column and the
+// outline sits wherever the key was really struck, so being late is a ring
+// trailing above its note and being early is one running ahead of it. That is
+// the whole diagnosis, and it needs no legend.
+
+let takeNotes = [];
+
+const TAKE_HIT = '#7CFFB2';    // landed on a note that was written
+const TAKE_STRAY = '#ff6b6b';  // landed on nothing
+
+export function setTakeGhosts(notes) {
+  takeNotes = notes || [];
+}
+
+function drawTakeGhosts(currentTimeMs, ch, pixelsPerMs, windowStart, windowEnd) {
+  if (!takeNotes.length || blind) return;
+
+  for (const note of takeNotes) {
+    if (note.startTime >= windowEnd || note.startTime + note.duration <= windowStart) continue;
+    const keyInfo = keyMap.get(note.pitch);
+    if (!keyInfo) continue;
+
+    const bottomY = ch - (note.startTime - currentTimeMs) * pixelsPerMs;
+    const topY = bottomY - note.duration * pixelsPerMs;
+    const visibleTop = Math.max(-4, topY);
+    const visibleBottom = Math.min(ch + 4, bottomY);
+    if (visibleBottom < 0 || visibleTop > ch) continue;
+
+    const isBlack = !IS_WHITE[note.pitch % 12];
+    const fullW = Math.max(keyInfo.w - 2, 4);
+    const w = isBlack ? Math.max(4, fullW * BLACK_NOTE_WIDTH) : fullW;
+    const x = keyInfo.x + (fullW - w) / 2;
+    const color = note.matched ? TAKE_HIT : TAKE_STRAY;
+
+    fallingCtx.save();
+    fallingCtx.strokeStyle = color;
+    fallingCtx.lineWidth = 2;
+    fallingCtx.shadowColor = color;
+    fallingCtx.shadowBlur = 6;
+    fallingCtx.beginPath();
+    fallingCtx.roundRect(x + 1, visibleTop, Math.max(3, w - 2),
+                         Math.max(5, visibleBottom - visibleTop), 3);
+    fallingCtx.stroke();
+    // A tick at the moment the key actually went down, which is the thing being
+    // compared and is otherwise lost in the length of the outline
+    fallingCtx.shadowBlur = 0;
+    fallingCtx.lineWidth = 3;
+    fallingCtx.beginPath();
+    fallingCtx.moveTo(x, bottomY);
+    fallingCtx.lineTo(x + w, bottomY);
+    fallingCtx.stroke();
+    fallingCtx.restore();
+  }
+}
+
 // ── Fingering ────────────────────────────────────────────────────────────────
 // Which finger to use, written on the key it belongs to. On the keyboard rather
 // than on the falling note, because the number is an instruction to the hand
@@ -696,6 +753,8 @@ export function drawFallingNotes(notes, composition, currentTimeMs, accuracyResu
     }
   }
   fallingCtx.globalAlpha = 1;
+
+  drawTakeGhosts(currentTimeMs, ch, pixelsPerMs, windowStart, windowEnd);
 
   // Keys the piece is waiting on: a pulsing column down to the hit line, so
   // the frozen note reads as "play this" rather than as a stall
