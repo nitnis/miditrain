@@ -35,14 +35,45 @@ function connectInput(input) {
   input.onmidimessage = onMidiMessage;
 }
 
+// ── Which controllers are listened to ────────────────────────────────────────
+// A studio desk can present half a dozen ports — a drum pad, a control surface,
+// a virtual loopback — and any of them sending notes lands in the piece or is
+// graded as a wrong note. Each one can be switched off.
+//
+// The list holds the ones switched *off*, so a controller plugged in for the
+// first time works without having to be found and enabled first, and a stored
+// id belonging to a device no longer present simply never matches.
+
+export function isInputEnabled(id) {
+  return !state.midi.disabledInputs.includes(id);
+}
+
+export function setInputEnabled(id, enabled) {
+  const off = state.midi.disabledInputs.filter(x => x !== id);
+  if (!enabled) off.push(id);
+  update('midi.disabledInputs', off);
+
+  // A key held down on a controller that has just been switched off would
+  // otherwise stay down for good, since its note-off is about to be ignored
+  if (!enabled) releaseHeldNotes();
+  refreshInputList();
+}
+
+function releaseHeldNotes() {
+  for (const pitch of [...state.midi.activeNotes]) noteOff(pitch);
+}
+
 function onMidiMessage(e) {
+  // e.target is the port the message arrived on
+  if (e.target && !isInputEnabled(e.target.id)) return;
+
   const [status, data1, data2] = e.data;
   const cmd = status >> 4;
 
   if (cmd === 9 && data2 > 0) {
     noteOn(data1, data2, e.timeStamp);
   } else if (cmd === 8 || (cmd === 9 && data2 === 0)) {
-    noteOff(data1, e.timeStamp);
+    noteOff(data1);
   } else if (cmd === 11) {
     emit('midi:cc', { controller: data1, value: data2 });
   }
@@ -55,7 +86,7 @@ function noteOn(pitch, velocity, timeStamp) {
   emit('midi:noteon', { pitch, velocity, perf });
 }
 
-function noteOff(pitch, timeStamp) {
+function noteOff(pitch) {
   state.midi.activeNotes.delete(pitch);
   emit('midi:noteoff', { pitch, perf: performance.now() });
 }
@@ -63,9 +94,13 @@ function noteOff(pitch, timeStamp) {
 function refreshInputList() {
   if (!midiAccess) return;
   const inputs = [];
-  midiAccess.inputs.forEach(i => inputs.push({ id: i.id, name: i.name, state: i.state }));
+  midiAccess.inputs.forEach(i => inputs.push({
+    id: i.id, name: i.name, state: i.state, enabled: isInputEnabled(i.id),
+  }));
   update('midi.inputs', inputs);
-  update('midi.connected', inputs.some(i => i.state === 'connected'));
+  // Connected means something can actually be played on, so a device that is
+  // present but switched off does not count
+  update('midi.connected', inputs.some(i => i.state === 'connected' && i.enabled));
 }
 
 export function getPendingNoteOn(pitch) {

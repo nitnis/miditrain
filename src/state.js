@@ -21,6 +21,10 @@ const _state = {
     available: false,
     connected: false,
     inputs: [],
+    // Controllers whose input is ignored, by port id. Kept as the exceptions
+    // rather than the permissions so a device plugged in for the first time
+    // works without being switched on first.
+    disabledInputs: [],
     activeNotes: new Set(), // currently held pitches
   },
   ui: {
