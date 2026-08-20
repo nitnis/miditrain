@@ -412,9 +412,18 @@
       <canvas id="falling-canvas" title="Scroll to move through the piece"></canvas>
       <button class="loop-pick-btn" id="btn-loop-pick" title="Mark a stretch to loop by clicking the note it starts on and the note it ends on">Start loop</button>
       <div class="learn-banner hidden" id="learn-banner" aria-live="polite"></div>
+      <!-- The answer to the note just played, said where a player watching
+           their hands will still catch it -->
+      <div class="learn-react hidden" id="learn-react" aria-hidden="true"></div>
+      <!-- Running tally through a learn session, in the corner the replay
+           tally uses — the two are never on screen at once. -->
+      <div class="window-counters hidden" id="learn-counters">
+        <span class="rc-item correct"><b id="lc-correct">0</b><i>correct</i></span>
+        <span class="rc-item missed"><b id="lc-missed">0</b><i>missed</i></span>
+      </div>
       <!-- Running tally while a take is replayed. Sits left of the metronome,
            which has the corner itself. -->
-      <div class="replay-counters hidden" id="replay-counters">
+      <div class="window-counters hidden" id="replay-counters">
         <span class="rc-item perfect"><b id="rc-perfect">0</b><i>perfect</i></span>
         <span class="rc-item correct"><b id="rc-good">0</b><i>good</i></span>
         <span class="rc-item almost"><b id="rc-almost">0</b><i>almost</i></span>

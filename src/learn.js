@@ -50,6 +50,17 @@ let looping = false;
 let pass = 1;
 let slips = 0;          // wrong notes in the current pass
 
+// ── The running tally ────────────────────────────────────────────────────────
+// Counted per attack rather than per note: a chord is one thing to play, and
+// three thumbs up for one hand shape would be saying something about the chord
+// rather than about the playing.
+let correct = 0;        // attacks played right first time of asking
+let misses = 0;         // wrong notes, all of them, this session
+// A wrong note leaves the attack spoiled: finding the right key afterwards
+// closes the step, but it is being guided through it rather than knowing it,
+// so it does not count as one got right.
+let spoiled = false;
+
 // ── Clusters ─────────────────────────────────────────────────────────────────
 // Note by note teaches you where the keys are. It does not teach you the shape
 // of a phrase, because you never play more than one thing at a time and never
@@ -78,8 +89,12 @@ let clusters = [];      // [{ from, to, startMs, endMs }] — indices into group
 let clusterIndex = 0;
 let phase = 'walk';     // walk | listen | guided | memory
 let listenAt = 0;       // the next group the listen pass has still to sound
-let hinting = false;    // the memory pass is showing where to start
+// The memory pass is showing the keys rather than hiding them: at the start of
+// the cluster, so it is a memory test and not a guessing game, and again from
+// wherever a wrong note says the player has lost their place.
+let hinting = false;
 let holding = null;     // a message being read; input waits for it
+let memoryMisses = 0;   // wrong notes in the memory pass now being played
 
 // Long enough to read and to land, short enough not to be in the way
 const GOOD_MS = 1000;
@@ -188,6 +203,10 @@ export function startLearn(bars = null) {
   index = -1;
   pass = 1;
   slips = 0;
+  correct = 0;
+  misses = 0;
+  memoryMisses = 0;
+  spoiled = false;
   struck.clear();
   update('transport.currentTime', sectionStartMs);
   update('transport.mode', 'learning');
@@ -217,6 +236,16 @@ export function startLearn(bars = null) {
 // are the interface's business.
 function say(tone) {
   emit('learn:say', { tone: tone || null });
+}
+
+// A face for the note just played — the small, immediate answer to "was that
+// right?", as against the banner, which is the verdict on a whole pass
+function react(tone) {
+  emit('learn:react', { tone });
+}
+
+function tally() {
+  emit('learn:tally', { correct, misses });
 }
 
 function hold(ms, then) {
@@ -295,6 +324,7 @@ function beginGuided() {
 function beginMemory() {
   clearPrompt();
   phase = 'memory';
+  memoryMisses = 0;
   say(cluster().whole ? 'memoryWhole' : 'memory');
   announcePhase();
   stepMemory(cluster().from);
@@ -304,6 +334,7 @@ function beginMemory() {
 function stepMemory(i) {
   index = i;
   hinting = i === cluster().from;
+  spoiled = false;
   struck.clear();
   pending = new Set(groups[i].pitches);
   announce();
@@ -352,12 +383,15 @@ function goTo(i) {
   // End of the cluster hands over to playing it from memory
   if (phase === 'guided' && i > cluster().to) { beginMemory(); return; }
 
-  // End of the section. Looping means going again until a pass is clean —
-  // "correctly" can only mean without a wrong note, since learn mode will not
-  // move past a note until the right one is played anyway.
+  // End of the section, and the same verdict a cluster gets: how the pass went
+  // as a whole. Looping means going again until one is clean — "correctly" can
+  // only mean without a wrong note, since learn mode will not move past a note
+  // until the right one is played anyway.
   if (i >= groups.length) {
-    if (looping && slips > 0) { restartPass(); return; }
-    finish(true);
+    const clean = slips === 0;
+    const again = looping && !clean;
+    say(clean ? 'good' : 'almost');
+    hold(clean ? GOOD_MS : ALMOST_MS, () => (again ? restartPass() : finish(true)));
     return;
   }
 
@@ -384,6 +418,7 @@ function fall() {
 function arrive() {
   rafId = null;
   struck.clear();
+  spoiled = false;
   refreshPending();
   update('transport.currentTime', targetMs);
   emit('transport:tick', targetMs);
@@ -454,16 +489,20 @@ function handleNoteOn({ pitch }) {
 
   if (!groups[index].pitches.has(pitch)) {
     slips += 1;
+    misses += 1;
+    if (phase === 'memory') memoryMisses += 1;
+    spoiled = true;
     emit('learn:wrong', { pitch, slips });
-    // A wrong note from memory means it is not learned yet, so the cluster
-    // goes back to being played to you — after long enough to read why
+    react('miss');
+    tally();
+    // A wrong note from memory used to send the cluster straight back to the
+    // listen pass. It goes on instead: the note that was wanted is lit, so the
+    // player finds their way back into the phrase while they are still in it,
+    // and the verdict waits for the end of the pass.
     if (phase === 'memory') {
       clearPrompt();
-      hinting = false;
+      hinting = true;
       announce();
-      say('almost');
-      const k = clusterIndex;
-      hold(ALMOST_MS, () => beginCluster(k));
       return;
     }
     if (looping) announce();
@@ -476,8 +515,10 @@ function handleNoteOn({ pitch }) {
   emit('learn:hit', { pitch });
   // Together, not one at a time: the step only passes while every note of it
   // is down at once
-  if (pending.size === 0) advance();
-  else announce();
+  if (pending.size === 0) {
+    if (!spoiled) { correct += 1; react('hit'); tally(); }
+    advance();
+  } else announce();
 }
 
 function advance() {
@@ -486,9 +527,13 @@ function advance() {
     clearPrompt();
     pending.clear();
     announce();
-    say('good');
-    const next = clusterIndex + 1;
-    hold(GOOD_MS, () => beginCluster(next));
+    // Judged on the pass as a whole rather than on its first slip: a cluster
+    // that went astray once and was found again is worth hearing through
+    // once more, and one played straight is done with.
+    const clean = memoryMisses === 0;
+    say(clean ? 'good' : 'almost');
+    const next = clean ? clusterIndex + 1 : clusterIndex;
+    hold(clean ? GOOD_MS : ALMOST_MS, () => beginCluster(next));
     return;
   }
   stepMemory(index + 1);

@@ -756,10 +756,36 @@ select:focus { outline: 1px solid var(--accent); }
 }
 .learn-status.hidden { display: none; }
 
-/* Replay tally. The far corner belongs to the metronome, so this sits just
-   inside it — near enough to read as the same corner, clear enough not to
+/* One face for the note just played, in the middle of the window. Big, because
+   the player is looking at their hands; brief, because it is a reaction rather
+   than a message and the next note is already on its way. */
+.learn-react {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  /* The animation overrides this from its first frame; it is here so the face
+     is never centred on its own corner in the frame before that. */
+  transform: translate(-50%, -50%);
+  z-index: 7;
+  pointer-events: none;
+  line-height: 1;
+  font-size: clamp(40px, 8vw, 88px);
+  filter: drop-shadow(0 3px 16px rgba(0, 0, 0, 0.9));
+}
+.learn-react.hidden { display: none; }
+.learn-react.pop { animation: learn-react-pop 0.7s ease-out forwards; }
+@keyframes learn-react-pop {
+  0%   { transform: translate(-50%, -46%) scale(0.55); opacity: 0; }
+  22%  { transform: translate(-50%, -56%) scale(1.16); opacity: 1; }
+  62%  { transform: translate(-50%, -56%) scale(1);    opacity: 1; }
+  100% { transform: translate(-50%, -74%) scale(0.95); opacity: 0; }
+}
+
+/* A tally over the falling notes — the take being replayed, or the learn
+   session being played. The far corner belongs to the metronome, so this sits
+   just inside it: near enough to read as the same corner, clear enough not to
    overlap the signal. */
-.replay-counters {
+.window-counters {
   position: absolute;
   top: 8px;
   right: 112px;
@@ -772,7 +798,7 @@ select:focus { outline: 1px solid var(--accent); }
   pointer-events: none;
   backdrop-filter: blur(3px);
 }
-.replay-counters.hidden { display: none; }
+.window-counters.hidden { display: none; }
 .rc-item {
   display: flex;
   flex-direction: column;

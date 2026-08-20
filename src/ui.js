@@ -131,6 +131,8 @@ export function initUI() {
   });
   // learn.js says what happened; the wording is this layer's business
   on('learn:say', ({ tone }) => showLearnBanner(tone));
+  on('learn:react', ({ tone }) => showLearnReaction(tone));
+  on('learn:tally', ({ correct, misses }) => updateLearnCounters(correct, misses));
   // The memory pass shows nothing, so the window has to be told to show nothing
   on('learn:phase', ({ phase, blind, cluster, clusters, whole }) => {
     setFallingBlind(blind);
@@ -996,11 +998,20 @@ function trainCurrentSection() {
 
 function showLearnStatus(visible) {
   document.getElementById('learn-status').classList.toggle('hidden', !visible);
-  if (!visible) setWaitingPitches([]);
+  document.getElementById('learn-counters').classList.toggle('hidden', !visible);
+  if (visible) { learnCounts = {}; updateLearnCounters(0, 0); return; }
+  showLearnReaction(null);
+  setWaitingPitches([]);
 }
 
-// Said large across the middle of the falling window, where somebody looking
-// at their hands will still catch it
+// ── The middle of the falling window ─────────────────────────────────────────
+// Said large, where somebody looking at their hands will still catch it — and
+// one thing at a time. The banner is what a whole pass is asking for or how it
+// went; the face is the answer to the note just played. Whichever spoke last
+// has the middle: a face means the player has started, so the instruction that
+// opened the pass has done its job, and a verdict means the notes it is a
+// verdict on are finished with.
+
 const BANNER = {
   memory: 'Now try from memory',
   memoryWhole: 'Now the whole section from memory',
@@ -1008,13 +1019,54 @@ const BANNER = {
   almost: 'Almost…',
 };
 
-function showLearnBanner(tone) {
+const REACTION = { hit: '👍', miss: '😞' };
+const REACTION_MS = 700;
+let reactionTimer = null;
+
+function hideLearnBanner() {
   const el = document.getElementById('learn-banner');
+  el.classList.add('hidden');
+  el.classList.remove('good', 'almost');
+  el.textContent = '';
+}
+
+function hideLearnReaction() {
+  clearTimeout(reactionTimer);
+  reactionTimer = null;
+  document.getElementById('learn-react').classList.add('hidden');
+}
+
+function showLearnBanner(tone) {
   const text = BANNER[tone];
-  el.classList.toggle('hidden', !text);
+  if (!text) { hideLearnBanner(); return; }
+  hideLearnReaction();
+  const el = document.getElementById('learn-banner');
+  el.classList.remove('hidden');
   el.classList.toggle('good', tone === 'good');
   el.classList.toggle('almost', tone === 'almost');
-  el.textContent = text || '';
+  el.textContent = text;
+}
+
+function showLearnReaction(tone) {
+  const face = REACTION[tone];
+  // Unconditionally, so a second face gets its own full life rather than
+  // inheriting what was left of the one before it
+  clearTimeout(reactionTimer);
+  if (!face) { hideLearnReaction(); return; }
+  hideLearnBanner();
+  const el = document.getElementById('learn-react');
+  el.textContent = face;
+  el.classList.remove('hidden', 'pop');
+  void el.offsetWidth; // restart the pop rather than inherit a running one
+  el.classList.add('pop');
+  reactionTimer = setTimeout(() => el.classList.add('hidden'), REACTION_MS);
+}
+
+const LEARN_COUNTS = [['correct', 'lc-correct'], ['missed', 'lc-missed']];
+let learnCounts = {};
+
+function updateLearnCounters(correct, misses) {
+  paintCounts(LEARN_COUNTS, { correct, missed: misses }, learnCounts);
 }
 
 // What each pass of a cluster is called, and what it asks of the player
@@ -1497,15 +1549,23 @@ function updateReplayCounters(nowMs) {
     if (note.stray && note.startTime <= nowMs) counts.extra++;
   }
 
-  for (const [key, id] of REPLAY_COUNTS) {
-    if (replayShown[key] === counts[key]) continue;
+  paintCounts(REPLAY_COUNTS, counts, replayShown);
+}
+
+// Write the counts that moved, and flash them, so the moment a number goes up
+// is visible rather than only the total afterwards. `seen` carries what is on
+// screen between calls; an empty one paints the figures without flashing them,
+// which is what a tally opening at zero wants.
+function paintCounts(pairs, counts, seen) {
+  for (const [key, id] of pairs) {
+    if (seen[key] === counts[key]) continue;
     const el = document.getElementById(id);
     el.textContent = counts[key];
     // Restart the flash rather than letting a second bump inherit a running one
     el.classList.remove('bumped');
     void el.offsetWidth;
-    if (replayShown[key] !== undefined) el.classList.add('bumped');
-    replayShown[key] = counts[key];
+    if (seen[key] !== undefined) el.classList.add('bumped');
+    seen[key] = counts[key];
   }
 }
 
