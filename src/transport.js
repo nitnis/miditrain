@@ -1,6 +1,6 @@
 // Transport engine: record, play, stop, seek
 import { state, update, emit, on } from './state.js';
-import { startMetronome, stopMetronome, scheduleCountInClicks } from './metronome.js';
+import { startMetronome, stopMetronome, scheduleCountInClicks, beatRealMs } from './metronome.js';
 import { startPlaybackAudio, stopPlaybackAudio, stopAllAudio } from './audio.js';
 import { barStartMs } from './quantizer.js';
 
@@ -211,7 +211,9 @@ export function startCountIn(onComplete) {
 
   const { tempo, timeSignature } = state.composition;
   const beats = Math.max(1, timeSignature.numerator);
-  const beatMs = (60 / tempo) * 1000;
+  // Real milliseconds, not written ones: the count-in has to land on the pulse
+  // the music is about to be played at, which the speed control moves
+  const beatMs = beatRealMs();
   const leadMs = scheduleCountInClicks(beats, tempo, timeSignature) * 1000;
 
   update('transport.mode', 'count-in');
