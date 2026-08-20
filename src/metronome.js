@@ -81,6 +81,20 @@ function scheduler() {
 // `positionMs` is where in the piece the transport is starting from; the first
 // click is the next tick at or after it, so what you hear agrees with the beat
 // the animation is showing.
+// Where on the audio clock the beat after a count-in falls. The count-in
+// schedules its clicks on that clock, but hands over on a wall-clock timer, and
+// the two do not agree to better than a few tens of milliseconds — which lands
+// as a stumble on the very first beat, exactly where a count-in is supposed to
+// have made the pulse certain. Left here for startMetronome to pick up, so its
+// grid continues the count-in's instead of restarting from whenever the
+// hand-over timer happened to fire.
+let handoverCtxTime = null;
+
+// Only worth using while it is still about to happen. A count-in that was
+// cancelled, or a start that has nothing to do with one, must not be pulled
+// onto a stale anchor.
+const HANDOVER_WINDOW_S = 0.25;
+
 export function startMetronome(positionMs = 0) {
   const ctx = getAudioCtx();
   if (ctx.state === 'suspended') ctx.resume();
@@ -88,7 +102,14 @@ export function startMetronome(positionMs = 0) {
   const step = tickMs();
   const ticksIn = Math.max(0, positionMs) / step;
   tickCount = Math.ceil(ticksIn - 1e-6);
-  nextTickTime = ctx.currentTime + realSeconds((tickCount - ticksIn) * step);
+
+  const handover = handoverCtxTime;
+  handoverCtxTime = null;
+  const fresh = handover != null &&
+    handover > ctx.currentTime - HANDOVER_WINDOW_S &&
+    handover < ctx.currentTime + HANDOVER_WINDOW_S;
+  const anchor = fresh ? handover : ctx.currentTime;
+  nextTickTime = Math.max(ctx.currentTime, anchor + realSeconds((tickCount - ticksIn) * step));
 
   clearInterval(schedulerTimer);
   schedulerTimer = setInterval(scheduler, SCHEDULE_INTERVAL_MS);
@@ -104,12 +125,21 @@ export function stopMetronome() {
 // the count-in has to be audible even with the metronome off. Returns the lead
 // time in seconds before the first click, so the caller can line its countdown
 // up with the audio.
+// How long a beat actually lasts, in real milliseconds. The tempo is what the
+// music is written at; the speed control is what it is being played at, and a
+// count-in that ignores the second one counts you in at a pulse the music is
+// not about to arrive at — which at half speed means coming in twice as fast
+// as the first bar.
+export function beatRealMs() {
+  return realSeconds((60 / state.composition.tempo) * 1000) * 1000;
+}
+
 export function scheduleCountInClicks(beats, tempo, timeSignature) {
   const ctx = getAudioCtx();
   if (ctx.state === 'suspended') ctx.resume();
 
   const lead = 0.12;
-  const interval = 60 / tempo;
+  const interval = realSeconds((60 / tempo) * 1000);
   const perBar = Math.max(1, timeSignature.numerator);
 
   // The count-in stays on plain beats: it is a countdown, and subdividing it
@@ -117,5 +147,8 @@ export function scheduleCountInClicks(beats, tempo, timeSignature) {
   for (let i = 0; i < beats; i++) {
     scheduleClick(ctx.currentTime + lead + i * interval, i % perBar === 0 ? 'downbeat' : 'beat');
   }
+  // The beat the music begins on, measured on the same clock the clicks were
+  // scheduled against rather than on the timer that will announce it
+  handoverCtxTime = ctx.currentTime + lead + beats * interval;
   return lead;
 }
