@@ -620,8 +620,10 @@
       <div class="midi-info">
         <p style="font-size:13px;color:var(--muted);line-height:1.5">
           Connect a USB or Bluetooth MIDI keyboard to use MidiTrain with live input.
+          Untick anything you would rather it ignored — a drum pad or a control
+          surface sending notes would otherwise land in the piece.
         </p>
-        <div id="midi-devices-list"><p style="color:var(--muted)">No devices found.</p></div>
+        <div id="midi-devices-list"><p class="midi-empty">No devices found.</p></div>
         <div class="midi-note">
           <strong>iPad users:</strong> Safari does not support Web MIDI API.
           Install <a href="https://apps.apple.com/app/webmidi-browser/id1262741284" target="_blank">WebMIDI Browser</a>

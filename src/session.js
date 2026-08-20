@@ -23,6 +23,9 @@ const wholeRange = (lo, hi) => (v) => {
   return n === undefined ? undefined : Math.round(n);
 };
 
+const stringList = (v) =>
+  (Array.isArray(v) && v.every(x => typeof x === 'string') ? v.slice(0, 64) : undefined);
+
 // Every option the app remembers. What is missing is deliberately transient:
 // the playhead, the selection, and whatever the transport is doing.
 const SETTINGS = {
@@ -47,6 +50,7 @@ const SETTINGS = {
   'ui.learnCluster': oneOf('off', 'halfBeat', 'beat', 'twoBeats', 'bar', 'twoBars'),
   'ui.recordHand': oneOf('auto', 'left', 'right'),
   'ui.practiceHand': oneOf('both', 'left', 'right'),
+  'midi.disabledInputs': stringList,
   'transport.loopEnabled': bool,
   'transport.loopStartBar': wholeRange(1, 999),
   'transport.loopEndBar': wholeRange(1, 999),

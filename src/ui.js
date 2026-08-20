@@ -14,6 +14,7 @@ import { compositionToMidi, midiToComposition } from './midi-file.js';
 import { startAccuracy, stopAccuracy, getWorstSection, getTake, EXTRA_PENALTY_PCT } from './accuracy.js';
 import { startMetronome, stopMetronome } from './metronome.js';
 import { resumeAudioContext, applyOutputLevel, applyClicksOnly, setPlaybackSource } from './audio.js';
+import { setInputEnabled } from './midi.js';
 import { startStepRecord, stopStepRecord, stepInsertRest, stepGoBack, getStepMs } from './step-recorder.js';
 import { initNoteEditor, getSelectedIds, clearSelection } from './note-editor.js';
 import { staffPositionName, midiToNoteWithOctave } from './chords.js';
@@ -103,7 +104,10 @@ export function initUI() {
     on(`change:transport.${path}`, () => { refreshLoopMarker(); syncLoopControls(); });
   }
   on('change:midi.connected', ({ value }) => updateMidiStatus(value));
-  on('change:midi.inputs', ({ value }) => updateMidiInputsList(value));
+  on('change:midi.inputs', ({ value }) => {
+    updateMidiInputsList(value);
+    updateMidiStatus(state.midi.connected);
+  });
   on('midi:unavailable', ({ reason }) => showMidiWarning(reason));
   on('midi:statechange', () => {});
 
@@ -2576,24 +2580,54 @@ function scheduleSheetRender() {
 function updateMidiStatus(connected) {
   const dot = document.getElementById('midi-dot');
   const text = document.getElementById('midi-text');
-  dot.className = 'status-dot ' + (connected ? 'connected' : 'disconnected');
-  text.textContent = connected ? `MIDI: ${state.midi.inputs.find(i => i.state === 'connected')?.name || 'Connected'}` : 'No MIDI';
+  const status = document.getElementById('midi-status');
+  // A device that is plugged in but switched off is not something you can play
+  // on, so it does not count as connected — but saying so is worth a word,
+  // otherwise "No MIDI" looks like the cable came out
+  const live = state.midi.inputs.filter(i => i.state === 'connected' && i.enabled !== false);
+  const muted = state.midi.inputs.filter(i => i.state === 'connected' && i.enabled === false);
+
+  dot.className = 'status-dot ' + (live.length ? 'connected' : 'disconnected');
+  if (live.length > 1) text.textContent = `MIDI: ${live.length} devices`;
+  else if (live.length === 1) text.textContent = `MIDI: ${live[0].name}`;
+  else if (muted.length) text.textContent = `MIDI: ${muted.length} ignored`;
+  else text.textContent = 'No MIDI';
+
+  if (status) status.title = 'Click to choose which controllers to listen to';
   dot.onclick = openMidiInfo;
+  if (status) status.onclick = openMidiInfo;
 }
 
+// Every port, each with a switch. A desk can present half a dozen of them and
+// any one sending notes lands in the piece or is graded as a wrong note, so the
+// list is a set of choices rather than a read-out.
 function updateMidiInputsList(inputs) {
   const el = document.getElementById('midi-devices-list');
   if (!el) return;
   if (!inputs || !inputs.length) {
-    el.innerHTML = '<p>No MIDI devices detected.</p>';
+    el.innerHTML = '<p class="midi-empty">No MIDI devices detected.</p>';
     return;
   }
-  el.innerHTML = inputs.map(i =>
-    `<div class="midi-device ${i.state}">
-      <span class="device-dot"></span>${i.name} <span class="device-state">(${i.state})</span>
-    </div>`
-  ).join('');
+  el.innerHTML = inputs.map(i => `
+    <label class="midi-device ${i.state}${i.enabled ? '' : ' off'}">
+      <input type="checkbox" class="midi-device-check" data-id="${escapeAttr(i.id)}" ${i.enabled ? 'checked' : ''}>
+      <span class="device-dot"></span>
+      <span class="device-name">${escapeHtml(i.name)}</span>
+      <span class="device-state">${i.state === 'connected' ? (i.enabled ? 'listening' : 'ignored') : i.state}</span>
+    </label>
+  `).join('');
+
+  for (const box of el.querySelectorAll('.midi-device-check')) {
+    box.onchange = () => {
+      setInputEnabled(box.dataset.id, box.checked);
+      showToast(box.checked ? 'Listening to that controller' : 'Ignoring that controller', 1600);
+    };
+  }
 }
+
+const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const escapeAttr = escapeHtml;
 
 function showMidiWarning(reason) {
   const dot = document.getElementById('midi-dot');

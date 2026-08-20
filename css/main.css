@@ -1171,6 +1171,29 @@ body.hands-shown #hand-canvas { display: block; }
 }
 .midi-device.disconnected .device-dot { background: var(--muted); }
 .device-state { color: var(--muted); font-size: 11px; }
+
+/* Each port is a choice, so the whole row is the target rather than a small
+   box at the end of it */
+.midi-device {
+  cursor: pointer;
+  border: 1px solid transparent;
+  margin-bottom: 6px;
+  transition: border-color 0.15s, opacity 0.15s;
+}
+.midi-device:hover { border-color: var(--border); }
+.midi-device .device-name { flex: 1; }
+.midi-device-check {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+/* Switched off: still legible, plainly not in use */
+.midi-device.off { opacity: 0.55; }
+.midi-device.off .device-dot { background: var(--muted); }
+.midi-device.off .device-name { text-decoration: line-through; }
+.midi-empty { color: var(--muted); font-size: 13px; }
 .midi-note {
   padding: 12px;
   background: rgba(91, 192, 235, 0.1);
