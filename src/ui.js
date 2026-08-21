@@ -4,7 +4,7 @@ import { record, play, stop, stopAndRewind, startCountIn, playRange, seekTo, see
 import { renderSheet, initSheet, getChordOverlayData, getStaveGeometry, movePlayhead, markLoopRange, barAtPoint } from './sheet.js';
 import { refreshSuggestions, hasSuggestions } from './autofinger.js';
 import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWaitingPitches, setFallingBlind, setLoopPick, setTakeGhosts, noteAtFallingPoint, fallingMsPerPixel } from './pianoroll.js';
-import { startLearn, stopLearn, CLUSTERS } from './learn.js';
+import { startLearn, stopLearn, isHoldingMessage, CLUSTERS } from './learn.js';
 import {
   startSectionWalk, stopSectionWalk, repeatSection, advanceSection,
   handOverForTraining, isWalking,
@@ -217,6 +217,7 @@ function bindTransport() {
   document.getElementById('btn-step-back').onclick = () => stepGoBack();
   document.getElementById('btn-play').onclick = () => {
     modeGuard();
+    if (holdingLearnMessage()) return;
     if (state.transport.mode === 'learning') { stopLearn(); return; }
     if (state.transport.mode === 'playing' || state.transport.mode === 'count-in') { stop(); return; }
     if (state.ui.learnMode) { startLearnSession(); return; }
@@ -567,6 +568,16 @@ function toggleLearnMode() {
 
 function sectionSize() {
   return state.ui.learnSectionBars;
+}
+
+// Space and the play button both mean "get on with it". Learn mode reads as
+// still running while it holds a message — a verdict, or what the next pass is
+// asking for — so both of them would land on "stop whatever is running" and end
+// a session that is a moment away from carrying on by itself. A section walk
+// stopped that way never offers its end-of-section choice at all, so the keys
+// wait for the message instead.
+function holdingLearnMessage() {
+  return state.transport.mode === 'learning' && isHoldingMessage();
 }
 
 function startLearnSession() {
@@ -1436,7 +1447,7 @@ function startTrainingSession(bars = null) {
 
   withCountIn(() => {
     startAccuracy(state.composition, range);
-    if (range) playRange(range.startMs, range.endMs + range.tailMs);
+    if (range) playRange(range.startMs, range.endMs, range.tailMs);
     else play();
   });
 }
@@ -2175,6 +2186,7 @@ function shortcutActions() {
       section: 'Transport', label: 'Play, or stop whatever is running',
       defaultBindings: [{ code: 'Space' }],
       run: () => {
+        if (holdingLearnMessage()) return;
         if (state.transport.mode !== 'stopped') stop();
         else if (state.ui.learnMode) startLearnSession();
         else if (state.ui.trainMode) startTrainingSession();
