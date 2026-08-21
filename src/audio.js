@@ -7,6 +7,7 @@
 // carries volume and mute, and the note bus is what "clicks only" silences —
 // leaving the metronome and the count-in audible through their own path.
 import { state } from './state.js';
+import { atOrPast, EDGE_MS } from './quantizer.js';
 
 let ctx = null;
 let master = null;
@@ -224,8 +225,9 @@ function pump() {
     if (note.startTime < scheduledUpToMs || note.startTime >= horizonMs) continue;
     // A bounded stretch runs a little past its last barline so the note it
     // ends on can ring. That is room for one note to finish, not for the next
-    // section's to begin.
-    if (note.startTime >= playUntilMs) continue;
+    // section's to begin — and asked through atOrPast, so the section sounds
+    // the same notes its walk is about to ask for.
+    if (atOrPast(note.startTime, playUntilMs)) continue;
     const when = Math.max(ctxTimeFor(note.startTime, speed), c.currentTime);
     scheduleVoice(note.pitch, note.velocity ?? 90, when, note.duration / (1000 * speed));
   }
@@ -261,7 +263,9 @@ export function startPlaybackAudio(fromMs, untilMs = Infinity) {
   anchorCtxTime = c.currentTime;
   anchorMs = fromMs;
   playUntilMs = untilMs;
-  scheduledUpToMs = fromMs;
+  // The same tolerance at this end, so a note written on the barline a section
+  // starts on is not left behind by having drifted a hair in front of it
+  scheduledUpToMs = fromMs - EDGE_MS;
   pumpTimer = setInterval(pump, PUMP_INTERVAL_MS);
   pump();
 }
