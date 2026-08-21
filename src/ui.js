@@ -7,7 +7,7 @@ import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWai
 import { startLearn, stopLearn, isHoldingMessage, CLUSTERS } from './learn.js';
 import {
   startSectionWalk, stopSectionWalk, repeatSection, advanceSection,
-  handOverForTraining, isWalking,
+  handOverForTraining, isWalking, buildSections,
 } from './section-learn.js';
 import { saveComposition, listCompositions, deleteComposition, compositionToJSON, compositionFromJSON } from './storage.js';
 import { compositionToMidi, midiToComposition } from './midi-file.js';
@@ -182,6 +182,7 @@ function applyStateToControls() {
   syncRecordHand();
   syncPracticeHand();
   document.getElementById('learn-cluster').value = ui.learnCluster;
+  syncClusterHints();
   document.getElementById('legato-toggle').checked = ui.stepLegato;
 
   applyMuteUI(ui.muted);
@@ -458,14 +459,37 @@ function cyclePracticeHand() {
   setPracticeHand(next);
 }
 
+// What each choice does, said on hover — over the row while the list is open,
+// and over the control itself once one is chosen. The list is the only place
+// the difference is visible, and the names alone do not carry it: every choice
+// but the first has a memory pass in it, which is the whole reason to pick one.
+const CLUSTER_HOW = 'played to you in time, then walked through in silence, '
+  + 'then asked for from memory — a wrong note anywhere in it and it comes round again';
+const CLUSTER_HINTS = {
+  off: 'Straight through the piece, one note at a time, waiting at each one until you play it. '
+     + 'No memory pass — the quickest way to get a piece under your fingers.',
+  halfBeat: `Half a beat at a time: ${CLUSTER_HOW}.`,
+  beat:     `One beat at a time: ${CLUSTER_HOW}.`,
+  twoBeats: `Two beats at a time: ${CLUSTER_HOW}.`,
+  bar:      `One bar at a time: ${CLUSTER_HOW}.`,
+  twoBars:  `Two bars at a time: ${CLUSTER_HOW}.`,
+};
+
+function syncClusterHints() {
+  const sel = document.getElementById('learn-cluster');
+  for (const opt of sel.options) opt.title = CLUSTER_HINTS[opt.value] || '';
+  sel.title = CLUSTER_HINTS[sel.value] || '';
+}
+
 // How much learn mode takes at once. Remembered like every other option, so
 // the way somebody has settled on learning is the way the next song starts.
 function setLearnCluster(value) {
   const choice = CLUSTERS[value] ? value : 'off';
   update('ui.learnCluster', choice);
   document.getElementById('learn-cluster').value = choice;
+  syncClusterHints();
   showToast(choice === 'off'
-    ? 'Learn one note at a time'
+    ? 'Fast learn — one note at a time, no memory pass'
     : `Learn in ${CLUSTERS[choice].name.toLowerCase().replace(' clusters', '-long clusters')}`, 1800);
 }
 
@@ -1420,6 +1444,25 @@ function withCountIn(start) {
 // at whatever the tempo happens to be by then
 let lastTrainingBars = null;
 
+// The section size divides a piece for training the same way it divides one for
+// learning — it is one setting, and the two disagreeing about what a section is
+// would make it useless. Training read only the loop range, so a player who had
+// set 2-bar sections and pressed Train got the whole piece and no hint as to
+// why.
+//
+// Which section: the one the playhead is in. "Train where I am" is what
+// reaching for the button means, and after a section walk or a scrub the
+// playhead is already sitting in the passage being worked on.
+function sectionAtPlayhead() {
+  const size = sectionSize();
+  if (!size) return null;
+  const sections = buildSections(size);
+  if (!sections.length) return null;
+  const { tempo, timeSignature } = state.composition;
+  const here = barAtMs(state.transport.currentTime, tempo, timeSignature);
+  return sections.find(s => here >= s.startBar && here <= s.endBar) || sections[0];
+}
+
 // Bar numbers are 1-based and inclusive of `startBar`, exclusive past `endBar`
 function rangeForBars({ startBar, endBar }) {
   const { tempo, timeSignature } = state.composition;
@@ -1432,8 +1475,10 @@ function startTrainingSession(bars = null) {
     return;
   }
   document.getElementById('accuracy-modal').classList.add('hidden');
-  // An explicit section wins; otherwise the loop range, if one is set
-  const target = bars || loopBars();
+  // An explicit section wins, then a marked loop, then the section size — each
+  // one a narrower statement of intent than the last, and the whole piece only
+  // when none of them has been made
+  const target = bars || loopBars() || sectionAtPlayhead();
   lastTrainingBars = target ? { startBar: target.startBar, endBar: target.endBar } : null;
   if (!bars && lastTrainingBars) {
     showToast(`Training bars ${lastTrainingBars.startBar}–${lastTrainingBars.endBar}`, 1800);
@@ -1575,7 +1620,10 @@ function paintCounts(pairs, counts, seen) {
     // Restart the flash rather than letting a second bump inherit a running one
     el.classList.remove('bumped');
     void el.offsetWidth;
-    if (seen[key] !== undefined) el.classList.add('bumped');
+    // Only on the way up. Scrubbing a replay backwards and clearing a tally for
+    // a fresh attempt both take counts down, and the bump reads as "that just
+    // went up" — the wrong thing to say about either.
+    if (seen[key] !== undefined && counts[key] > seen[key]) el.classList.add('bumped');
     seen[key] = counts[key];
   }
 }
@@ -2085,8 +2133,8 @@ function shortcutActions() {
     // same way Space retries while the results are showing.
     //
     // Space takes whichever choice is highlighted, and which that is depends on
-    // how the section was learned: note by note it is worth going again, but a
-    // section just played through whole from memory is finished with.
+    // how the section was learned: on the fast learn it is worth going again,
+    // but a section just played through whole from memory is finished with.
     { id: 'section-default', group: 'sections', scope: sectionUp,
       section: 'Training', label: 'Take the highlighted choice',
       defaultBindings: [{ code: 'Space' }, { code: 'Enter' }],
