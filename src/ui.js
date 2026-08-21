@@ -1599,7 +1599,10 @@ function paintCounts(pairs, counts, seen) {
     // Restart the flash rather than letting a second bump inherit a running one
     el.classList.remove('bumped');
     void el.offsetWidth;
-    if (seen[key] !== undefined) el.classList.add('bumped');
+    // Only on the way up. Scrubbing a replay backwards and clearing a tally for
+    // a fresh attempt both take counts down, and the bump reads as "that just
+    // went up" — the wrong thing to say about either.
+    if (seen[key] !== undefined && counts[key] > seen[key]) el.classList.add('bumped');
     seen[key] = counts[key];
   }
 }
