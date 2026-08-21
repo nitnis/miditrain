@@ -87,7 +87,7 @@ function beginPreview() {
   const range = rangeFor(section);
   emit('sections:preview', { ...section, index, total: sections.length });
 
-  playRange(range.startMs, range.endMs + range.tailMs);
+  playRange(range.startMs, range.endMs, range.tailMs);
   // Registered after playRange, which stops whatever was running and would
   // otherwise trip this listener with its own transport:stop
   listeners = [on('transport:stop', () => {

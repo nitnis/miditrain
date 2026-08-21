@@ -196,6 +196,7 @@ let pumpTimer = null;
 let anchorCtxTime = 0; // ctx.currentTime when playback was anchored
 let anchorMs = 0;      // composition position at that moment
 let scheduledUpToMs = 0;
+let playUntilMs = Infinity; // past this, notes belong to whatever comes next
 
 // Composition ms → audio context time, honouring the speed multiplier
 function ctxTimeFor(compMs, speed) {
@@ -221,6 +222,10 @@ function pump() {
 
   for (const note of (playbackSource || state.composition.notes)) {
     if (note.startTime < scheduledUpToMs || note.startTime >= horizonMs) continue;
+    // A bounded stretch runs a little past its last barline so the note it
+    // ends on can ring. That is room for one note to finish, not for the next
+    // section's to begin.
+    if (note.startTime >= playUntilMs) continue;
     const when = Math.max(ctxTimeFor(note.startTime, speed), c.currentTime);
     scheduleVoice(note.pitch, note.velocity ?? 90, when, note.duration / (1000 * speed));
   }
@@ -246,12 +251,16 @@ function scheduleVoice(pitch, velocity, when, durSec) {
   return voice;
 }
 
-export function startPlaybackAudio(fromMs) {
+// Notes are started from `fromMs` up to but not including `untilMs`, which is
+// the end of the stretch being played rather than the moment playback stops —
+// the two differ by the tail a bounded section rings out into.
+export function startPlaybackAudio(fromMs, untilMs = Infinity) {
   const c = getAudioContext();
   if (c.state === 'suspended') c.resume();
   stopPlaybackAudio();
   anchorCtxTime = c.currentTime;
   anchorMs = fromMs;
+  playUntilMs = untilMs;
   scheduledUpToMs = fromMs;
   pumpTimer = setInterval(pump, PUMP_INTERVAL_MS);
   pump();
