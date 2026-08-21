@@ -7,7 +7,7 @@ import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWai
 import { startLearn, stopLearn, isHoldingMessage, CLUSTERS } from './learn.js';
 import {
   startSectionWalk, stopSectionWalk, repeatSection, advanceSection,
-  handOverForTraining, isWalking,
+  handOverForTraining, isWalking, buildSections,
 } from './section-learn.js';
 import { saveComposition, listCompositions, deleteComposition, compositionToJSON, compositionFromJSON } from './storage.js';
 import { compositionToMidi, midiToComposition } from './midi-file.js';
@@ -1444,6 +1444,25 @@ function withCountIn(start) {
 // at whatever the tempo happens to be by then
 let lastTrainingBars = null;
 
+// The section size divides a piece for training the same way it divides one for
+// learning — it is one setting, and the two disagreeing about what a section is
+// would make it useless. Training read only the loop range, so a player who had
+// set 2-bar sections and pressed Train got the whole piece and no hint as to
+// why.
+//
+// Which section: the one the playhead is in. "Train where I am" is what
+// reaching for the button means, and after a section walk or a scrub the
+// playhead is already sitting in the passage being worked on.
+function sectionAtPlayhead() {
+  const size = sectionSize();
+  if (!size) return null;
+  const sections = buildSections(size);
+  if (!sections.length) return null;
+  const { tempo, timeSignature } = state.composition;
+  const here = barAtMs(state.transport.currentTime, tempo, timeSignature);
+  return sections.find(s => here >= s.startBar && here <= s.endBar) || sections[0];
+}
+
 // Bar numbers are 1-based and inclusive of `startBar`, exclusive past `endBar`
 function rangeForBars({ startBar, endBar }) {
   const { tempo, timeSignature } = state.composition;
@@ -1456,8 +1475,10 @@ function startTrainingSession(bars = null) {
     return;
   }
   document.getElementById('accuracy-modal').classList.add('hidden');
-  // An explicit section wins; otherwise the loop range, if one is set
-  const target = bars || loopBars();
+  // An explicit section wins, then a marked loop, then the section size — each
+  // one a narrower statement of intent than the last, and the whole piece only
+  // when none of them has been made
+  const target = bars || loopBars() || sectionAtPlayhead();
   lastTrainingBars = target ? { startBar: target.startBar, endBar: target.endBar } : null;
   if (!bars && lastTrainingBars) {
     showToast(`Training bars ${lastTrainingBars.startBar}–${lastTrainingBars.endBar}`, 1800);
