@@ -1,6 +1,6 @@
 // Accuracy tracking: compare live MIDI input against expected notes during playback
 import { state, update, emit, on } from './state.js';
-import { quantizeNotes } from './quantizer.js';
+import { quantizeNotes, atOrPast } from './quantizer.js';
 import { isPractised } from './hands.js';
 
 // Timing tiers, measured from the note's written position
@@ -90,7 +90,7 @@ export function startAccuracy(composition, range = null) {
       latencyMs: null,
     }))
     // Training a section only grades what is inside it
-    .filter(n => !range || (n.startTimeMs >= range.startMs - 1 && n.startTimeMs < range.endMs));
+    .filter(n => !range || (atOrPast(n.startTimeMs, range.startMs) && !atOrPast(n.startTimeMs, range.endMs)));
 
   playedNotes = [];
   update('accuracy.active', true);

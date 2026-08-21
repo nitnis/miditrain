@@ -36,6 +36,24 @@ export function gridSizeFromDivision(division) {
   return 4 / division;
 }
 
+// How close to a barline still counts as being on it.
+//
+// Music is kept as floating-point milliseconds and every tempo change re-scales
+// all of it, so a note written on a barline does not stay exactly on one: take
+// a piece through a few tempos and 6000 has become 5999.999999999999. Compared
+// strictly, that note is in the bar before — which is how a section came to
+// sound the opening of the next one and then start that one a note late.
+//
+// Half a millisecond is far below anything that can be heard or played, and far
+// above the arithmetic. Everything that divides music at a barline asks through
+// atOrPast, so the preview, the walk and the grading cannot end up disagreeing
+// about where a section begins.
+export const EDGE_MS = 0.5;
+
+export function atOrPast(ms, edge) {
+  return ms >= edge - EDGE_MS;
+}
+
 export function findBestDuration(beats) {
   let best = DURATIONS[0];
   let bestDiff = Infinity;
@@ -191,7 +209,7 @@ export function barStartMs(barNumber, tempo, timeSignature) {
 export function barAtMs(ms, tempo, timeSignature) {
   const beatsPerBar = timeSignature.numerator * (4 / timeSignature.denominator);
   const barMs = beatsToMs(beatsPerBar, tempo);
-  return Math.max(1, Math.floor(Math.max(0, ms) / barMs) + 1);
+  return Math.max(1, Math.floor((Math.max(0, ms) + EDGE_MS) / barMs) + 1);
 }
 
 // A stretch of bars in milliseconds. Bar numbers are 1-based and endBar is

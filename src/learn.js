@@ -12,7 +12,7 @@
 // Set a cluster size and it walks in three passes instead of one. See below.
 import { state, update, emit, on } from './state.js';
 import { noteOn, noteOff, resumeAudioContext } from './audio.js';
-import { barRangeMs } from './quantizer.js';
+import { barRangeMs, atOrPast, EDGE_MS } from './quantizer.js';
 import { loopBars, loopRangeMs } from './range.js';
 import { isPractised } from './hands.js';
 
@@ -123,9 +123,9 @@ function buildClusters() {
   const out = [];
   let from = 0;
   while (from < groups.length) {
-    const edge = (Math.floor(groups[from].startMs / size) + 1) * size;
+    const edge = (Math.floor((groups[from].startMs + EDGE_MS) / size) + 1) * size;
     let to = from;
-    while (to + 1 < groups.length && groups[to + 1].startMs < edge - 0.5) to += 1;
+    while (to + 1 < groups.length && !atOrPast(groups[to + 1].startMs, edge)) to += 1;
     out.push({ from, to, startMs: edge - size, endMs: edge });
     from = to + 1;
   }
@@ -187,8 +187,11 @@ export function startLearn(bars = null) {
   sectionStartMs = section ? section.startMs : 0;
   // Practising one hand walks only that hand's attacks — the other hand's
   // notes are not waited on and not prompted
+  // Through atOrPast, so a note written on the barline that opens a section is
+  // not walked at the end of the section before it — which left the one it
+  // belongs to starting a note late
   groups = groupAttacks(state.composition.notes.filter(isPractised))
-    .filter(g => !section || (g.startMs >= section.startMs && g.startMs < section.endMs));
+    .filter(g => !section || (atOrPast(g.startMs, section.startMs) && !atOrPast(g.startMs, section.endMs)));
   if (!groups.length) return false;
 
   clusters = buildClusters();

@@ -11,7 +11,7 @@
 import { state, update, emit, on } from './state.js';
 import { playRange, stop } from './transport.js';
 import { startLearn, stopLearn } from './learn.js';
-import { barRangeMs } from './quantizer.js';
+import { barRangeMs, barAtMs } from './quantizer.js';
 import { loopBars } from './range.js';
 import { isPractised } from './hands.js';
 
@@ -36,7 +36,9 @@ export function buildSections(barsPerSection) {
   const barMs = barRangeMs(1, 1, tempo, timeSignature).endMs;
   if (!barMs) return [];
 
-  const barOf = (ms) => Math.floor(ms / barMs) + 1;
+  // The app's own answer to which bar a moment falls in, rather than a second
+  // copy of the arithmetic that could drift away from it
+  const barOf = (ms) => barAtMs(ms, tempo, timeSignature);
   let firstBar = barOf(Math.min(...notes.map(n => n.startTime)));
   let lastBar = barOf(Math.max(...notes.map(n => n.startTime)));
 
