@@ -8,7 +8,11 @@ let rafId = null;
 let perfStart = 0;   // performance.now() when transport was (re)started
 let posStart = 0;    // composition time (ms) when transport was (re)started
 let activeRecordNotes = new Map(); // pitch -> {startTime, velocity}
-let stopAtMs = null; // set when playing a bounded section
+let stopAtMs = null;    // set when playing a bounded section
+// Where that section's notes end. Playback runs past it by a tail so the last
+// note can ring, which is not the same thing as the last moment a note may
+// start — without the distinction the tail sounds the next section's opening.
+let playUntilMs = null;
 
 function currentPosition() {
   return posStart + (performance.now() - perfStart) * state.transport.speed;
@@ -29,7 +33,7 @@ function restartAt(ms) {
   perfStart = performance.now();
   posStart = state.transport.currentTime;
   if (state.ui.metronomeEnabled) startMetronome(state.transport.currentTime);
-  if (state.transport.mode === 'playing') startPlaybackAudio(state.transport.currentTime);
+  if (state.transport.mode === 'playing') startPlaybackAudio(state.transport.currentTime, playUntilMs ?? Infinity);
   rafId = requestAnimationFrame(loop);
 }
 
@@ -85,15 +89,22 @@ export function record() {
 }
 
 export function play() {
+  startPlaying(null, null);
+}
+
+// `untilMs` is the last moment a note may start and `stopMs` where playback
+// halts; both null means the whole piece, to the end of it.
+function startPlaying(untilMs, stopMs) {
   if (state.transport.mode === 'playing') return;
   stop();
-  stopAtMs = null;
+  stopAtMs = stopMs;
+  playUntilMs = untilMs;
   update('transport.mode', 'playing');
   perfStart = performance.now();
   posStart = state.transport.currentTime;
 
   if (state.ui.metronomeEnabled) startMetronome(posStart);
-  startPlaybackAudio(posStart);
+  startPlaybackAudio(posStart, untilMs ?? Infinity);
 
   rafId = requestAnimationFrame(loop);
   emit('transport:play');
@@ -136,6 +147,7 @@ export function stop() {
   stopMetronome();
   stopPlaybackAudio();
   stopAtMs = null;
+  playUntilMs = null;
   if (state.transport.mode === 'stopped') return; // idempotent: no event when already stopped
   update('transport.mode', 'stopped');
   emit('transport:stop');
@@ -166,6 +178,7 @@ export function changeTempo(bpm) {
   const running = rafId !== null;
   const position = (running ? currentPosition() : state.transport.currentTime) * ratio;
   if (stopAtMs !== null) stopAtMs *= ratio;
+  if (playUntilMs !== null) playUntilMs *= ratio;
 
   update('composition.tempo', clamped);
   emit('transport:noteschanged', state.composition.notes);
@@ -178,12 +191,17 @@ export function changeTempo(bpm) {
   return clamped;
 }
 
-// Play a bounded stretch and stop at the end of it, for practising a section
-export function playRange(startMs, endMs) {
+// Play a bounded stretch and stop at the end of it, for practising a section.
+//
+// `tailMs` is how far past the stretch playback runs so the note it ends on
+// can ring out. Nothing new starts in there: the tail is room for the last
+// note to finish, and a section that sounded the opening of the next one
+// before handing over to it is telling the player the wrong thing about where
+// they are.
+export function playRange(startMs, endMs, tailMs = 0) {
   stop();
   update('transport.currentTime', Math.max(0, startMs));
-  play();
-  stopAtMs = endMs;
+  startPlaying(endMs, endMs + tailMs);
 }
 
 // Halt and return to the beginning. This is what the Stop button does.

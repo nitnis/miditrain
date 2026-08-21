@@ -344,6 +344,15 @@ export function stopLearn() {
   finish(false);
 }
 
+// A message is on screen and everything is waiting for it to be read — the
+// player's keys, and the transport's own. A session that has just ended on a
+// verdict is finishing, not waiting to be told what to do next, and pressing
+// on during that second used to tear down a section walk that was a moment
+// away from offering its end-of-section choice.
+export function isHoldingMessage() {
+  return holding !== null;
+}
+
 export function getLearnProgress() {
   if (!groups.length || index < 0) return null;
   return { done: index, total: groups.length, pending: [...pending], looping, pass, slips };
