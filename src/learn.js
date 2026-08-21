@@ -62,22 +62,24 @@ let misses = 0;         // wrong notes, all of them, this session
 let spoiled = false;
 
 // ── Clusters ─────────────────────────────────────────────────────────────────
-// Note by note teaches you where the keys are. It does not teach you the shape
-// of a phrase, because you never play more than one thing at a time and never
-// have to remember what came before. So a cluster — half a beat, a beat, a bar
-// — is learned in three passes:
+// Taking a piece one note at a time — the fast learn — teaches you where the
+// keys are. It does not teach you the shape of a phrase, because you never play
+// more than one thing at a time and never have to remember what came before. So
+// a cluster — half a beat, a beat, a bar — is learned in three passes:
 //
 //   listen   the cluster plays itself, once, in time
 //   guided   it comes round again in silence, one attack at a time, waiting;
 //            the only sound is the player's own
 //   memory   nothing falls and nothing is highlighted. Play it again from
-//            memory. A wrong note and the cluster starts over from listen.
+//            memory. A wrong note lights the one that was wanted so the phrase
+//            can carry on; if the pass had any in it, the cluster comes round
+//            again from listen.
 //
 // The last pass is the one that does the work: it is the first time the player
 // has to produce the phrase rather than react to it.
 
 export const CLUSTERS = {
-  off:      { name: 'Note by note' },
+  off:      { name: 'Fast learn' },
   halfBeat: { name: 'Half-beat clusters', beats: 0.5 },
   beat:     { name: 'One-beat clusters',  beats: 1 },
   twoBeats: { name: 'Two-beat clusters',  beats: 2 },
