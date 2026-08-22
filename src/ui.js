@@ -18,7 +18,7 @@ import { setInputEnabled } from './midi.js';
 import { startStepRecord, stopStepRecord, stepInsertRest, stepGoBack, getStepMs } from './step-recorder.js';
 import { initNoteEditor, getSelectedIds, clearSelection } from './note-editor.js';
 import { staffPositionName, midiToNoteWithOctave } from './chords.js';
-import { barRangeMs, barAtMs } from './quantizer.js';
+import { barRangeMs, barAtMs, detectGridDivision } from './quantizer.js';
 import { loopBars } from './range.js';
 import { inferHands } from './hands.js';
 import { SCALES, CHORDS, PATTERNS, HANDS, DIRECTIONS, NOTE_VALUES, ROOTS, buildExercise } from './scales.js';
@@ -2012,10 +2012,10 @@ function bindCompositionControls() {
       const imported = await readImportedFile(file);
       if (state.composition.notes.length &&
           !confirm('Replace the current composition with the imported one?')) return;
-      loadComposition(imported);
+      const regrid = loadComposition(imported);
       const n = imported.notes.length;
       const detail = imported.warnings?.length ? ` · ${imported.warnings.join(' · ')}` : '';
-      showToast(`Imported "${imported.name}" — ${n} note${n === 1 ? '' : 's'}${detail}`,
+      showToast(`Imported "${imported.name}" — ${n} note${n === 1 ? '' : 's'}${detail}${gridNote(regrid)}`,
         imported.warnings?.length ? 5000 : 2500);
     } catch (err) {
       showToast(`Import failed: ${err.message}`, 4000);
@@ -2085,9 +2085,29 @@ function loadComposition(song) {
     document.getElementById('key-select').value = song.keySignature;
   }
   seekToStart();
+  const regrid = adoptGridFor(song);
   resetHistory();
   scheduleSheetRender();
-  showToast(`Opened: ${song.name}`);
+  showToast(`Opened: ${song.name}${gridNote(regrid)}`);
+  return regrid;
+}
+
+// A piece arriving brings its own rhythm, and the grid has to be fine enough to
+// write it down. Left on whatever the last piece wanted, a dotted or triplet
+// figure has two notes stacked on one grid line — so the grid is read off the
+// music rather than carried over. Returns the division when it changed, for
+// saying so: a setting that moves on its own has to be visible, and the control
+// still overrules it.
+function adoptGridFor(song) {
+  const wanted = detectGridDivision(song.notes, song.tempo);
+  if (wanted === state.ui.quantize) return null;
+  update('ui.quantize', wanted);
+  for (const sel of quantizeSelects()) sel.value = String(wanted);
+  return wanted;
+}
+
+function gridNote(division) {
+  return division ? ` · written in 1/${division} notes, which is what the rhythm needs` : '';
 }
 
 function bindModalControls() {
