@@ -193,6 +193,7 @@ function applyStateToControls() {
   document.getElementById('metro-subdivision').value = String(ui.metronomeSubdivision);
   document.getElementById('btn-beat-overlay').classList.toggle('active', ui.showBeatOverlay);
   document.getElementById('btn-chord-overlay').classList.toggle('active', ui.showChordOverlay);
+  document.getElementById('btn-count-overlay').classList.toggle('active', ui.showCountOverlay);
   document.getElementById('btn-fingering').classList.toggle('active', ui.showFingering);
   document.getElementById('btn-suggest-fingering').classList.toggle('active', ui.suggestFingering);
   document.getElementById('btn-hand-overlay').classList.toggle('active', ui.handOverlay);
@@ -1308,6 +1309,7 @@ function cycleSubdivision() {
 const OVERLAYS = {
   beat:      { path: 'ui.showBeatOverlay',  button: 'btn-beat-overlay',  on: 'Beat counter on',  off: 'Beat counter off' },
   chord:     { path: 'ui.showChordOverlay', button: 'btn-chord-overlay', on: 'Chord names on',   off: 'Chord names off' },
+  count:     { path: 'ui.showCountOverlay', button: 'btn-count-overlay', on: 'Counting the bar out', off: 'Counting off' },
   // The falling notes are redrawn every frame and pick their overlays up for
   // free; the score is drawn on demand and has to be asked again
   fingering: { path: 'ui.showFingering',    button: 'btn-fingering',     on: 'Fingering on',     off: 'Fingering off', redrawsSheet: true },
@@ -1738,6 +1740,7 @@ function bindToolbar() {
   document.getElementById('metro-subdivision').onchange = (e) => setSubdivision(e.target.value);
   document.getElementById('btn-beat-overlay').onclick = () => toggleOverlay('beat');
   document.getElementById('btn-chord-overlay').onclick = () => toggleOverlay('chord');
+  document.getElementById('btn-count-overlay').onclick = () => toggleOverlay('count');
   document.getElementById('btn-fingering').onclick = () => {
     toggleOverlay('fingering'); syncFingeringGuessNote(); syncHandStage();
   };
@@ -2322,6 +2325,10 @@ function shortcutActions() {
       section: 'Options', label: 'Show the chord over the falling notes',
       defaultBindings: [{ code: 'KeyC', shift: true }],
       run: () => toggleOverlay('chord') },
+    { id: 'count-overlay', group: 'global', hint: 'btn-count-overlay',
+      section: 'Options', label: 'Count the bar out over the falling notes',
+      defaultBindings: [{ code: 'KeyN', shift: true }],
+      run: () => toggleOverlay('count') },
     { id: 'fingering', group: 'global', hint: 'btn-fingering',
       section: 'Options', label: 'Show fingering on the keyboard',
       defaultBindings: [{ code: 'KeyF', shift: true }],

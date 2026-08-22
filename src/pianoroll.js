@@ -785,9 +785,15 @@ export function drawFallingNotes(notes, composition, currentTimeMs, accuracyResu
     fallingCtx.fillRect(keyInfo.x - 5, ch - 50, keyInfo.w + 10, 50);
   }
 
-  // Overlays last, so nothing falling is drawn over them
-  drawChordName(notes, composition, currentTimeMs, cw, ch);
-  drawMetronome(composition, currentTimeMs, cw, ch);
+  // Overlays last, so nothing falling is drawn over them. The signal owns the
+  // top right corner and the others are placed against it, so they are measured
+  // from it whether or not it is switched on — a chord name that jumped across
+  // the window when the beat was toggled would be worse than one slightly off
+  // centre.
+  const signal = metronomeBox(composition, cw, ch);
+  drawChordName(notes, composition, currentTimeMs, signal);
+  drawBeatCount(composition, currentTimeMs, cw, signal);
+  drawMetronome(composition, currentTimeMs, signal);
 }
 
 // ── Current chord ────────────────────────────────────────────────────────────
@@ -829,24 +835,121 @@ function resetChordLabel() {
   heldChord = { label: null, since: 0 };
 }
 
-function drawChordName(notes, composition, currentTimeMs, cw, ch) {
+// Alongside the signal rather than across the middle of the window. The middle
+// is where the eye goes for the notes and for what learn mode has to say, and a
+// harmony is a thing to glance at, not to read over the top of the playing.
+function drawChordName(notes, composition, currentTimeMs, signal) {
   if (!state.ui.showChordOverlay || blind) return;
   const label = currentChordLabel(notes, currentTimeMs, composition.keySignature);
   if (!label) return;
 
-  // Sized to the window: readable from the keyboard in a tall one, and not
-  // swallowing a short one
-  const size = Math.max(30, Math.min(60, Math.round(ch * 0.3)));
+  const size = Math.round(30 * signal.s);
   fallingCtx.save();
   fallingCtx.font = `600 ${size}px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`;
-  fallingCtx.textAlign = 'center';
-  fallingCtx.textBaseline = 'top';
-  fallingCtx.globalAlpha = 0.72;
+  fallingCtx.textAlign = 'right';
+  fallingCtx.textBaseline = 'middle';
+  fallingCtx.globalAlpha = 0.82;
   fallingCtx.shadowColor = 'rgba(0,0,0,0.85)';
   fallingCtx.shadowBlur = 12;
   fallingCtx.fillStyle = '#8ad4f5';
-  fallingCtx.fillText(label, cw / 2, 8);
+  fallingCtx.fillText(label, signal.x - 12 * signal.s, signal.y + signal.height / 2);
   fallingCtx.restore();
+}
+
+// ── Counting the bar out ─────────────────────────────────────────────────────
+// One, two, three, four — and the syllables between them, because that is how
+// the divisions of a beat are taught and said out loud. The row is the whole
+// bar at once with the current syllable lit, so where you are is read off a
+// shape rather than counted from a blinking light.
+//
+// The syllables follow the metronome's own subdivision, so what is written is
+// what is being clicked.
+const COUNT_SYLLABLES = {
+  1: [],
+  2: ['&'],
+  3: ['trip', 'let'],
+  4: ['e', '&', 'a'],
+};
+
+function drawBeatCount(composition, currentTimeMs, cw, signal) {
+  if (!state.ui.showCountOverlay || blind) return;
+
+  const { tempo, timeSignature } = composition;
+  const beatsPerBar = Math.max(1, timeSignature.numerator);
+  const subs = subdivision();
+  const between = COUNT_SYLLABLES[subs] || [];
+  const beatMs = (60 / tempo) * 1000;
+
+  // Standing unlit between takes, the way the signal does
+  const running = state.transport.mode !== 'stopped';
+  const beatPos = running ? currentTimeMs / beatMs : 0;
+  const beat = Math.floor(beatPos);
+  const beatIndex = ((beat % beatsPerBar) + beatsPerBar) % beatsPerBar;
+  const intoBeat = running ? beatPos - beat : 0;
+  const nowAt = running
+    ? beatIndex * subs + Math.min(subs - 1, Math.floor(intoBeat * subs))
+    : -1;
+
+  const tokens = [];
+  for (let b = 0; b < beatsPerBar; b++) {
+    tokens.push({ text: String(b + 1), beat: true });
+    for (const syl of between) tokens.push({ text: syl, beat: false });
+  }
+
+  // The row has the window's width less both corners: the loop button and the
+  // learn status on one side, the signal on the other
+  const room = Math.max(120, signal.x - 24 - 130);
+  fallingCtx.save();
+  fallingCtx.textBaseline = 'middle';
+  fallingCtx.shadowColor = 'rgba(0,0,0,0.85)';
+  fallingCtx.shadowBlur = 10;
+
+  // Shrink until the bar fits rather than letting it run under the furniture
+  let size = Math.round(22 * signal.s);
+  let laid;
+  for (;;) {
+    laid = layoutCount(tokens, size);
+    if (laid.width <= room || size <= 9) break;
+    size -= 1;
+  }
+
+  let x = cw / 2 - laid.width / 2;
+  const y = signal.y + signal.height / 2;
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    const lit = i === nowAt;
+    fallingCtx.font = countFont(t.beat, size);
+    fallingCtx.textAlign = 'left';
+    fallingCtx.globalAlpha = lit ? 1 : (t.beat ? 0.5 : 0.34);
+    fallingCtx.fillStyle = lit
+      ? (t.beat ? '#ffd166' : '#7fe3ff')
+      : 'rgba(230,230,255,1)';
+    fallingCtx.fillText(t.text, x + laid.offsets[i], y);
+  }
+  fallingCtx.restore();
+}
+
+function countFont(isBeat, size) {
+  const family = '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
+  return isBeat
+    ? `700 ${size}px ${family}`
+    : `500 ${Math.max(8, Math.round(size * 0.72))}px ${family}`;
+}
+
+// Widths measured once per frame at the size being tried, so the row can be
+// centred and shrunk to fit without guessing at them
+function layoutCount(tokens, size) {
+  const offsets = [];
+  let x = 0;
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    // A new beat gets air in front of it, so the groups read as groups
+    if (i) x += (t.beat ? size * 0.62 : size * 0.3);
+    offsets.push(x);
+    fallingCtx.font = countFont(t.beat, size);
+    x += fallingCtx.measureText(t.text).width;
+  }
+  return { offsets, width: x };
 }
 
 // ── Metronome ────────────────────────────────────────────────────────────────
@@ -864,23 +967,14 @@ const LAMP_ON = '#ff3b30';
 const BUCK_CLEARANCE = 4; // the crossbuck sits above the lamps, not across them
 const LAMP_OFF = 'rgba(90,26,26,0.75)';
 
-function drawMetronome(composition, currentTimeMs, cw, ch) {
-  if (!state.ui.showBeatOverlay) return;
-
-  const { tempo, timeSignature } = composition;
-  const beatsPerBar = Math.max(1, timeSignature.numerator);
+// Where the signal sits and how big it is. Split out because it is the anchor
+// for that corner: the chord name lines up against it and the count row stops
+// short of it, and neither can do that from a geometry hidden inside the
+// drawing of a panel they may not even be showing.
+function metronomeBox(composition, cw, ch) {
   const subs = subdivision();
-  const beatMs = (60 / tempo) * 1000;
-
-  // Standing dark between takes rather than counting a bar nobody is playing
-  const running = state.transport.mode !== 'stopped';
-  const beatPos = running ? currentTimeMs / beatMs : 0;
-  const beat = Math.floor(beatPos);
-  const beatIndex = ((beat % beatsPerBar) + beatsPerBar) % beatsPerBar;
-  const intoBeat = running ? beatPos - beat : 0;
-
-  // Panel geometry, scaled to the window so a tall one gets a big signal and a
-  // short one still fits
+  // Scaled to the window so a tall one gets a big signal and a short one still
+  // fits
   const s = Math.max(0.85, Math.min(1.6, ch / 170));
   const lampR = 11 * s;
   const gap = 34 * s;
@@ -890,8 +984,23 @@ function drawMetronome(composition, currentTimeMs, cw, ch) {
   const subH = subs > 1 ? 9 * s : 0;
   const width = gap + lampR * 2 + pad * 2 + 16 * s;
   const height = pad * 2 + buckH + lampR * 2 + pipH + subH + BUCK_CLEARANCE * s;
-  const x = cw - width - 12;
-  const y = 10;
+  return { x: cw - width - 12, y: 10, width, height, s, lampR, gap, pad, buckH, pipH, subs };
+}
+
+function drawMetronome(composition, currentTimeMs, box) {
+  if (!state.ui.showBeatOverlay) return;
+
+  const { tempo, timeSignature } = composition;
+  const beatsPerBar = Math.max(1, timeSignature.numerator);
+  const { s, lampR, gap, pad, buckH, pipH, subs, width, height, x, y } = box;
+  const beatMs = (60 / tempo) * 1000;
+
+  // Standing dark between takes rather than counting a bar nobody is playing
+  const running = state.transport.mode !== 'stopped';
+  const beatPos = running ? currentTimeMs / beatMs : 0;
+  const beat = Math.floor(beatPos);
+  const beatIndex = ((beat % beatsPerBar) + beatsPerBar) % beatsPerBar;
+  const intoBeat = running ? beatPos - beat : 0;
 
   fallingCtx.save();
   fallingCtx.fillStyle = 'rgba(13,13,26,0.6)';
