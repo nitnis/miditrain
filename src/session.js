@@ -43,6 +43,7 @@ const SETTINGS = {
   'ui.muted': bool,
   'ui.volume': range(0, 1),
   'ui.clicksOnly': bool,
+  'ui.monitorEnabled': bool,
   'ui.countInEnabled': bool,
   'ui.stepLegato': bool,
   'ui.quantize': oneOf(1, 2, 4, 8, 16, 32),

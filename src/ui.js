@@ -13,7 +13,7 @@ import { saveComposition, listCompositions, deleteComposition, compositionToJSON
 import { compositionToMidi, midiToComposition } from './midi-file.js';
 import { startAccuracy, stopAccuracy, getWorstSection, getTake, EXTRA_PENALTY_PCT } from './accuracy.js';
 import { startMetronome, stopMetronome } from './metronome.js';
-import { resumeAudioContext, applyOutputLevel, applyClicksOnly, setPlaybackSource } from './audio.js';
+import { resumeAudioContext, applyOutputLevel, applyClicksOnly, silenceMonitored, setPlaybackSource } from './audio.js';
 import { setInputEnabled } from './midi.js';
 import { startStepRecord, stopStepRecord, stepInsertRest, stepGoBack, getStepMs } from './step-recorder.js';
 import { initNoteEditor, getSelectedIds, clearSelection } from './note-editor.js';
@@ -189,6 +189,7 @@ function applyStateToControls() {
   setVolume(Math.round(ui.volume * 100));
   applyClicksOnly();
   document.getElementById('btn-clicks-only').classList.toggle('active', ui.clicksOnly);
+  document.getElementById('btn-monitor').classList.toggle('active', ui.monitorEnabled);
   document.getElementById('btn-metronome').classList.toggle('active', ui.metronomeEnabled);
   document.getElementById('metro-subdivision').value = String(ui.metronomeSubdivision);
   document.getElementById('btn-beat-overlay').classList.toggle('active', ui.showBeatOverlay);
@@ -547,6 +548,18 @@ function nudgeVolume(direction) {
 // ── Clicks only ──────────────────────────────────────────────────────────────
 // Practising against the click without hearing the notes: the note bus closes,
 // the metronome and count-in keep their own path to the output.
+
+// Hearing your own keys, as against hearing the app. Off is what a hardware
+// piano calls local off: the keys still send, they just do not sound here.
+function toggleMonitor() {
+  const on = !state.ui.monitorEnabled;
+  update('ui.monitorEnabled', on);
+  document.getElementById('btn-monitor').classList.toggle('active', on);
+  if (!on) silenceMonitored();
+  showToast(on
+    ? 'Your playing is audible again'
+    : 'Your playing is silent here — playback, prompts and the click are not', 2200);
+}
 
 function toggleClicksOnly() {
   const on = !state.ui.clicksOnly;
@@ -1737,6 +1750,7 @@ function bindToolbar() {
 
   document.getElementById('btn-metronome').onclick = toggleMetronome;
   document.getElementById('btn-clicks-only').onclick = toggleClicksOnly;
+  document.getElementById('btn-monitor').onclick = toggleMonitor;
   document.getElementById('metro-subdivision').onchange = (e) => setSubdivision(e.target.value);
   document.getElementById('btn-beat-overlay').onclick = () => toggleOverlay('beat');
   document.getElementById('btn-chord-overlay').onclick = () => toggleOverlay('chord');
@@ -2353,6 +2367,10 @@ function shortcutActions() {
       section: 'Options', label: 'Hear only the metronome and count-in',
       defaultBindings: [{ code: 'KeyK' }],
       run: () => toggleClicksOnly() },
+    { id: 'monitor', group: 'global', hint: 'btn-monitor',
+      section: 'Options', label: 'Sound the keys you play (local off)',
+      defaultBindings: [{ code: 'KeyL', shift: true }],
+      run: () => toggleMonitor() },
     { id: 'mute', group: 'global', hint: 'btn-mute',
       section: 'Options', label: 'Mute / unmute all audio',
       defaultBindings: [{ code: 'KeyS' }],
