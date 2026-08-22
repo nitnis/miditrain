@@ -1,6 +1,6 @@
 // Accuracy tracking: compare live MIDI input against expected notes during playback
 import { state, update, emit, on } from './state.js';
-import { quantizeNotes, atOrPast } from './quantizer.js';
+import { atOrPast } from './quantizer.js';
 import { isPractised } from './hands.js';
 
 // Timing tiers, measured from the note's written position
@@ -69,26 +69,39 @@ let cleanupFns = [];
 let sessionRange = null; // { startMs, endMs } when training a section
 let sessionBeatMs = 500; // the beat this run was played at
 
+// A note is expected where it sounds, not where it is drawn.
+//
+// This used to grade against the notation grid — every note snapped to the
+// quantize setting — while playback, the falling notes, learn mode and the
+// replay all use the times the notes actually hold. On anything that does not
+// sit on that grid the two part company, and the player is asked to play in one
+// place and judged in another. A dotted eighth and a sixteenth on the default
+// 1/8 grid is the plain case: in K331 the sixteenth sounds 234ms before it was
+// expected, which is an "almost" before a finger has moved and a miss with any
+// ordinary wobble on top. No amount of playing it right could fix it, because
+// playing it right was what was being punished.
+//
+// The quantize setting is for notation — how the score is written and how big a
+// step-record step is. It has no business deciding when a note is due.
 export function startAccuracy(composition, range = null) {
-  const { tempo, timeSignature } = composition;
-  const quantized = quantizeNotes(composition.notes, tempo, timeSignature, state.ui.quantize);
+  const { tempo } = composition;
   const beatMs = (60 / tempo) * 1000;
 
   sessionRange = range;
   sessionBeatMs = beatMs;
   // Practising one hand grades only that hand. The other one still sounds
   // through playback, which is the point — you play your part against it.
-  const practised = new Set(composition.notes.filter(isPractised).map(n => n.id));
-  expectedNotes = quantized
-    .filter(n => practised.has(n.id))
+  expectedNotes = composition.notes
+    .filter(isPractised)
     .map(n => ({
       id: n.id,
       pitch: n.pitch,
-      startTimeMs: n.startBeats * beatMs,
-      durationMs: n.durationBeats * beatMs,
+      startTimeMs: n.startTime,
+      durationMs: n.duration,
       grade: null,
       latencyMs: null,
     }))
+    .sort((a, b) => a.startTimeMs - b.startTimeMs)
     // Training a section only grades what is inside it
     .filter(n => !range || (atOrPast(n.startTimeMs, range.startMs) && !atOrPast(n.startTimeMs, range.endMs)));
 
