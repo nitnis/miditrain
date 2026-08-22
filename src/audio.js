@@ -174,6 +174,24 @@ function releaseNow(voice, fade = RELEASE_S) {
 
 // ── Live monitoring (MIDI input) ─────────────────────────────────────────────
 
+// Sounding what the player is playing, as against what the app is playing at
+// them. Somebody going through a VST or a hardware voice already hears their
+// own keys and does not want them doubled — but they still want the piece, the
+// prompts and the click, so this is its own switch rather than a corner of the
+// volume. Nothing else changes: playback and the metronome have their own paths
+// to the output and never come through here.
+export function monitorNoteOn(pitch, velocity = 90) {
+  if (!state.ui.monitorEnabled) return;
+  noteOn(pitch, velocity);
+}
+
+// Switched off mid-phrase, it should go quiet at once rather than hanging on
+// until the player happens to lift their hands. What they are holding is
+// exactly what the monitor is sounding.
+export function silenceMonitored() {
+  for (const pitch of [...state.midi.activeNotes]) noteOff(pitch);
+}
+
 export function noteOn(pitch, velocity = 90) {
   const c = getAudioContext();
   if (c.state === 'suspended') c.resume();

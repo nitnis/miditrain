@@ -2,7 +2,7 @@
 import { initMidi } from './midi.js';
 import { initUI } from './ui.js';
 import { on, emit, state } from './state.js';
-import { noteOn as audioNoteOn, noteOff as audioNoteOff } from './audio.js';
+import { monitorNoteOn, noteOff as audioNoteOff } from './audio.js';
 import { restoreSettings, restoreComposition, initSession } from './session.js';
 import { loadProfiles } from './profiles.js';
 
@@ -21,7 +21,7 @@ async function boot() {
   // await sits on a permission prompt that can stay pending indefinitely, and
   // anything registered after it would never attach.
   on('midi:noteon', ({ pitch, velocity }) => {
-    audioNoteOn(pitch, velocity);
+    monitorNoteOn(pitch, velocity);
     emit('ui:activenotes', state.midi.activeNotes);
   });
 

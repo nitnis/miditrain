@@ -46,6 +46,7 @@ const _state = {
     muted: false,           // master audio mute; audible by default
     volume: 1,              // 0..1, applied at the master gain
     clicksOnly: false,      // silence the notes, keep the metronome and count-in
+    monitorEnabled: true,   // sound the keys the player plays; off when they have their own voice
     countInEnabled: true,   // click one bar before live recording and training
     stepLegato: false,      // step recording holds each note until the next one
     quantize: 8,            // grid division (8 = 1/8 note); also the step-record step size
