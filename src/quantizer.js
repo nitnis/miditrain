@@ -167,18 +167,44 @@ function isThird(beats) {
   return !DIVISIONS.some(d => onGrid(offset, gridSizeFromDivision(d)));
 }
 
-// Which beats of a piece are written as triplets.
+// Which slot of the beat an offset landed in, counting in grid steps
+function slotOf(offset, step) {
+  return Math.round(offset / step);
+}
+
+// Swing is the ternary lattice with the middle of every three taken out. The
+// pair a jazz player swings is long-short: it sounds on the first and third of
+// three, and is written as the first and second of two. Nothing lands on the
+// middle — that is what tells a swung beat from a real triplet, which uses it.
+//
+// So a slot maps to a written slot by dropping one for each middle it has
+// passed: 0→0 and 2→1 for swung eighths, and 0→0, 2→1, 3→2, 5→3 for swung
+// sixteenths, which is the same rule a level down.
+function isSwungSlot(slot) {
+  return slot % 3 !== 1;
+}
+
+function swingPosition(offset, step) {
+  const slot = slotOf(offset, step);
+  return (slot - Math.floor((slot + 1) / 3)) * writtenBeats(step, 3);
+}
+
+// Which beats of a piece are not written in halves, and how each of them is
+// written instead.
 //
 // Asked one beat at a time, because that is how music mixes them: a movement is
 // binary throughout and then has a bar of triplets in it, and a single grid for
 // the whole piece can only be wrong about one of those.
 //
-// A beat is a triplet when every attack in it sits in thirds AND at least one of
+// A beat is ternary when every attack in it sits in thirds AND at least one of
 // them does not sit in halves. Both halves matter. Without the first, one stray
 // note brackets a beat that is not a triplet; without the second, every plain
 // downbeat qualifies — it sits in thirds too, being on the beat — and the score
 // fills with tuplets around single notes.
-export function detectTripletBeats(notes, tempo, division = 8) {
+//
+// Each one also says whether it is swung — every attack clear of the middle of
+// its three — which is what a swing marking is a claim about.
+export function detectTernaryBeats(notes, tempo, division = 8) {
   const out = new Map();
   if (!notes || !notes.length || !tempo) return out;
 
@@ -194,16 +220,42 @@ export function detectTripletBeats(notes, tempo, division = 8) {
   for (const [beat, offsets] of byBeat) {
     if (offsets.every(o => onGrid(o, binaryStep))) continue;
     for (const step of TRIPLET_STEPS) {
-      if (offsets.every(o => onGrid(o, step))) { out.set(beat, step); break; }
+      if (offsets.every(o => onGrid(o, step))) {
+        out.set(beat, { step, swung: offsets.every(o => isSwungSlot(slotOf(o, step))) });
+        break;
+      }
     }
   }
   return out;
 }
 
-// The step a given beat is written on, and what that makes it
-function gridForBeat(beat, triplets, binaryStep) {
-  const third = triplets.get(beat);
-  return third ? { step: third, tuplet: 3 } : { step: binaryStep, tuplet: 1 };
+// How many swung beats it takes before the piece is being played with a swing
+// rather than merely having a long-short figure in it — about two bars' worth.
+const MIN_SWUNG_BEATS = 8;
+
+// Is this piece swung? Every beat that is not written in halves gets a vote,
+// and swing wins when nearly all of them are long-short pairs. A piece with
+// real triplets in it says no, which is the point: "swing" is a claim about the
+// whole chart, and a chart with triplets written out is not making it.
+export function detectSwing(notes, tempo, division = 8) {
+  const ternary = detectTernaryBeats(notes, tempo, division);
+  if (ternary.size < MIN_SWUNG_BEATS) return false;
+  let swung = 0;
+  for (const [, info] of ternary) if (info.swung) swung++;
+  return swung >= ternary.size * MOSTLY;
+}
+
+// The step a given beat is written on, and what that makes it.
+//
+// Under a swing marking a swung beat goes back to halves: the marking is what
+// says the eighths are uneven, so writing them as triplets as well would be
+// saying it twice — and saying it in the way jazz players spend their lives
+// not reading.
+function gridForBeat(beat, ternary, binaryStep, swing) {
+  const info = ternary.get(beat);
+  if (!info) return { step: binaryStep, tuplet: 1 };
+  if (swing && info.swung) return { step: info.step, tuplet: 1, swung: true };
+  return { step: info.step, tuplet: 3 };
 }
 
 export function findBestDuration(beats, tuplet = 1) {
@@ -221,27 +273,34 @@ export function findBestDuration(beats, tuplet = 1) {
 }
 
 // Main function: quantize raw NoteEvents → QuantizedNotes
-export function quantizeNotes(rawNotes, tempo, timeSignature, gridDivision = 8) {
+export function quantizeNotes(rawNotes, tempo, timeSignature, gridDivision = 8, swing = false) {
   if (!rawNotes || !rawNotes.length) return [];
 
   const binaryStep = gridSizeFromDivision(gridDivision);
   const beatsPerMeasure = timeSignature.numerator * (4 / timeSignature.denominator);
   // Worked out once for the piece, so every note in a beat agrees about how that
   // beat is written
-  const triplets = detectTripletBeats(rawNotes, tempo, gridDivision);
+  const ternary = detectTernaryBeats(rawNotes, tempo, gridDivision);
 
   return rawNotes.map(note => {
     const raw = msToBeats(note.startTime, tempo);
     const beat = Math.floor(raw + BEAT_EPS);
-    const { step, tuplet } = gridForBeat(beat, triplets, binaryStep);
+    const { step, tuplet, swung } = gridForBeat(beat, ternary, binaryStep, swing);
+    // The step a swung beat is *written* on is the one above the one it is
+    // played on: three thirds of a beat sound where two halves are written.
+    const writtenStep = swung ? writtenBeats(step, 3) : step;
     // Snapped within its own beat rather than against the whole piece, so a
-    // triplet beat cannot pull the beat itself off the grid
-    const startBeats = beat + snapToGrid(raw - beat, step);
+    // triplet beat cannot pull the beat itself off the grid. A swung beat is
+    // not snapped but re-counted, the long-short pair landing on the two
+    // straight eighths the marking says to read unevenly.
+    const startBeats = beat + (swung
+      ? swingPosition(raw - beat, step)
+      : snapToGrid(raw - beat, step));
     const rawDurBeats = msToBeats(note.duration, tempo);
     // Keep the true snapped length. Rounding to a single notatable value here
     // would silently shorten anything longer than a dotted whole; splitting
     // into tied pieces is the notation layer's job.
-    const durationBeats = Math.max(step, snapToGrid(rawDurBeats, step));
+    const durationBeats = Math.max(writtenStep, snapToGrid(rawDurBeats, writtenStep));
 
     const measure = Math.floor(startBeats / beatsPerMeasure);
     const beatInMeasure = startBeats - measure * beatsPerMeasure;
@@ -253,10 +312,10 @@ export function quantizeNotes(rawNotes, tempo, timeSignature, gridDivision = 8) 
       measure,
       beatInMeasure,
       tuplet,
-      // The lattice this note was snapped onto. The notation layer needs it to
+      // The lattice this note is written on. The notation layer needs it to
       // know how many notes make one bracket: three thirds of a beat are one
       // triplet, three sixths are half of one.
-      gridStep: step,
+      gridStep: writtenStep,
     };
   }).sort((a, b) => a.startBeats - b.startBeats);
 }

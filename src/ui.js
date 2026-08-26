@@ -178,6 +178,7 @@ function applyStateToControls() {
   syncTransposeControls();
 
   for (const sel of quantizeSelects()) sel.value = String(ui.quantize);
+  document.getElementById('swing-select').value = ui.swing;
   document.getElementById('learn-sections').value = String(ui.learnSectionBars);
   syncRecordHand();
   syncPracticeHand();
@@ -1787,6 +1788,23 @@ function bindToolbar() {
     sel.value = String(state.ui.quantize);
     sel.onchange = (e) => setQuantize(parseInt(e.target.value));
   }
+
+  const SWING_HINT = 'Uneven eighths written straight, under a swing marking — the way a jazz chart reads';
+  const swingSelect = document.getElementById('swing-select');
+  swingSelect.value = state.ui.swing;
+  swingSelect.onchange = (e) => {
+    update('ui.swing', e.target.value);
+    scheduleSheetRender();
+  };
+  // On Auto the answer comes out of the music, so say which one it reached —
+  // a reader looking at straight eighths deserves to know they were swung
+  on('sheet:swing', ({ swinging }) => {
+    const auto = state.ui.swing === 'auto';
+    swingSelect.classList.toggle('auto-swinging', auto && swinging);
+    swingSelect.title = auto
+      ? `Auto — this piece reads as ${swinging ? 'swung' : 'straight'}`
+      : SWING_HINT;
+  });
 
   const legatoToggle = document.getElementById('legato-toggle');
   legatoToggle.checked = state.ui.stepLegato;

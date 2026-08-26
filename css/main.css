@@ -1413,6 +1413,14 @@ body.hands-shown #hand-canvas { display: block; }
 .step-controls { transition: opacity 0.2s; }
 .step-controls.hidden { display: none; }
 
+/* On Auto, the swing control marks itself when the music turned out to be
+   swung — otherwise "Auto" says nothing about which way it went */
+#swing-select.auto-swinging {
+  color: var(--accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
 /* Legato switch — only shown while step recording */
 .legato-switch {
   display: flex;
