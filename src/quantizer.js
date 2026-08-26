@@ -221,11 +221,10 @@ function swingPosition(offset, step) {
 //
 // Each one also says whether it is swung — every attack clear of the middle of
 // its three — which is what a swing marking is a claim about.
-export function detectTernaryBeats(notes, tempo, division = 8) {
-  const out = new Map();
-  if (!notes || !notes.length || !tempo) return out;
-
-  const binaryStep = gridSizeFromDivision(division);
+// Every attack in the piece, gathered by the beat it falls in and measured from
+// the start of that beat. What both the triplet reading and the swing reading
+// are asked of.
+function attacksByBeat(notes, tempo) {
   const byBeat = new Map();
   for (const ms of new Set(notes.map(n => n.startTime))) {
     const b = msToBeats(ms, tempo);
@@ -233,6 +232,15 @@ export function detectTernaryBeats(notes, tempo, division = 8) {
     if (!byBeat.has(beat)) byBeat.set(beat, []);
     byBeat.get(beat).push(b - beat);
   }
+  return byBeat;
+}
+
+export function detectTernaryBeats(notes, tempo, division = 8) {
+  const out = new Map();
+  if (!notes || !notes.length || !tempo) return out;
+
+  const binaryStep = gridSizeFromDivision(division);
+  const byBeat = attacksByBeat(notes, tempo);
 
   for (const [beat, offsets] of byBeat) {
     if (offsets.every(o => onGrid(o, binaryStep))) continue;
@@ -246,26 +254,71 @@ export function detectTernaryBeats(notes, tempo, division = 8) {
   return out;
 }
 
+// How hard the swing is: where in its beat the offbeat of a pair lands.
+//
+// Half would be no swing at all and three quarters is as far as anyone goes —
+// past that the short note stops being a note and starts being a flam. Two
+// thirds is the one everybody means by "swing", and the one the triplet grid
+// gives for free; the other two are what players reach for when a tune wants
+// to lope or to snap.
+export const SWING_AMOUNTS = {
+  light:  { name: 'Light',  ratio: '3:2', offbeat: 0.6 },
+  medium: { name: 'Medium', ratio: '2:1', offbeat: 2 / 3 },
+  hard:   { name: 'Hard',   ratio: '3:1', offbeat: 0.75 },
+};
+
+export const DEFAULT_SWING = 'medium';
+
+export function swingOffbeat(amount) {
+  return (SWING_AMOUNTS[amount] || SWING_AMOUNTS[DEFAULT_SWING]).offbeat;
+}
+
 // Where the clicks of one beat fall, as fractions of it.
 //
-// Straight is the even split. Swung is the same lattice the notation is written
-// on, read the other way: the written slot `w` sounds on ternary slot
-// `w + ceil(w / 2)`, which is what dropping the middle of every three comes to
-// when it is undone. So two clicks a beat land on 0 and 2/3, four on 0, 1/3,
-// 1/2 and 5/6 — and a click is heard exactly where a swung note is played,
-// because both are worked out from the one rule.
+// Straight is the even split. Swung, the beat is a row of pairs — one pair for
+// two clicks, two pairs for four — and inside each pair the offbeat sits where
+// the swing puts it. At two thirds this is exactly the ternary lattice with the
+// middle of every three taken out, which is the grid the notation is written
+// on; the other amounts are the same shape stretched, and there is no lattice
+// for them because they are not written down at all. Either way a click is
+// heard where a swung note is played.
 //
 // Three clicks a beat is already the triplet, and one is the beat itself, so
 // neither has a swung form.
-export function subdivisionOffsets(subs, swung = false) {
+export function subdivisionOffsets(subs, swing = 0) {
   const n = Math.max(1, subs);
   const out = [];
-  if (!swung || n === 1 || n === 3) {
+  if (!swing || n === 1 || n % 2) {
     for (let i = 0; i < n; i++) out.push(i / n);
     return out;
   }
-  const ternaryStep = 2 / (3 * n);
-  for (let w = 0; w < n; w++) out.push((w + Math.ceil(w / 2)) * ternaryStep);
+  const pair = 2 / n;
+  for (let i = 0; i < n; i++) {
+    out.push(Math.floor(i / 2) * pair + (i % 2 ? swing * pair : 0));
+  }
+  return out;
+}
+
+// How far off a player can put the offbeat and still be playing that swing
+const SWING_SLOP = 0.06;
+
+// Beats that are a swung pair at this amount: every attack in them is either on
+// the beat or on the offbeat the swing puts there, and at least one is the
+// offbeat.
+//
+// Two thirds needs none of this — that lands on the triplet grid and is found
+// as a ternary beat. This is what catches the amounts that no grid describes,
+// so a chart swung light or hard is still written as the straight eighths it
+// would be printed as rather than as whatever its timing literally rounds to.
+export function detectSwungPairs(notes, tempo, amount) {
+  const out = new Set();
+  if (!notes || !notes.length || !tempo || !(amount > 0.5)) return out;
+  for (const [beat, offsets] of attacksByBeat(notes, tempo)) {
+    const onOffbeat = (o) => Math.abs(o - amount) <= SWING_SLOP;
+    if (offsets.some(onOffbeat) && offsets.every(o => o <= SWING_SLOP || onOffbeat(o))) {
+      out.add(beat);
+    }
+  }
   return out;
 }
 
@@ -302,12 +355,16 @@ export function detectSwing(notes, tempo, division = 8) {
 // Under a swing marking a swung beat goes back to halves: the marking is what
 // says the eighths are uneven, so writing them as triplets as well would be
 // saying it twice — and saying it in the way jazz players spend their lives
-// not reading.
-function gridForBeat(beat, ternary, binaryStep, swing) {
+// not reading. `pair` is a beat swung at an amount no grid describes, whose
+// offbeat is put on the second half rather than counted off a lattice.
+function gridForBeat(beat, ternary, pairs, binaryStep, swing) {
   const info = ternary.get(beat);
-  if (!info) return { step: binaryStep, tuplet: 1 };
-  if (swing && info.swung) return { step: info.step, tuplet: 1, swung: true };
-  return { step: info.step, tuplet: 3 };
+  if (info) {
+    if (swing && info.swung) return { step: info.step, tuplet: 1, swung: true };
+    return { step: info.step, tuplet: 3 };
+  }
+  if (swing && pairs.has(beat)) return { step: binaryStep, tuplet: 1, pair: true };
+  return { step: binaryStep, tuplet: 1 };
 }
 
 export function findBestDuration(beats, tuplet = 1) {
@@ -324,8 +381,11 @@ export function findBestDuration(beats, tuplet = 1) {
   return { durationBeats: realBeats(best[0], tuplet), vexDuration: best[1] };
 }
 
-// Main function: quantize raw NoteEvents → QuantizedNotes
-export function quantizeNotes(rawNotes, tempo, timeSignature, gridDivision = 8, swing = false) {
+// Main function: quantize raw NoteEvents → QuantizedNotes.
+//
+// `swing` is how hard the piece is being swung, as where the offbeat lands in
+// its beat, or 0 for not at all.
+export function quantizeNotes(rawNotes, tempo, timeSignature, gridDivision = 8, swing = 0) {
   if (!rawNotes || !rawNotes.length) return [];
 
   const binaryStep = gridSizeFromDivision(gridDivision);
@@ -333,21 +393,25 @@ export function quantizeNotes(rawNotes, tempo, timeSignature, gridDivision = 8, 
   // Worked out once for the piece, so every note in a beat agrees about how that
   // beat is written
   const ternary = detectTernaryBeats(rawNotes, tempo, gridDivision);
+  const pairs = swing ? detectSwungPairs(rawNotes, tempo, swing) : new Set();
 
   return rawNotes.map(note => {
     const raw = msToBeats(note.startTime, tempo);
     const beat = Math.floor(raw + BEAT_EPS);
-    const { step, tuplet, swung } = gridForBeat(beat, ternary, binaryStep, swing);
+    const { step, tuplet, swung, pair } = gridForBeat(beat, ternary, pairs, binaryStep, swing);
     // The step a swung beat is *written* on is the one above the one it is
     // played on: three thirds of a beat sound where two halves are written.
-    const writtenStep = swung ? writtenBeats(step, 3) : step;
+    // A pair swung at some other amount is written in halves outright.
+    const writtenStep = pair ? 0.5 : swung ? writtenBeats(step, 3) : step;
     // Snapped within its own beat rather than against the whole piece, so a
     // triplet beat cannot pull the beat itself off the grid. A swung beat is
     // not snapped but re-counted, the long-short pair landing on the two
     // straight eighths the marking says to read unevenly.
-    const startBeats = beat + (swung
-      ? swingPosition(raw - beat, step)
-      : snapToGrid(raw - beat, step));
+    const startBeats = beat + (pair
+      ? (raw - beat > swing / 2 ? 0.5 : 0)
+      : swung
+        ? swingPosition(raw - beat, step)
+        : snapToGrid(raw - beat, step));
     const rawDurBeats = msToBeats(note.duration, tempo);
     // Keep the true snapped length. Rounding to a single notatable value here
     // would silently shorten anything longer than a dotted whole; splitting

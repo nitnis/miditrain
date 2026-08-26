@@ -51,6 +51,7 @@ const _state = {
     stepLegato: false,      // step recording holds each note until the next one
     quantize: 8,            // grid division (8 = 1/8 note); also the step-record step size
     swing: 'auto',          // 'auto' | 'on' | 'off' — write uneven eighths straight, under a swing marking
+    swingAmount: 'medium',  // 'light' | 'medium' | 'hard' — how far the offbeat is pushed back
     keySignature: 'C',
     transpose: 0,           // semitones the piece has been shifted by, for the slider
     editorSelectedNotes: new Set(), // selected note IDs in piano roll editor
