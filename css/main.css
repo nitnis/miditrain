@@ -1415,6 +1415,45 @@ body.hands-shown #hand-canvas { display: block; }
 .step-controls { transition: opacity 0.2s; }
 .step-controls.hidden { display: none; }
 
+/* How hard the swing is. Three stops rather than a free slide, because Light,
+   Medium and Hard are the three things players actually mean, and it goes
+   quiet while nothing is being swung rather than disappearing — the setting
+   still stands, it just has nothing to act on. */
+.swing-amount {
+  -webkit-appearance: none;
+  width: 74px;
+  height: 4px;
+  margin-left: 8px;
+  /* Three stops, marked, because Light/Medium/Hard are positions and not a
+     range — the track shows where they are. The dots are listed first because
+     the earlier background layer is the one on top. */
+  background: radial-gradient(circle at 7px 50%, var(--muted) 0 2px, transparent 2px),
+              radial-gradient(circle at 50% 50%, var(--muted) 0 2px, transparent 2px),
+              radial-gradient(circle at calc(100% - 7px) 50%, var(--muted) 0 2px, transparent 2px),
+              linear-gradient(90deg, var(--border) 0 100%);
+  border-radius: 2px;
+  cursor: pointer;
+  vertical-align: middle;
+}
+.swing-amount::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+}
+.swing-amount-value {
+  display: inline-block;
+  min-width: 74px;
+  margin-left: 6px;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.swing-amount:disabled { opacity: 0.35; }
+.swing-amount:disabled + .swing-amount-value { opacity: 0.35; }
+
 /* On Auto, the swing control marks itself when the music turned out to be
    swung — otherwise "Auto" says nothing about which way it went */
 #swing-select.auto-swinging {

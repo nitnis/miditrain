@@ -1,7 +1,7 @@
 // VexFlow 4.x sheet music renderer (grand staff)
 import { state, emit } from './state.js';
 import { quantizeNotes, groupByMeasure, groupIntoChords, fillWithRests, findBestDuration, splitAcrossBarlines, writtenBeats, realBeats, BEAT_EPS } from './quantizer.js';
-import { swinging } from './swing.js';
+import { swinging, swingWidth, swingNames } from './swing.js';
 import { suggestedFinger, hasSuggestions } from './autofinger.js';
 import { detectChordRuns, spellPitchClass } from './chords.js';
 import { isRightHand } from './hands.js';
@@ -116,7 +116,7 @@ export function renderSheet(notes, composition, currentTimeMs = null, retry = fa
   _swinging = swing;
   emit('sheet:swing', { swinging: swing });
 
-  const quantized = quantizeNotes(notes, tempo, timeSignature, state.ui.quantize, swing);
+  const quantized = quantizeNotes(notes, tempo, timeSignature, state.ui.quantize, swingWidth());
   // A note is written as one piece per bar it spans, tied together
   const segments = splitAcrossBarlines(quantized, beatsPerMeasure);
   const { measures } = groupByMeasure(segments, timeSignature);
@@ -867,14 +867,20 @@ function buildTickables(staveNotes, beatsPerMeasure, clef, keySignature, segment
 // eighths underneath it are written straight — this is the sentence that says
 // to play them long-short, and a jazz reader looks for it here and nowhere
 // else. Drawn as the equation rather than the word alone, because the word on
-// its own does not say how far to swing, and the equation does: two written
-// eighths sound as the first and third of a triplet.
+// its own does not say how far to swing, and the equation does.
+//
+// A medium swing gets the classic figure — two written eighths sound as the
+// first and third of a triplet — because that is what a triplet grid gives and
+// what every chart prints. Light and hard have no such figure to draw: the
+// notes they are played as cannot be written down, which is the whole reason
+// the marking exists, so they say their ratio instead.
 const SWING_GLYPH = 22;   // notehead size, in the units Glyph.renderGlyph takes
 const SWING_STEM = 22;    // stem length
 const SWING_GAP = 15;     // between the two notes of a pair
 
 function drawSwingMarking(x, y) {
   const { Glyph } = VF();
+  const feel = swingNames();
   const head = (cx) => Glyph.renderGlyph(svgCtx, cx, y, SWING_GLYPH, 'noteheadBlack');
   // Stems rise from the right of the notehead, which is where an up-stem sits
   const stem = (cx) => svgCtx.fillRect(cx + 5.1, y - SWING_STEM, 1.3, SWING_STEM);
@@ -883,9 +889,14 @@ function drawSwingMarking(x, y) {
   svgCtx.setFillStyle('rgba(226,232,240,0.92)');
   svgCtx.setStrokeStyle('rgba(226,232,240,0.92)');
 
+  const label = `${feel.name} Swing`;
   svgCtx.setFont('serif', 13, 'bold');
-  svgCtx.fillText('Swing', x, y - 4);
-  let cx = x + 53;
+  svgCtx.fillText(label, x, y - 4);
+  // Measured rather than guessed at so many pixels a letter: "Light" and
+  // "Medium" are different widths and the notes have to clear whichever it is
+  let width = label.length * 7.2;
+  try { width = svgCtx.measureText(label).width || width; } catch (_) {}
+  let cx = x + width + 12;
 
   // A beamed pair of eighths
   head(cx); stem(cx);
@@ -897,19 +908,24 @@ function drawSwingMarking(x, y) {
   svgCtx.fillText('=', cx, y - 4);
   cx += 16;
 
-  // A quarter and an eighth under a three: the two thirds and one third of a
-  // beat that the straight pair is actually played as
-  head(cx); stem(cx);
-  head(cx + SWING_GAP); stem(cx + SWING_GAP);
-  Glyph.renderGlyph(svgCtx, cx + SWING_GAP + 5.6, y - SWING_STEM + 1, SWING_GLYPH, 'flag8thUp');
+  if (feel.ratio === '2:1') {
+    // A quarter and an eighth under a three: the two thirds and one third of a
+    // beat that the straight pair is actually played as
+    head(cx); stem(cx);
+    head(cx + SWING_GAP); stem(cx + SWING_GAP);
+    Glyph.renderGlyph(svgCtx, cx + SWING_GAP + 5.6, y - SWING_STEM + 1, SWING_GLYPH, 'flag8thUp');
 
-  const bracketY = y - SWING_STEM - 9;
-  const bracketW = SWING_GAP + 8;
-  svgCtx.fillRect(cx + 2, bracketY, bracketW, 1.2);          // the bracket itself
-  svgCtx.fillRect(cx + 2, bracketY, 1.2, 4);                 // and its two ends
-  svgCtx.fillRect(cx + 2 + bracketW - 1.2, bracketY, 1.2, 4);
-  svgCtx.setFont('serif', 10, 'bold');
-  svgCtx.fillText('3', cx + 2 + bracketW / 2 - 3, bracketY - 2);
+    const bracketY = y - SWING_STEM - 9;
+    const bracketW = SWING_GAP + 8;
+    svgCtx.fillRect(cx + 2, bracketY, bracketW, 1.2);          // the bracket itself
+    svgCtx.fillRect(cx + 2, bracketY, 1.2, 4);                 // and its two ends
+    svgCtx.fillRect(cx + 2 + bracketW - 1.2, bracketY, 1.2, 4);
+    svgCtx.setFont('serif', 10, 'bold');
+    svgCtx.fillText('3', cx + 2 + bracketW / 2 - 3, bracketY - 2);
+  } else {
+    svgCtx.setFont('serif', 13, 'bold');
+    svgCtx.fillText(feel.ratio, cx, y - 4);
+  }
 
   svgCtx.restore();
 }

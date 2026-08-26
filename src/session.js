@@ -48,6 +48,7 @@ const SETTINGS = {
   'ui.stepLegato': bool,
   'ui.quantize': oneOf(1, 2, 4, 8, 16, 32),
   'ui.swing': oneOf('auto', 'on', 'off'),
+  'ui.swingAmount': oneOf('light', 'medium', 'hard'),
   'ui.transpose': wholeRange(-12, 12),
   'ui.learnSectionBars': oneOf(0, 2, 4, 8),
   'ui.learnCluster': oneOf('off', 'halfBeat', 'beat', 'twoBeats', 'bar', 'twoBars'),
