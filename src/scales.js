@@ -13,7 +13,7 @@
 // Hands place the result on the keyboard.
 import { spellPitchClass } from './chords.js';
 import { fingersByRung } from './fingering.js';
-import { subdivisionOffsets } from './quantizer.js';
+import { subdivisionOffsets, swingOffbeat } from './quantizer.js';
 
 // ── What to play ─────────────────────────────────────────────────────────────
 // Semitones above the tonic, tonic excluded at the top — the ladder repeats it
@@ -65,10 +65,11 @@ export const CHORDS = {
 // nobody learns to play jazz by running scales alone.
 //
 // Each one is written in eighths from the root, because that is the unit these
-// phrases are built out of, and played with a swing: the offbeats land two
-// thirds of the way through their beat, which is where they are played. So the
-// stave shows straight eighths under a swing marking — the phrase as it would
-// be printed — while what sounds and what is graded is the phrase as it swings.
+// phrases are built out of, and played with a swing: the offbeats land back
+// inside their beat by however much swing was asked for, which is where they
+// are played. So the stave shows straight eighths under a swing marking — the
+// phrase as it would be printed — while what sounds and what is graded is the
+// phrase as it swings.
 //
 // `line` is the melody as [semitones from the root, eighths]; the pitch may be
 // a list where the right hand takes a chord, and null is a rest. `comp` is the
@@ -374,15 +375,15 @@ function fitToKeyboard(pitches) {
   return shift;
 }
 
-// Where eighth number `i` is actually played, in beats. Swung, so the app's own
-// swing detection sees what a player would play and writes it as a chart —
-// straight eighths under a marking — rather than as a page of triplets.
-function swungBeats(i) {
-  const offs = subdivisionOffsets(2, true);
+// Where eighth number `i` is actually played, in beats — swung by `amount`, so
+// what sounds is the phrase as a player plays it while the stave shows the
+// straight eighths it would be printed as.
+function swungBeats(i, amount) {
+  const offs = subdivisionOffsets(2, amount);
   return Math.floor(i / 2) + offs[i % 2];
 }
 
-function buildLick({ rootPc, type, octave, tempo, hands, swing }) {
+function buildLick({ rootPc, type, octave, tempo, hands, swing, swingAmount }) {
   const lick = LICKS[type] || LICKS.bluesBox;
   const scale = SCALES[lick.scale] || SCALES.major;
   const keySignature = keySignatureFor(rootPc, scale.steps);
@@ -390,7 +391,8 @@ function buildLick({ rootPc, type, octave, tempo, hands, swing }) {
   const rootMidi = 12 * (octave + 1) + rootPc;
   const beatMs = 60000 / tempo;
   // Straight is there for hearing what the swing is doing by taking it away
-  const at = (i) => (swing ? swungBeats(i) : i / 2) * beatMs;
+  const amount = swing ? swingOffbeat(swingAmount) : 0;
+  const at = (i) => (amount ? swungBeats(i, amount) : i / 2) * beatMs;
 
   const notes = [];
   const wantRight = hands !== 'left';
@@ -472,8 +474,9 @@ export function buildExercise({
   noteValue = 8,
   tempo = 120,
   swing = true,
+  swingAmount = 'medium',
 } = {}) {
-  if (kind === 'lick') return buildLick({ rootPc, type, octave, tempo, hands, swing });
+  if (kind === 'lick') return buildLick({ rootPc, type, octave, tempo, hands, swing, swingAmount });
 
   const table = kind === 'arpeggio' ? CHORDS : SCALES;
   const chosen = table[type] || table.major;

@@ -22,6 +22,7 @@ import { barRangeMs, barAtMs, detectGridDivision } from './quantizer.js';
 import { loopBars } from './range.js';
 import { inferHands } from './hands.js';
 import { SCALES, CHORDS, LICKS, PATTERNS, HANDS, DIRECTIONS, NOTE_VALUES, ROOTS, buildExercise } from './scales.js';
+import { SWING_AMOUNTS } from './quantizer.js';
 import {
   listProfiles, current as currentProfile, switchProfile, createProfile, deleteProfile,
   adoptProfile, sectionKey, sectionTempo, rememberSectionTempo, setLearningPosition,
@@ -179,6 +180,7 @@ function applyStateToControls() {
 
   for (const sel of quantizeSelects()) sel.value = String(ui.quantize);
   document.getElementById('swing-select').value = ui.swing;
+  syncSwingAmount();
   document.getElementById('learn-sections').value = String(ui.learnSectionBars);
   syncRecordHand();
   syncPracticeHand();
@@ -321,6 +323,27 @@ function nudgeQuantize(direction) {
     setQuantize(next);
     showToast(`Quantize / step 1/${next}`, 1000);
   }
+}
+
+// The slider's three stops, in the order it slides through them
+const SWING_STOPS = ['light', 'medium', 'hard'];
+
+function syncSwingAmount() {
+  const feel = SWING_AMOUNTS[state.ui.swingAmount] || SWING_AMOUNTS.medium;
+  document.getElementById('swing-amount').value =
+    String(Math.max(0, SWING_STOPS.indexOf(state.ui.swingAmount)));
+  document.getElementById('swing-amount-value').textContent = `${feel.name} ${feel.ratio}`;
+}
+
+// How hard the swing is changes what is heard rather than what is written, so
+// the click and any phrase generated from here follow it while the page does
+// not. The marking is the exception: it names the amount, because that is the
+// one thing on the page whose whole job is to say how far to swing.
+function setSwingAmount(amount) {
+  update('ui.swingAmount', amount);
+  syncSwingAmount();
+  scheduleSheetRender();
+  showToast(`${SWING_AMOUNTS[amount].name} swing — ${SWING_AMOUNTS[amount].ratio}`, 1100);
 }
 
 function setTempo(v) {
@@ -680,6 +703,7 @@ function genOptions() {
     pattern: document.getElementById('gen-pattern').value,
     noteValue: Number(document.getElementById('gen-note-value').value),
     swing: document.getElementById('gen-feel').value === 'swing',
+    swingAmount: state.ui.swingAmount,
     tempo: state.composition.tempo,
   };
 }
@@ -1831,6 +1855,11 @@ function bindToolbar() {
     update('ui.swing', e.target.value);
     scheduleSheetRender();
   };
+  const amountSlider = document.getElementById('swing-amount');
+  amountSlider.value = String(SWING_STOPS.indexOf(state.ui.swingAmount));
+  amountSlider.oninput = (e) => setSwingAmount(SWING_STOPS[Number(e.target.value)]);
+  syncSwingAmount();
+
   // On Auto the answer comes out of the music, so say which one it reached —
   // a reader looking at straight eighths deserves to know they were swung
   on('sheet:swing', ({ swinging }) => {
@@ -1839,6 +1868,9 @@ function bindToolbar() {
     swingSelect.title = auto
       ? `Auto — this piece reads as ${swinging ? 'swung' : 'straight'}`
       : SWING_HINT;
+    // Nothing to act on while the piece is being written straight, so the
+    // slider goes quiet rather than away — the setting still stands
+    amountSlider.disabled = !swinging;
   });
 
   const legatoToggle = document.getElementById('legato-toggle');
