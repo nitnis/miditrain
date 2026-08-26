@@ -63,9 +63,9 @@ const SUBTRACT_STRENGTH = 0.7;
 // Everything above, gathered so a sweep can move it. The defaults are what the
 // sweep settled on; nothing here is a guess left in place.
 export const TUNING = {
-  gateHi: 0.40, gateLo: 0.18, reattack: 0.22,
+  gateHi: 0.40, gateLo: 0.18, reattack: 0.16,
   voiceFloor: VOICE_FLOOR, subtract: SUBTRACT_STRENGTH,
-  minFrames: 4,
+  minFrames: 4, restrikeLag: 2,
 };
 
 // ── Where each pitch's partials live ─────────────────────────────────────────
@@ -263,12 +263,21 @@ export function tracksToNotes(salience, frames, pitches, frameMs, reference, ori
     let start = -1;
     let peak = 0;
     let quiet = 0;
+    // Whether this segment began from silence or from the note being struck
+    // again while it was still sounding. The two need different answers about
+    // when they started, and giving them the same one is what made every split
+    // land a hundred milliseconds early.
+    let restruck = false;
 
     const close = (endFrame) => {
       if (start < 0) return;
       const length = endFrame - start;
       if (length >= TUNING.minFrames) {
-        const began = onsetOf(p, start);
+        // Reading a ramp's half-way point only works where there is a ramp. A
+        // note struck again never drops below half of anything, so the search
+        // walks back as far as it is allowed and reports the strike early by
+        // exactly that. Here the strike itself is the best evidence there is.
+        const began = restruck ? Math.max(0, start - TUNING.restrikeLag) : onsetOf(p, start);
         notes.push({
           id: `tr-${id++}`,
           pitch: p + LOWEST_PITCH,
@@ -286,7 +295,7 @@ export function tracksToNotes(salience, frames, pitches, frameMs, reference, ori
       const prev = f > 0 ? salience[(f - 1) * pitches + p] : 0;
 
       if (start < 0) {
-        if (v >= hi) { start = f; peak = v; quiet = 0; }
+        if (v >= hi) { start = f; peak = v; quiet = 0; restruck = false; }
         continue;
       }
 
@@ -294,10 +303,18 @@ export function tracksToNotes(salience, frames, pitches, frameMs, reference, ori
       // note in a held chord looks like, since the gate never gets a chance to
       // close. Measured across the ramp, and only counted at the top of it, so
       // one strike does not read as four.
-      const back = salience[Math.max(0, f - RAMP_FRAMES) * pitches + p];
-      const rise = v - back;
+      //
+      // As a ratio rather than a difference, because that is what the thing
+      // being looked for actually is: a note re-struck goes from its sustain
+      // back to its peak, and that is the same proportion however quiet the
+      // note is. An absolute threshold big enough not to fire on the loud notes
+      // can never see it happen to a quiet inner voice.
+      const idx = Math.max(0, f - RAMP_FRAMES) * pitches + p;
+      const rise = v - salience[idx];
       const again = v >= hi && v >= prev && rise >= jump;
-      if (again && f - start >= TUNING.minFrames) { close(f); start = f; peak = v; quiet = 0; continue; }
+      if (again && f - start >= TUNING.minFrames) {
+        close(f); start = f; peak = v; quiet = 0; restruck = true; continue;
+      }
 
       if (v < lo) {
         quiet++;

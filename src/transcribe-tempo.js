@@ -60,16 +60,22 @@ function fitPeriod(attacks, periodMs, phases = 24) {
 //
 // So the tie is broken the way a listener breaks it, by where the pulse feels
 // comfortable. Scores are weighted by how far the candidate sits from a walking
-// tempo, on a log scale because tempo is heard in ratios. The width is what
-// decides how much better a doubled reading has to be before it wins, and was
-// measured rather than reasoned about: at 0.7 octaves three of four test cases
-// come out right, and the fourth is a genuine ambiguity rather than a mistake.
+// tempo, on a log scale because tempo is heard in ratios. The width decides how
+// much better a doubled reading has to be before it wins, and it is a real
+// trade rather than a setting with a right answer: narrow enough to call a
+// stream of even eighths at its beat rather than its subdivision is also narrow
+// enough to drag a Mozart rondo down to two thirds of its tempo.
+//
+// Widened until real music comes out right, because a featureless run of even
+// notes genuinely has no answer — whether the beat is the eighth or the quarter
+// is a question about the music — while two thirds of a rondo's tempo is simply
+// wrong, and wrong in a way that puts triplets all over the page.
 //
 // Charging for attacks that land between beats was tried here too, on the
 // theory that it would tell a beat from a slower pulse containing some of the
 // same attacks. It scored no better at any width and is not here.
 const PREFERRED_BPM = 100;
-export const PRIOR_WIDTH = { octaves: 0.7 };
+export const PRIOR_WIDTH = { octaves: 1.0 };
 
 function tempoPrior(bpm) {
   const away = Math.log2(bpm / PREFERRED_BPM) / PRIOR_WIDTH.octaves;
