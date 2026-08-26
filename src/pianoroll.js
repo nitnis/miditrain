@@ -5,6 +5,7 @@ import { setEditorLayout } from './note-editor.js';
 import { handOf, isPractised, practiceHand } from './hands.js';
 import { detectChord } from './chords.js';
 import { subdivision } from './metronome.js';
+import { beatOffsets } from './swing.js';
 import { suggestedFinger } from './autofinger.js';
 import { drawHands, forgetHands } from './hand-overlay.js';
 
@@ -886,9 +887,13 @@ function drawBeatCount(composition, currentTimeMs, cw, signal) {
   const beat = Math.floor(beatPos);
   const beatIndex = ((beat % beatsPerBar) + beatsPerBar) % beatsPerBar;
   const intoBeat = running ? beatPos - beat : 0;
-  const nowAt = running
-    ? beatIndex * subs + Math.min(subs - 1, Math.floor(intoBeat * subs))
-    : -1;
+  // Which syllable is being counted now. Asked of the same offsets the click
+  // uses, so under a swing the "&" lights where the offbeat click sounds
+  // instead of halfway, which is neither where it is played nor where it reads.
+  const offs = beatOffsets(subs);
+  let slot = 0;
+  while (slot + 1 < offs.length && intoBeat >= offs[slot + 1] - 1e-6) slot++;
+  const nowAt = running ? beatIndex * subs + slot : -1;
 
   const tokens = [];
   for (let b = 0; b < beatsPerBar; b++) {
