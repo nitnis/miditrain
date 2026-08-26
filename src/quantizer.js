@@ -87,7 +87,13 @@ export function detectGridDivision(notes, tempo) {
   }
   if (attacks.length < 2) return DEFAULT_DIVISION;
 
-  const beats = attacks.map(t => msToBeats(t, tempo));
+  // Attacks written in thirds have a lattice of their own to land on, so they
+  // are left out of the vote rather than counted against every binary grid in
+  // turn. Counting them is what dragged a movement with one variation of
+  // sextuplets in it all the way to 1/32 — the ornaments outvoting the piece.
+  const beats = attacks.map(t => msToBeats(t, tempo)).filter(x => !isThird(x));
+  if (beats.length < 2) return DEFAULT_DIVISION;
+
   for (const division of DIVISIONS) {
     const step = gridSizeFromDivision(division);
     const slop = Math.min(step * ON_GRID, ON_GRID_MAX_BEATS);
@@ -115,33 +121,127 @@ export function atOrPast(ms, edge) {
   return ms >= edge - EDGE_MS;
 }
 
-export function findBestDuration(beats) {
+// ── Thirds of a beat ─────────────────────────────────────────────────────────
+// A beat is written in halves or in thirds, and no amount of halving reaches a
+// third: a triplet on the sixteenth grid lands 1/12 of a beat off its own notes,
+// which is why detectGridDivision has to let triplets be roundings rather than
+// chase them down to 1/32. It can stop chasing once they have somewhere to land.
+//
+// The thirds on offer, coarsest first — eighth-note triplets, then sixteenths.
+// Thirty-second triplets exist but are vanishingly rare, and every level added
+// is another chance to call a wobble a tuplet.
+const TRIPLET_STEPS = [1 / 3, 1 / 6];
+
+// Three in the time of two, so a note inside a triplet is written as the note it
+// would be outside one: a third of a beat is drawn as an eighth.
+const TUPLET_RATIO = 3 / 2;
+
+// Beats are floating point and arrive from a tempo that has been multiplied
+// about, so which beat a note falls in is asked with a hair of room
+export const BEAT_EPS = 1e-6;
+
+// Between the two ways of measuring a note inside a tuplet: what it is worth,
+// and what it is drawn as. Exported because the notation layer has to cross the
+// same line for rests, and a second copy of the ratio is a second thing to be
+// wrong about.
+export function writtenBeats(beats, tuplet) {
+  return tuplet === 3 ? beats * TUPLET_RATIO : beats;
+}
+
+export function realBeats(written, tuplet) {
+  return tuplet === 3 ? written / TUPLET_RATIO : written;
+}
+
+function onGrid(offset, step) {
+  const slop = Math.min(step * ON_GRID, ON_GRID_MAX_BEATS);
+  return Math.abs(snapToGrid(offset, step) - offset) <= slop;
+}
+
+// An attack that only thirds can explain: in thirds of its beat, and on no
+// binary grid at all. On-the-beat attacks are in thirds too and are deliberately
+// not counted here — they belong to both lattices, and excluding them from the
+// binary vote would throw away most of the evidence for it.
+function isThird(beats) {
+  const offset = beats - Math.floor(beats + BEAT_EPS);
+  if (!TRIPLET_STEPS.some(step => onGrid(offset, step))) return false;
+  return !DIVISIONS.some(d => onGrid(offset, gridSizeFromDivision(d)));
+}
+
+// Which beats of a piece are written as triplets.
+//
+// Asked one beat at a time, because that is how music mixes them: a movement is
+// binary throughout and then has a bar of triplets in it, and a single grid for
+// the whole piece can only be wrong about one of those.
+//
+// A beat is a triplet when every attack in it sits in thirds AND at least one of
+// them does not sit in halves. Both halves matter. Without the first, one stray
+// note brackets a beat that is not a triplet; without the second, every plain
+// downbeat qualifies — it sits in thirds too, being on the beat — and the score
+// fills with tuplets around single notes.
+export function detectTripletBeats(notes, tempo, division = 8) {
+  const out = new Map();
+  if (!notes || !notes.length || !tempo) return out;
+
+  const binaryStep = gridSizeFromDivision(division);
+  const byBeat = new Map();
+  for (const ms of new Set(notes.map(n => n.startTime))) {
+    const b = msToBeats(ms, tempo);
+    const beat = Math.floor(b + BEAT_EPS);
+    if (!byBeat.has(beat)) byBeat.set(beat, []);
+    byBeat.get(beat).push(b - beat);
+  }
+
+  for (const [beat, offsets] of byBeat) {
+    if (offsets.every(o => onGrid(o, binaryStep))) continue;
+    for (const step of TRIPLET_STEPS) {
+      if (offsets.every(o => onGrid(o, step))) { out.set(beat, step); break; }
+    }
+  }
+  return out;
+}
+
+// The step a given beat is written on, and what that makes it
+function gridForBeat(beat, triplets, binaryStep) {
+  const third = triplets.get(beat);
+  return third ? { step: third, tuplet: 3 } : { step: binaryStep, tuplet: 1 };
+}
+
+export function findBestDuration(beats, tuplet = 1) {
+  const want = writtenBeats(beats, tuplet);
   let best = DURATIONS[0];
   let bestDiff = Infinity;
   // `<=` over a descending list breaks ties toward the shorter value. A note
   // notated longer than it is overflows its measure; shorter just leaves a gap
   // that fillWithRests covers.
   for (const [b, d] of DURATIONS) {
-    const diff = Math.abs(beats - b);
+    const diff = Math.abs(want - b);
     if (diff <= bestDiff) { bestDiff = diff; best = [b, d]; }
   }
-  return { durationBeats: best[0], vexDuration: best[1] };
+  return { durationBeats: realBeats(best[0], tuplet), vexDuration: best[1] };
 }
 
 // Main function: quantize raw NoteEvents → QuantizedNotes
 export function quantizeNotes(rawNotes, tempo, timeSignature, gridDivision = 8) {
   if (!rawNotes || !rawNotes.length) return [];
 
-  const gridSize = gridSizeFromDivision(gridDivision);
+  const binaryStep = gridSizeFromDivision(gridDivision);
   const beatsPerMeasure = timeSignature.numerator * (4 / timeSignature.denominator);
+  // Worked out once for the piece, so every note in a beat agrees about how that
+  // beat is written
+  const triplets = detectTripletBeats(rawNotes, tempo, gridDivision);
 
   return rawNotes.map(note => {
-    const startBeats = snapToGrid(msToBeats(note.startTime, tempo), gridSize);
+    const raw = msToBeats(note.startTime, tempo);
+    const beat = Math.floor(raw + BEAT_EPS);
+    const { step, tuplet } = gridForBeat(beat, triplets, binaryStep);
+    // Snapped within its own beat rather than against the whole piece, so a
+    // triplet beat cannot pull the beat itself off the grid
+    const startBeats = beat + snapToGrid(raw - beat, step);
     const rawDurBeats = msToBeats(note.duration, tempo);
     // Keep the true snapped length. Rounding to a single notatable value here
     // would silently shorten anything longer than a dotted whole; splitting
     // into tied pieces is the notation layer's job.
-    const durationBeats = Math.max(gridSize, snapToGrid(rawDurBeats, gridSize));
+    const durationBeats = Math.max(step, snapToGrid(rawDurBeats, step));
 
     const measure = Math.floor(startBeats / beatsPerMeasure);
     const beatInMeasure = startBeats - measure * beatsPerMeasure;
@@ -152,22 +252,32 @@ export function quantizeNotes(rawNotes, tempo, timeSignature, gridDivision = 8) 
       durationBeats,
       measure,
       beatInMeasure,
+      tuplet,
+      // The lattice this note was snapped onto. The notation layer needs it to
+      // know how many notes make one bracket: three thirds of a beat are one
+      // triplet, three sixths are half of one.
+      gridStep: step,
     };
   }).sort((a, b) => a.startBeats - b.startBeats);
 }
 
 // Greedy split of a duration into values that can actually be notated.
 // 2.5 beats has no single symbol, so it becomes a half plus an eighth.
-export function splitIntoNoteValues(beats) {
+//
+// Inside a tuplet the splitting is done in written values and handed back in
+// real ones: two thirds of a beat has no symbol as it stands, and is a plain
+// quarter once the three-in-two is taken off it.
+export function splitIntoNoteValues(beats, tuplet = 1) {
   const parts = [];
-  let rem = beats;
+  let rem = writtenBeats(beats, tuplet);
   while (rem > 0.02) {
     const fit = DURATIONS.find(([b]) => b <= rem + 0.01);
     if (!fit) break;
     parts.push(fit[0]);
     rem -= fit[0];
   }
-  return parts.length ? parts : [DURATIONS[DURATIONS.length - 1][0]];
+  const written = parts.length ? parts : [DURATIONS[DURATIONS.length - 1][0]];
+  return written.map(v => realBeats(v, tuplet));
 }
 
 // Expand each note into the pieces it is actually written as: one per measure
@@ -188,7 +298,7 @@ export function splitAcrossBarlines(quantizedNotes, beatsPerMeasure) {
       const room = beatsPerMeasure - beatInMeasure;
       const inThisBar = Math.min(remaining, room);
 
-      for (const value of splitIntoNoteValues(inThisBar)) {
+      for (const value of splitIntoNoteValues(inThisBar, note.tuplet)) {
         pieces.push({
           measure,
           beatInMeasure: cursor - measure * beatsPerMeasure,
@@ -239,7 +349,15 @@ export function groupIntoChords(measureNotes, tolerance = 0.05) {
   return groups;
 }
 
-// Fill gaps in measure with rests; returns array of events including rests
+// Fill gaps in measure with rests; returns array of events including rests.
+//
+// A chord is drawn as one symbol and so can only be one length, and the notes
+// in it need not agree — held unevenly, or one of them tied on across the bar
+// and the others not. The shortest is the one to write: the chord then ends
+// where the notation says it does, and whatever was still ringing is covered by
+// a rest rather than by time the bar does not have. Each event carries the
+// length chosen for it, so the cursor here and the note drawn from it cannot
+// disagree — when they did, every uneven chord left a hole in its measure.
 export function fillWithRests(chordGroups, beatsPerMeasure) {
   const filled = [];
   let cursor = 0;
@@ -249,8 +367,9 @@ export function fillWithRests(chordGroups, beatsPerMeasure) {
     if (beat > cursor + 0.01) {
       filled.push({ isRest: true, beatInMeasure: cursor, durationBeats: beat - cursor });
     }
-    filled.push({ isRest: false, beatInMeasure: beat, group });
-    cursor = beat + group.reduce((max, n) => Math.max(max, n.durationBeats), 0);
+    const durationBeats = group.reduce((min, n) => Math.min(min, n.durationBeats), Infinity);
+    filled.push({ isRest: false, beatInMeasure: beat, durationBeats, group });
+    cursor = beat + durationBeats;
   }
 
   if (cursor < beatsPerMeasure - 0.01) {

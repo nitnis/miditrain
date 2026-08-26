@@ -1,6 +1,6 @@
 // VexFlow 4.x sheet music renderer (grand staff)
 import { state } from './state.js';
-import { quantizeNotes, groupByMeasure, groupIntoChords, fillWithRests, findBestDuration, splitAcrossBarlines } from './quantizer.js';
+import { quantizeNotes, groupByMeasure, groupIntoChords, fillWithRests, findBestDuration, splitAcrossBarlines, writtenBeats, realBeats, BEAT_EPS } from './quantizer.js';
 import { suggestedFinger, hasSuggestions } from './autofinger.js';
 import { detectChordRuns, spellPitchClass } from './chords.js';
 import { isRightHand } from './hands.js';
@@ -203,12 +203,12 @@ export function renderSheet(notes, composition, currentTimeMs = null, retry = fa
     const trebleNotes  = measureNotes.filter(n => isRightHand(n));
     const bassNotes    = measureNotes.filter(n => !isRightHand(n));
 
-    const trebleTicks = buildTickables(trebleNotes, beatsPerMeasure, 'treble', keySignature, segmentPlacement, line);
-    const bassTicks   = buildTickables(bassNotes,   beatsPerMeasure, 'bass',   keySignature, segmentPlacement, line);
+    const treble = buildTickables(trebleNotes, beatsPerMeasure, 'treble', keySignature, segmentPlacement, line);
+    const bass   = buildTickables(bassNotes,   beatsPerMeasure, 'bass',   keySignature, segmentPlacement, line);
 
     const beatPositions = drawSystem(
-      [{ tickables: trebleTicks, stave: trebleStave, clef: 'treble' },
-       { tickables: bassTicks,   stave: bassStave,   clef: 'bass' }],
+      [{ ...treble, stave: trebleStave, clef: 'treble' },
+       { ...bass,   stave: bassStave,   clef: 'bass' }],
       timeSignature, Formatter, Voice, Accidental, Beam, keySignature
     );
 
@@ -720,30 +720,104 @@ function addFingerings(note, group, clef) {
 }
 
 function buildTickables(staveNotes, beatsPerMeasure, clef, keySignature, segmentPlacement, line) {
-  const { StaveNote } = VF();
+  const { StaveNote, Tuplet } = VF();
   const chordGroups = groupIntoChords(staveNotes);
   const filled = fillWithRests(chordGroups, beatsPerMeasure);
   const tickables = [];
+  const tuplets = [];
+
+  // Which beats of this measure are written in thirds, and how finely. Taken
+  // off the notes rather than worked out again, so a rest in the middle of a
+  // triplet is written in thirds like the notes either side of it — otherwise
+  // it is a sixteenth-and-a-bit and the bar will not add up.
+  const thirds = new Map(); // beat → grid step, in real beats
+  for (const n of staveNotes) {
+    if (n.tuplet === 3) thirds.set(Math.floor(n.beatInMeasure + BEAT_EPS), n.gridStep);
+  }
+  const stepAt = (pos) => thirds.get(Math.floor(pos + BEAT_EPS)) || 0;
+
+  // A tuplet has to exist before the Formatter runs — it is what tells VexFlow
+  // that three of these occupy two — and be drawn after, once its notes have
+  // real positions. So a run is collected as it goes and closed off when the
+  // group it belongs to ends.
+  //
+  // One group is three grid steps, not one beat: a beat of eighth-note triplets
+  // is a single bracketed three, a beat of sixteenth-note triplets is two of
+  // them. Bracketing the whole beat instead would print a 3 over six notes.
+  let run = null;
+  const closeRun = () => {
+    if (run && run.notes.length) {
+      try {
+        tuplets.push(new Tuplet(run.notes, { num_notes: 3, notes_occupied: 2 }));
+      } catch (e) {
+        console.warn('Tuplet:', e.message);
+      }
+    }
+    run = null;
+  };
+  const collect = (tickable, pos) => {
+    const step = stepAt(pos);
+    if (!step) { closeRun(); return; }
+    const group = Math.floor(pos / (step * 3) + BEAT_EPS);
+    if (!run || run.group !== group) { closeRun(); run = { group, notes: [] }; }
+    run.notes.push(tickable);
+  };
+
+  // A rest can run from the middle of one beat into the next, and those two
+  // beats need not be written on the same grid — nor need one rest sit inside
+  // a single bracket. Chop it wherever either changes, and nowhere else: with
+  // no triplets in the measure this hands back the whole rest untouched.
+  const chopRest = (pos, beats) => {
+    const parts = [];
+    let at = pos;
+    let left = beats;
+    while (left > 0.02) {
+      const step = stepAt(at);
+      let take;
+      if (step) {
+        const unit = step * 3;
+        take = (Math.floor(at / unit + BEAT_EPS) + 1) * unit - at;
+      } else {
+        // Binary: run on until a beat written in thirds gets in the way
+        let beat = Math.floor(at + BEAT_EPS) + 1;
+        while (beat < at + left && !thirds.has(beat)) beat++;
+        take = beat - at;
+      }
+      take = Math.min(left, take);
+      parts.push({ at, beats: take });
+      at += take;
+      left -= take;
+    }
+    return parts;
+  };
 
   for (const item of filled) {
     if (item.isRest) {
-      // Split rest into clean note values
-      const parts = splitDurationToNoteValues(item.durationBeats);
-      for (const beats of parts) {
-        const { vexDuration } = findBestDuration(beats);
-        const restKey = clef === 'bass' ? 'd/3' : 'b/4';
-        try {
-          tickables.push(new StaveNote({ keys: [restKey], duration: vexDuration + 'r', clef }));
-        } catch (_) {
-          try { tickables.push(new StaveNote({ keys: ['b/4'], duration: 'qr' })); } catch (__) {}
+      for (const part of chopRest(item.beatInMeasure, item.durationBeats)) {
+        const tuplet = stepAt(part.at) ? 3 : 1;
+        // Split rest into clean note values, in written ones inside a triplet
+        const values = splitDurationToNoteValues(writtenBeats(part.beats, tuplet));
+        let at = part.at;
+        for (const beats of values) {
+          const { vexDuration } = findBestDuration(beats);
+          const restKey = clef === 'bass' ? 'd/3' : 'b/4';
+          try {
+            const rest = new StaveNote({ keys: [restKey], duration: vexDuration + 'r', clef });
+            tickables.push(rest);
+            collect(rest, at);
+          } catch (_) {
+            try { tickables.push(new StaveNote({ keys: ['b/4'], duration: 'qr' })); } catch (__) {}
+          }
+          at += realBeats(beats, tuplet);
         }
       }
     } else {
+      const tuplet = stepAt(item.beatInMeasure) ? 3 : 1;
       // Sorted by pitch so a key's index is stable — ties address noteheads
       // by index into this array
       const group = [...item.group].sort((a, b) => a.pitch - b.pitch);
       const keys = group.map(n => midiToVexKey(n.pitch, keySignature, n.spelling));
-      const { vexDuration } = findBestDuration(group[0].durationBeats);
+      const { vexDuration } = findBestDuration(item.durationBeats, tuplet);
       try {
         const note = new StaveNote({ keys, duration: vexDuration, clef });
         // The 'd' suffix already carries the tick count; the dot itself is a
@@ -753,6 +827,7 @@ function buildTickables(staveNotes, beatsPerMeasure, clef, keySignature, segment
         // laid over whatever ends up next to them
         addFingerings(note, group, clef);
         tickables.push(note);
+        collect(note, item.beatInMeasure);
 
         if (segmentPlacement) {
           group.forEach((seg, keyIndex) => {
@@ -764,7 +839,8 @@ function buildTickables(staveNotes, beatsPerMeasure, clef, keySignature, segment
       }
     }
   }
-  return tickables;
+  closeRun();
+  return { tickables, tuplets };
 }
 
 // Both staves of a measure must be formatted by one Formatter. Formatting them
@@ -802,6 +878,12 @@ function drawSystem(parts, timeSignature, Formatter, Voice, Accidental, Beam, ke
         try { return !t.isRest(); } catch (_) { return true; }
       });
       Beam.generateBeams(nonRest).forEach(b => b.setContext(svgCtx).draw());
+
+      // After the notes, because a tuplet's bracket and number are placed off
+      // where its notes actually ended up
+      for (const tuplet of part.tuplets) {
+        try { tuplet.setContext(svgCtx).draw(); } catch (e) { console.warn('Tuplet draw:', e.message); }
+      }
     }
 
     // Where each beat actually landed, so the step cursor can sit on a real
