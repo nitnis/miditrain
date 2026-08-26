@@ -1,6 +1,7 @@
 // VexFlow 4.x sheet music renderer (grand staff)
-import { state } from './state.js';
+import { state, emit } from './state.js';
 import { quantizeNotes, groupByMeasure, groupIntoChords, fillWithRests, findBestDuration, splitAcrossBarlines, writtenBeats, realBeats, BEAT_EPS } from './quantizer.js';
+import { swinging } from './swing.js';
 import { suggestedFinger, hasSuggestions } from './autofinger.js';
 import { detectChordRuns, spellPitchClass } from './chords.js';
 import { isRightHand } from './hands.js';
@@ -53,6 +54,11 @@ const TOP_LINE_DIA = { treble: 5 * 7 + 3, bass: 3 * 7 + 5 };
 let _staveGeom = [];
 export function getStaveGeometry() { return _staveGeom; }
 
+// Whether the last drawing was swung, so the control can show what "Auto"
+// decided rather than leaving the reader to work it out from the notes
+let _swinging = false;
+export function isSwinging() { return _swinging; }
+
 function recordStaveGeom(stave, clef, measure) {
   const topLineY = stave.getYForLine(0);
   const spacing = stave.getYForLine(1) - topLineY;
@@ -102,7 +108,15 @@ export function renderSheet(notes, composition, currentTimeMs = null, retry = fa
   const { tempo, timeSignature, keySignature } = composition;
   const beatsPerMeasure = timeSignature.numerator * (4 / timeSignature.denominator);
 
-  const quantized = quantizeNotes(notes, tempo, timeSignature, state.ui.quantize);
+  // Said after every drawing rather than only when it changes: what the control
+  // shows depends on the setting as well as the answer, and switching from
+  // "Swing" back to "Auto" on a piece that swings changes the first without
+  // changing the second.
+  const swing = swinging();
+  _swinging = swing;
+  emit('sheet:swing', { swinging: swing });
+
+  const quantized = quantizeNotes(notes, tempo, timeSignature, state.ui.quantize, swing);
   // A note is written as one piece per bar it spans, tied together
   const segments = splitAcrossBarlines(quantized, beatsPerMeasure);
   const { measures } = groupByMeasure(segments, timeSignature);
@@ -224,6 +238,9 @@ export function renderSheet(notes, composition, currentTimeMs = null, retry = fa
       drawStepCursor(cursorBeat, m, trebleStave, bassStave, beatsPerMeasure, beatPositions);
     }
   }
+
+  // Clear above the chord-label row, which sits just over the first stave
+  if (swing) drawSwingMarking(MX + 4, TREBLE_Y - 34);
 
   drawTies(segments, segmentPlacement);
   drawSlurs(notes, segmentPlacement);
@@ -841,6 +858,60 @@ function buildTickables(staveNotes, beatsPerMeasure, clef, keySignature, segment
   }
   closeRun();
   return { tickables, tuplets };
+}
+
+// The swing marking, drawn where a chart carries it: above the first bar,
+// before anything else on the page.
+//
+// It is an instruction to the reader rather than a rhythm, which is why the
+// eighths underneath it are written straight — this is the sentence that says
+// to play them long-short, and a jazz reader looks for it here and nowhere
+// else. Drawn as the equation rather than the word alone, because the word on
+// its own does not say how far to swing, and the equation does: two written
+// eighths sound as the first and third of a triplet.
+const SWING_GLYPH = 22;   // notehead size, in the units Glyph.renderGlyph takes
+const SWING_STEM = 22;    // stem length
+const SWING_GAP = 15;     // between the two notes of a pair
+
+function drawSwingMarking(x, y) {
+  const { Glyph } = VF();
+  const head = (cx) => Glyph.renderGlyph(svgCtx, cx, y, SWING_GLYPH, 'noteheadBlack');
+  // Stems rise from the right of the notehead, which is where an up-stem sits
+  const stem = (cx) => svgCtx.fillRect(cx + 5.1, y - SWING_STEM, 1.3, SWING_STEM);
+
+  svgCtx.save();
+  svgCtx.setFillStyle('rgba(226,232,240,0.92)');
+  svgCtx.setStrokeStyle('rgba(226,232,240,0.92)');
+
+  svgCtx.setFont('serif', 13, 'bold');
+  svgCtx.fillText('Swing', x, y - 4);
+  let cx = x + 53;
+
+  // A beamed pair of eighths
+  head(cx); stem(cx);
+  head(cx + SWING_GAP); stem(cx + SWING_GAP);
+  svgCtx.fillRect(cx + 5.1, y - SWING_STEM, SWING_GAP + 1.3, 3.4);
+  cx += SWING_GAP + 14;
+
+  svgCtx.setFont('serif', 13, 'normal');
+  svgCtx.fillText('=', cx, y - 4);
+  cx += 16;
+
+  // A quarter and an eighth under a three: the two thirds and one third of a
+  // beat that the straight pair is actually played as
+  head(cx); stem(cx);
+  head(cx + SWING_GAP); stem(cx + SWING_GAP);
+  Glyph.renderGlyph(svgCtx, cx + SWING_GAP + 5.6, y - SWING_STEM + 1, SWING_GLYPH, 'flag8thUp');
+
+  const bracketY = y - SWING_STEM - 9;
+  const bracketW = SWING_GAP + 8;
+  svgCtx.fillRect(cx + 2, bracketY, bracketW, 1.2);          // the bracket itself
+  svgCtx.fillRect(cx + 2, bracketY, 1.2, 4);                 // and its two ends
+  svgCtx.fillRect(cx + 2 + bracketW - 1.2, bracketY, 1.2, 4);
+  svgCtx.setFont('serif', 10, 'bold');
+  svgCtx.fillText('3', cx + 2 + bracketW / 2 - 3, bracketY - 2);
+
+  svgCtx.restore();
 }
 
 // Both staves of a measure must be formatted by one Formatter. Formatting them
