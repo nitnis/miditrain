@@ -936,6 +936,8 @@ select:focus { outline: 1px solid var(--accent); }
   font-size: 13px;
   color: var(--text);
   font-variant-numeric: tabular-nums;
+  /* A lick puts what it is on a line of its own under the count */
+  white-space: pre-line;
 }
 .profile-heading {
   font-size: 13px;

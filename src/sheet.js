@@ -1,6 +1,7 @@
 // VexFlow 4.x sheet music renderer (grand staff)
 import { state, emit } from './state.js';
-import { quantizeNotes, groupByMeasure, groupIntoChords, fillWithRests, findBestDuration, splitAcrossBarlines, detectSwing, writtenBeats, realBeats, BEAT_EPS } from './quantizer.js';
+import { quantizeNotes, groupByMeasure, groupIntoChords, fillWithRests, findBestDuration, splitAcrossBarlines, writtenBeats, realBeats, BEAT_EPS } from './quantizer.js';
+import { swinging } from './swing.js';
 import { suggestedFinger, hasSuggestions } from './autofinger.js';
 import { detectChordRuns, spellPitchClass } from './chords.js';
 import { isRightHand } from './hands.js';
@@ -58,16 +59,6 @@ export function getStaveGeometry() { return _staveGeom; }
 let _swinging = false;
 export function isSwinging() { return _swinging; }
 
-// The setting is a claim about the music, and on Auto the music is asked.
-// Turning it off does not mean the eighths are even — it means write down what
-// was played, triplets and all, and let the reader see it.
-function swingInEffect(notes, composition) {
-  const want = state.ui.swing;
-  if (want === 'on') return true;
-  if (want === 'off') return false;
-  return detectSwing(notes, composition.tempo, state.ui.quantize);
-}
-
 function recordStaveGeom(stave, clef, measure) {
   const topLineY = stave.getYForLine(0);
   const spacing = stave.getYForLine(1) - topLineY;
@@ -121,7 +112,7 @@ export function renderSheet(notes, composition, currentTimeMs = null, retry = fa
   // shows depends on the setting as well as the answer, and switching from
   // "Swing" back to "Auto" on a piece that swings changes the first without
   // changing the second.
-  const swing = swingInEffect(notes, composition);
+  const swing = swinging();
   _swinging = swing;
   emit('sheet:swing', { swinging: swing });
 

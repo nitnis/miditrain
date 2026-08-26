@@ -91,10 +91,24 @@ export function detectGridDivision(notes, tempo) {
   // are left out of the vote rather than counted against every binary grid in
   // turn. Counting them is what dragged a movement with one variation of
   // sextuplets in it all the way to 1/32 — the ornaments outvoting the piece.
-  const beats = attacks.map(t => msToBeats(t, tempo)).filter(x => !isThird(x));
-  if (beats.length < 2) return DEFAULT_DIVISION;
+  const all = attacks.map(t => msToBeats(t, tempo));
+  const beats = all.filter(x => !thirdStep(x));
+
+  // Setting them aside does not make them go away. Whatever they are, they are
+  // written as something — a third of a beat as an eighth, a sixth as a
+  // sixteenth — and the grid has to be fine enough to hold it. Without this
+  // floor, a phrase whose only downbeats are barlines leaves two attacks to
+  // vote, both of them on a bar line, and the whole piece is written in whole
+  // notes.
+  let floor = 1;
+  for (const x of all) {
+    const step = thirdStep(x);
+    if (step) floor = Math.max(floor, 4 / writtenBeats(step, 3));
+  }
+  if (beats.length < 2) return Math.max(DEFAULT_DIVISION, floor);
 
   for (const division of DIVISIONS) {
+    if (division < floor) continue;
     const step = gridSizeFromDivision(division);
     const slop = Math.min(step * ON_GRID, ON_GRID_MAX_BEATS);
     const near = beats.filter(x => Math.abs(snapToGrid(x, step) - x) <= slop).length;
@@ -157,14 +171,17 @@ function onGrid(offset, step) {
   return Math.abs(snapToGrid(offset, step) - offset) <= slop;
 }
 
-// An attack that only thirds can explain: in thirds of its beat, and on no
-// binary grid at all. On-the-beat attacks are in thirds too and are deliberately
-// not counted here — they belong to both lattices, and excluding them from the
-// binary vote would throw away most of the evidence for it.
-function isThird(beats) {
+// The thirds-of-a-beat lattice an attack sits on, if only thirds can explain
+// it: in thirds of its beat, and on no binary grid at all. The coarsest that
+// fits, matching the order detectTernaryBeats tries them in.
+//
+// On-the-beat attacks are in thirds too and deliberately give nothing back here
+// — they belong to both lattices, and excluding them from the binary vote would
+// throw away most of the evidence for it.
+function thirdStep(beats) {
   const offset = beats - Math.floor(beats + BEAT_EPS);
-  if (!TRIPLET_STEPS.some(step => onGrid(offset, step))) return false;
-  return !DIVISIONS.some(d => onGrid(offset, gridSizeFromDivision(d)));
+  if (DIVISIONS.some(d => onGrid(offset, gridSizeFromDivision(d)))) return null;
+  return TRIPLET_STEPS.find(step => onGrid(offset, step)) || null;
 }
 
 // Which slot of the beat an offset landed in, counting in grid steps
@@ -229,20 +246,55 @@ export function detectTernaryBeats(notes, tempo, division = 8) {
   return out;
 }
 
-// How many swung beats it takes before the piece is being played with a swing
-// rather than merely having a long-short figure in it — about two bars' worth.
-const MIN_SWUNG_BEATS = 8;
+// Where the clicks of one beat fall, as fractions of it.
+//
+// Straight is the even split. Swung is the same lattice the notation is written
+// on, read the other way: the written slot `w` sounds on ternary slot
+// `w + ceil(w / 2)`, which is what dropping the middle of every three comes to
+// when it is undone. So two clicks a beat land on 0 and 2/3, four on 0, 1/3,
+// 1/2 and 5/6 — and a click is heard exactly where a swung note is played,
+// because both are worked out from the one rule.
+//
+// Three clicks a beat is already the triplet, and one is the beat itself, so
+// neither has a swung form.
+export function subdivisionOffsets(subs, swung = false) {
+  const n = Math.max(1, subs);
+  const out = [];
+  if (!swung || n === 1 || n === 3) {
+    for (let i = 0; i < n; i++) out.push(i / n);
+    return out;
+  }
+  const ternaryStep = 2 / (3 * n);
+  for (let w = 0; w < n; w++) out.push((w + Math.ceil(w / 2)) * ternaryStep);
+  return out;
+}
 
-// Is this piece swung? Every beat that is not written in halves gets a vote,
-// and swing wins when nearly all of them are long-short pairs. A piece with
-// real triplets in it says no, which is the point: "swing" is a claim about the
-// whole chart, and a chart with triplets written out is not making it.
+// Enough long-short beats to be a way of playing rather than an accident: a
+// bar's worth at the very least, and never a smaller share of the music than
+// this. A sonata with five long-short beats in two hundred bars is not a swing
+// chart; a two-bar lick with five is nothing else.
+const MIN_SWUNG_BEATS = 4;
+const MIN_SWUNG_SHARE = 1 / 8;
+
+// Is this piece swung?
+//
+// Every beat that is not written in halves gets a vote, and swing wins when
+// nearly all of them are long-short pairs. A piece with real triplets in it
+// says no, which is the point: "swing" is a claim about the whole chart, and a
+// chart with triplets written out is not making it.
+//
+// The evidence is weighed against the length of the piece rather than counted
+// on its own, because the same handful of beats means opposite things in two
+// bars and in two hundred.
 export function detectSwing(notes, tempo, division = 8) {
+  if (!notes || !notes.length || !tempo) return false;
   const ternary = detectTernaryBeats(notes, tempo, division);
-  if (ternary.size < MIN_SWUNG_BEATS) return false;
   let swung = 0;
   for (const [, info] of ternary) if (info.swung) swung++;
-  return swung >= ternary.size * MOSTLY;
+  if (swung < MIN_SWUNG_BEATS || swung < ternary.size * MOSTLY) return false;
+
+  const span = Math.max(...notes.map(n => msToBeats(n.startTime, tempo))) + 1;
+  return swung >= span * MIN_SWUNG_SHARE;
 }
 
 // The step a given beat is written on, and what that makes it.

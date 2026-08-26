@@ -21,7 +21,7 @@ import { staffPositionName, midiToNoteWithOctave } from './chords.js';
 import { barRangeMs, barAtMs, detectGridDivision } from './quantizer.js';
 import { loopBars } from './range.js';
 import { inferHands } from './hands.js';
-import { SCALES, CHORDS, PATTERNS, HANDS, DIRECTIONS, NOTE_VALUES, ROOTS, buildExercise } from './scales.js';
+import { SCALES, CHORDS, LICKS, PATTERNS, HANDS, DIRECTIONS, NOTE_VALUES, ROOTS, buildExercise } from './scales.js';
 import {
   listProfiles, current as currentProfile, switchProfile, createProfile, deleteProfile,
   adoptProfile, sectionKey, sectionTempo, rememberSectionTempo, setLearningPosition,
@@ -679,8 +679,24 @@ function genOptions() {
     direction: document.getElementById('gen-direction').value,
     pattern: document.getElementById('gen-pattern').value,
     noteValue: Number(document.getElementById('gen-note-value').value),
+    swing: document.getElementById('gen-feel').value === 'swing',
     tempo: state.composition.tempo,
   };
+}
+
+// A lick is a phrase, not a shape run through a machine: its notes, its rhythm
+// and its harmony are all part of it, so the only choices left are which key to
+// put it in, which hands play it, and whether to hear it swung.
+const LICK_FIELDS = ['gen-root', 'gen-type', 'gen-hands', 'gen-octave', 'gen-feel'];
+
+function syncGenFields(kind) {
+  const lick = kind === 'lick';
+  for (const field of document.querySelectorAll('.practice-field')) {
+    const id = field.querySelector('select')?.id;
+    if (!id || id === 'gen-inversion') continue;
+    field.classList.toggle('hidden', lick && !LICK_FIELDS.includes(id));
+  }
+  document.getElementById('gen-feel-field').classList.toggle('hidden', !lick);
 }
 
 // Inversions only go as far as the chord has notes, so the list is rebuilt
@@ -714,9 +730,12 @@ function updatePracticeSummary() {
   const bars = beats / (state.composition.timeSignature.numerator *
     (4 / state.composition.timeSignature.denominator));
   const hands = opts.hands === 'right' || opts.hands === 'left' ? '' : ' per hand';
+  const counted = exercise.blurb
+    ? `${exercise.title} — ${bars.toFixed(bars % 1 ? 1 : 0)} bars at ${Math.round(opts.tempo)} BPM, key of ${exercise.keySignature}`
+    : `${exercise.title} — ${exercise.count} notes${hands}, ` +
+      `${bars.toFixed(bars % 1 ? 1 : 0)} bars at ${Math.round(opts.tempo)} BPM, key of ${exercise.keySignature}`;
   document.getElementById('practice-summary').textContent =
-    `${exercise.title} — ${exercise.count} notes${hands}, ` +
-    `${bars.toFixed(bars % 1 ? 1 : 0)} bars at ${Math.round(opts.tempo)} BPM, key of ${exercise.keySignature}`;
+    exercise.blurb ? `${counted}\n${exercise.blurb}` : counted;
 }
 
 function setGenKind(kind) {
@@ -724,13 +743,20 @@ function setGenKind(kind) {
   for (const tab of document.querySelectorAll('.practice-tab')) {
     tab.classList.toggle('active', tab.dataset.kind === kind);
   }
-  document.getElementById('gen-type-label').textContent = kind === 'arpeggio' ? 'Chord' : 'Scale';
-  document.getElementById('practice-blurb').textContent = kind === 'arpeggio'
-    ? 'Write an arpeggio onto the stave to practise. Everything else works on it: play it, loop a stretch, train it, or walk it in learn mode.'
-    : 'Write a scale onto the stave to practise. Everything else works on it: play it, loop a stretch, train it, or walk it in learn mode.';
-  fillOptions(document.getElementById('gen-type'), Object.entries(kind === 'arpeggio' ? CHORDS : SCALES));
-  document.getElementById('btn-practice-generate').textContent =
-    kind === 'arpeggio' ? 'Write the arpeggio' : 'Write the scale';
+  const LABEL = { arpeggio: 'Chord', lick: 'Lick', scale: 'Scale' };
+  const BLURB = {
+    arpeggio: 'Write an arpeggio onto the stave to practise. Everything else works on it: play it, loop a stretch, train it, or walk it in learn mode.',
+    lick: 'Phrases players actually use, written swung — so the stave shows straight eighths under a swing marking, the way a chart does. Everything else works on them: play, loop, train, learn.',
+    scale: 'Write a scale onto the stave to practise. Everything else works on it: play it, loop a stretch, train it, or walk it in learn mode.',
+  };
+  const TABLE = { arpeggio: CHORDS, lick: LICKS, scale: SCALES };
+  const WRITE = { arpeggio: 'Write the arpeggio', lick: 'Write the lick', scale: 'Write the scale' };
+
+  document.getElementById('gen-type-label').textContent = LABEL[kind] || LABEL.scale;
+  document.getElementById('practice-blurb').textContent = BLURB[kind] || BLURB.scale;
+  fillOptions(document.getElementById('gen-type'), Object.entries(TABLE[kind] || SCALES));
+  document.getElementById('btn-practice-generate').textContent = WRITE[kind] || WRITE.scale;
+  syncGenFields(kind);
   updatePracticeSummary();
 }
 
@@ -741,6 +767,15 @@ function writeExercise() {
   // The key first: the notes carry spellings written for it, and changing the
   // key is what hands spelling back to the key signature
   update('composition.keySignature', exercise.keySignature);
+  // A lick's comping is written in bars of four; left in whatever the last
+  // piece was in, its chords would land in the middle of them
+  if (exercise.timeSignature) update('composition.timeSignature', exercise.timeSignature);
+  // The feel came from the dialog, so the swing control says so rather than
+  // leaving the detector to infer back out of the timing what was just asked for
+  if (exercise.swing !== undefined) {
+    update('ui.swing', exercise.swing ? 'on' : 'off');
+    document.getElementById('swing-select').value = exercise.swing ? 'on' : 'off';
+  }
   state.composition.notes = exercise.notes;
   state.composition.name = exercise.title;
   // A generated exercise starts at the top, and the last thing loop-marked was

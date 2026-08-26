@@ -13,6 +13,7 @@
 // Hands place the result on the keyboard.
 import { spellPitchClass } from './chords.js';
 import { fingersByRung } from './fingering.js';
+import { subdivisionOffsets } from './quantizer.js';
 
 // ── What to play ─────────────────────────────────────────────────────────────
 // Semitones above the tonic, tonic excluded at the top — the ladder repeats it
@@ -56,6 +57,108 @@ export const CHORDS = {
   dim7:         { name: 'Diminished 7th',     group: 'Sevenths', steps: [0, 3, 6, 9] },
   minMaj7:      { name: 'Minor-major 7th',    group: 'Sevenths', steps: [0, 3, 7, 11] },
   major6:       { name: 'Major 6th',          group: 'Sevenths', steps: [0, 4, 7, 9] },
+};
+
+// ── Licks ────────────────────────────────────────────────────────────────────
+// Phrases rather than exercises. A scale teaches the notes; a lick teaches what
+// players actually do with them, which is a different thing and the reason
+// nobody learns to play jazz by running scales alone.
+//
+// Each one is written in eighths from the root, because that is the unit these
+// phrases are built out of, and played with a swing: the offbeats land two
+// thirds of the way through their beat, which is where they are played. So the
+// stave shows straight eighths under a swing marking — the phrase as it would
+// be printed — while what sounds and what is graded is the phrase as it swings.
+//
+// `line` is the melody as [semitones from the root, eighths]; the pitch may be
+// a list where the right hand takes a chord, and null is a rest. `comp` is the
+// left hand as [[semitones...], starting eighth, eighths], the shell voicings a
+// player would put under their own line.
+
+export const LICKS = {
+  bluesBox: {
+    name: 'Blues box',
+    group: 'Blues',
+    scale: 'minorPentatonic',
+    blurb: 'The first lick anybody learns: down the minor pentatonic and back to the root.',
+    line: [[12, 1], [10, 1], [7, 1], [10, 1], [7, 1], [5, 1], [3, 1], [5, 1], [3, 1], [0, 3], [null, 2]],
+    comp: [[[0, 7, 10], 0, 8], [[0, 7, 10], 8, 8]],
+  },
+  blueNote: {
+    name: 'Blue note slide',
+    group: 'Blues',
+    scale: 'blues',
+    blurb: 'Up through the flat five and back down — the note that makes it the blues.',
+    line: [[0, 1], [3, 1], [5, 1], [6, 1], [7, 2], [6, 1], [5, 1], [3, 1], [5, 1], [3, 1], [0, 1], [null, 4]],
+    comp: [[[0, 7, 10], 0, 8], [[0, 7, 10], 8, 8]],
+  },
+  callResponse: {
+    name: 'Call and response',
+    group: 'Blues',
+    scale: 'blues',
+    blurb: 'A short phrase, a gap to hear it in, then the answer a fourth up.',
+    line: [[0, 1], [3, 1], [5, 1], [3, 2], [null, 3],
+           [5, 1], [8, 1], [10, 1], [8, 2], [null, 3]],
+    comp: [[[0, 7, 10], 0, 8], [[5, 12, 15], 8, 8]],
+  },
+  boogie: {
+    name: 'Boogie-woogie bass',
+    group: 'Blues',
+    scale: 'majorBlues',
+    blurb: 'The left-hand figure that drives the whole thing: 1–3–5–6–♭7–6–5–3, shuffled, with stabs on the offbeats.',
+    line: [[null, 1], [[12, 16, 19], 1], [null, 1], [[12, 16, 19], 1],
+           [null, 1], [[12, 16, 19], 1], [null, 1], [[12, 16, 19], 1],
+           [null, 1], [[12, 16, 19], 1], [null, 1], [[12, 16, 19], 1],
+           [null, 1], [[12, 16, 19], 1], [null, 1], [[12, 16, 19], 1]],
+    comp: [[[0], 0, 1], [[4], 1, 1], [[7], 2, 1], [[9], 3, 1],
+           [[10], 4, 1], [[9], 5, 1], [[7], 6, 1], [[4], 7, 1],
+           [[0], 8, 1], [[4], 9, 1], [[7], 10, 1], [[9], 11, 1],
+           [[10], 12, 1], [[9], 13, 1], [[7], 14, 1], [[4], 15, 1]],
+  },
+  bebopDescent: {
+    name: 'Bebop descent',
+    group: 'Bebop',
+    scale: 'bebopDominant',
+    blurb: 'Straight down the bebop dominant scale. The extra seventh is what puts every chord tone on a beat.',
+    line: [[12, 1], [11, 1], [10, 1], [9, 1], [7, 1], [5, 1], [4, 1], [2, 1], [0, 4], [null, 4]],
+    comp: [[[0, 4, 10], 0, 8], [[0, 4, 10], 8, 8]],
+  },
+  enclosure: {
+    name: 'Enclosure on the third',
+    group: 'Bebop',
+    scale: 'bebopDominant',
+    blurb: 'Circle the target from above and below before landing on it — the bebop way in.',
+    line: [[7, 1], [9, 1], [10, 1], [9, 1], [7, 1], [5, 1], [3, 1], [4, 4], [null, 4]],
+    comp: [[[0, 4, 10], 0, 8], [[0, 4, 10], 8, 8]],
+  },
+  chromaticApproach: {
+    name: 'Chromatic approach',
+    group: 'Bebop',
+    scale: 'bebopMajor',
+    blurb: 'Walk up to each chord tone from a semitone below.',
+    line: [[0, 1], [3, 1], [4, 1], [6, 1], [7, 1], [8, 1], [9, 1], [11, 1], [12, 4], [null, 4]],
+    comp: [[[0, 4, 11], 0, 8], [[0, 4, 11], 8, 8]],
+  },
+  iiVi: {
+    name: 'ii–V–I line',
+    group: 'Standards',
+    scale: 'major',
+    blurb: 'The turn every standard is made of, played as one long eighth-note line.',
+    line: [[14, 1], [16, 1], [17, 1], [19, 1], [21, 1], [23, 1], [21, 1], [19, 1],
+           [17, 1], [16, 1], [14, 1], [12, 1], [11, 1], [12, 1], [14, 1], [17, 1],
+           [16, 4], [null, 4]],
+    comp: [[[2, 9, 12, 16], 0, 8], [[7, 11, 14, 17], 8, 8], [[0, 7, 11, 16], 16, 8]],
+  },
+  charleston: {
+    name: 'Charleston comp',
+    group: 'Standards',
+    scale: 'major',
+    blurb: 'Beat one and the and of two, over and over. The comping rhythm to have in your hands.',
+    line: [[16, 1], [null, 2], [14, 1], [null, 4],
+           [16, 1], [null, 2], [17, 1], [null, 4]],
+    comp: [[[0, 4, 10], 0, 1], [[0, 4, 10], 3, 1],
+           [[0, 4, 10], 8, 1], [[0, 4, 10], 11, 1]],
+  },
 };
 
 // ── How to walk it ───────────────────────────────────────────────────────────
@@ -271,6 +374,89 @@ function fitToKeyboard(pitches) {
   return shift;
 }
 
+// Where eighth number `i` is actually played, in beats. Swung, so the app's own
+// swing detection sees what a player would play and writes it as a chart —
+// straight eighths under a marking — rather than as a page of triplets.
+function swungBeats(i) {
+  const offs = subdivisionOffsets(2, true);
+  return Math.floor(i / 2) + offs[i % 2];
+}
+
+function buildLick({ rootPc, type, octave, tempo, hands, swing }) {
+  const lick = LICKS[type] || LICKS.bluesBox;
+  const scale = SCALES[lick.scale] || SCALES.major;
+  const keySignature = keySignatureFor(rootPc, scale.steps);
+  const spellAs = spellingMap(rootPc, scale.steps, keySignature, 1) || new Map();
+  const rootMidi = 12 * (octave + 1) + rootPc;
+  const beatMs = 60000 / tempo;
+  // Straight is there for hearing what the swing is doing by taking it away
+  const at = (i) => (swing ? swungBeats(i) : i / 2) * beatMs;
+
+  const notes = [];
+  const wantRight = hands !== 'left';
+  const wantLeft = hands !== 'right';
+  // The phrase is as long as the phrase, whichever hands are being asked for —
+  // otherwise the same lick is a different number of bars in each hand
+  const eighths = Math.max(
+    lick.line.reduce((n, [, len]) => n + len, 0),
+    ...lick.comp.map(([, start, len]) => start + len),
+  );
+
+  if (wantRight) {
+    let i = 0;
+    for (const [semi, len] of lick.line) {
+      if (semi !== null) {
+        for (const [k, s] of [].concat(semi).entries()) {
+          const midi = rootMidi + s;
+          const spelling = spellAs.get(((midi % 12) + 12) % 12);
+          notes.push({
+            id: `lick-r-${i}-${k}`, pitch: midi, velocity: 92,
+            startTime: at(i), duration: at(i + len) - at(i),
+            hand: 'right',
+            ...(spelling ? { spelling } : {}),
+          });
+        }
+      }
+      i += len;
+    }
+  }
+
+  if (wantLeft) {
+    // Two octaves down puts the shells where a left hand actually voices them
+    lick.comp.forEach(([semis, start, len], v) => {
+      semis.forEach((semi, k) => {
+        const midi = rootMidi - 24 + semi;
+        const spelling = spellAs.get(((midi % 12) + 12) % 12);
+        notes.push({
+          id: `lick-l-${v}-${k}`, pitch: midi, velocity: 74,
+          startTime: at(start), duration: at(start + len) - at(start),
+          hand: 'left',
+          ...(spelling ? { spelling } : {}),
+        });
+      });
+    });
+  }
+
+  const shift = fitToKeyboard(notes.map(n => n.pitch));
+  if (shift) for (const n of notes) n.pitch += shift;
+  notes.sort((a, b) => a.startTime - b.startTime);
+
+  const rootName = spellPitchClass(rootPc, keySignature).name;
+  return {
+    notes,
+    count: notes.filter(n => n.hand === 'right').length || notes.length,
+    durationMs: (eighths / 2) * beatMs,
+    keySignature,
+    // These phrases are built in eighths, eight to the bar
+    timeSignature: { numerator: 4, denominator: 4 },
+    // The feel was chosen rather than inferred, so it is stated rather than
+    // left for the detector to work back out of the timing
+    swing,
+    title: `${rootName} — ${lick.name}${swing ? '' : ' (straight)'}`,
+    blurb: lick.blurb,
+  };
+}
+
 // `octave` is the octave the tonic starts in for the right hand, in scientific
 // pitch notation: 4 means the C4 of middle C.
 export function buildExercise({
@@ -285,7 +471,10 @@ export function buildExercise({
   pattern = 'straight',
   noteValue = 8,
   tempo = 120,
+  swing = true,
 } = {}) {
+  if (kind === 'lick') return buildLick({ rootPc, type, octave, tempo, hands, swing });
+
   const table = kind === 'arpeggio' ? CHORDS : SCALES;
   const chosen = table[type] || table.major;
   const turned = kind === 'arpeggio' ? invert(chosen.steps, inversion) : { bass: 0, steps: chosen.steps };

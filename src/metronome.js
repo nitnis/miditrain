@@ -1,6 +1,7 @@
 // Web Audio API metronome with look-ahead scheduling
 import { state } from './state.js';
 import { getAudioContext, getClickBus } from './audio.js';
+import { beatOffsets } from './swing.js';
 
 let schedulerTimer = null;
 let nextTickTime = 0;
@@ -50,10 +51,30 @@ export function clickKind(tick, subs, beatsPerBar) {
   return Math.floor(tick / subs) % beatsPerBar === 0 ? 'downbeat' : 'beat';
 }
 
+function beatMs() {
+  return 60000 / state.composition.tempo;
+}
+
 // A tick is counted in composition time, so tick 0 is the start of the piece
 // and every downbeat lands on a bar line wherever playback happened to begin.
-function tickMs() {
-  return (60000 / state.composition.tempo) / subdivision();
+//
+// Where inside its beat a tick falls is not the even split it used to be: under
+// a swing marking the offbeat click goes where a swung eighth is actually
+// played, two thirds of the way through, so the click agrees with the page.
+// That makes the grid uneven, and a tick is placed by which beat it belongs to
+// and where in that beat rather than by counting one step at a time.
+function tickBeats(tick) {
+  const offs = beatOffsets(subdivision());
+  const n = offs.length;
+  const beat = Math.floor(tick / n);
+  return beat + offs[((tick % n) + n) % n];
+}
+
+// How far it is from one click to the next, which under a swing is long then
+// short. Asked per tick rather than once, so changing the tempo or the
+// subdivision still takes effect at the next click rather than the next bar.
+function tickGapBeats(tick) {
+  return tickBeats(tick + 1) - tickBeats(tick);
 }
 
 // ...and heard in real time, which the speed control stretches
@@ -67,13 +88,12 @@ function scheduler() {
   const ctx = getAudioCtx();
   const beatsPerBar = Math.max(1, state.composition.timeSignature.numerator);
   const subs = subdivision();
-  // Recomputed every pass, so changing the tempo or the subdivision takes
-  // effect at the next tick rather than at the next bar
-  const step = realSeconds(tickMs());
 
   while (nextTickTime < ctx.currentTime + LOOKAHEAD_MS / 1000) {
     scheduleClick(nextTickTime, clickKind(tickCount, subs, beatsPerBar));
-    nextTickTime += step;
+    // Recomputed every pass, so changing the tempo or the subdivision takes
+    // effect at the next tick rather than at the next bar
+    nextTickTime += realSeconds(tickGapBeats(tickCount) * beatMs());
     tickCount++;
   }
 }
@@ -99,9 +119,17 @@ export function startMetronome(positionMs = 0) {
   const ctx = getAudioCtx();
   if (ctx.state === 'suspended') ctx.resume();
 
-  const step = tickMs();
-  const ticksIn = Math.max(0, positionMs) / step;
-  tickCount = Math.ceil(ticksIn - 1e-6);
+  // The first click is the next tick at or after where the transport is
+  // starting from. On an uneven grid that cannot be divided out, so it is
+  // counted from the beat: whole beats to get there, then the first offset
+  // inside the beat that has not already gone by.
+  const beatsIn = Math.max(0, positionMs) / beatMs();
+  const subs = subdivision();
+  const offs = beatOffsets(subs);
+  const wholeBeats = Math.floor(beatsIn + 1e-6);
+  const into = beatsIn - wholeBeats;
+  const slot = offs.findIndex(o => o >= into - 1e-6);
+  tickCount = wholeBeats * subs + (slot === -1 ? subs : slot);
 
   const handover = handoverCtxTime;
   handoverCtxTime = null;
@@ -109,7 +137,7 @@ export function startMetronome(positionMs = 0) {
     handover > ctx.currentTime - HANDOVER_WINDOW_S &&
     handover < ctx.currentTime + HANDOVER_WINDOW_S;
   const anchor = fresh ? handover : ctx.currentTime;
-  nextTickTime = Math.max(ctx.currentTime, anchor + realSeconds((tickCount - ticksIn) * step));
+  nextTickTime = Math.max(ctx.currentTime, anchor + realSeconds((tickBeats(tickCount) - beatsIn) * beatMs()));
 
   clearInterval(schedulerTimer);
   schedulerTimer = setInterval(scheduler, SCHEDULE_INTERVAL_MS);

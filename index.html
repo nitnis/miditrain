@@ -566,6 +566,7 @@
       <div class="practice-tabs" role="tablist">
         <button class="practice-tab active" id="tab-scales" data-kind="scale" role="tab">Scales</button>
         <button class="practice-tab" id="tab-arpeggios" data-kind="arpeggio" role="tab">Arpeggios</button>
+        <button class="practice-tab" id="tab-licks" data-kind="lick" role="tab">Licks</button>
       </div>
       <p class="section-sub" id="practice-blurb">Write a scale onto the stave to practise. Everything else works on it: play it, loop a stretch, train it, or walk it in learn mode.</p>
 
@@ -610,6 +611,13 @@
         <label class="practice-field">
           <span>Note value</span>
           <select id="gen-note-value"></select>
+        </label>
+        <label class="practice-field hidden" id="gen-feel-field">
+          <span>Feel</span>
+          <select id="gen-feel" title="Licks are played swung; straight is there for hearing what the swing does by taking it away">
+            <option value="swing" selected>Swung</option>
+            <option value="straight">Straight</option>
+          </select>
         </label>
       </div>
 
