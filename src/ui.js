@@ -1343,10 +1343,13 @@ function syncTranscribeTempo() {
   tempoOctave = 0;
   const { composition, report } = pendingTranscription;
   document.getElementById('tr-tempo').value = String(composition.tempo);
-  const shaky = report.tempoConfidence < 0.5;
+  // Confidence is the share of beats that had something on them, so a clean
+  // reading sits at or near 1 and anything much below it means the pulse had
+  // gaps to guess across — which is exactly when the barlines are worth a look.
+  const shaky = report.tempoConfidence < 0.8;
   document.getElementById('tr-tempo-note').textContent = shaky
-    ? 'the beat was hard to find here'
-    : 'the beat and its subdivision sound alike — halve it if the bars look short';
+    ? 'the beat was hard to find here — check the barlines'
+    : 'halve or double it if the bars look long or short';
 }
 
 async function importAudio(file) {
