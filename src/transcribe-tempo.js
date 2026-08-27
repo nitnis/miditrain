@@ -125,38 +125,253 @@ function tempoPrior(bpm) {
 }
 
 // How much having a level below is worth, and it is a narrow window rather than
-// a setting with room to spare. Below about 0.8 the andante stays at its eighth
-// note; above about 1.2 a plain stream of quarters gets halved, because a
-// reading at half speed always has every other note sitting exactly between its
-// beats and starts collecting this reward for it. The two bounds are a genuine
-// conflict and not a tuning failure — the crossings were measured at 2.0 and
-// 1.07 on clean input, and they do not overlap. One is the middle of what is
-// left, and every piece in the test set is read correctly there.
-export const SUBDIVISION_WEIGHT = { k: 1 };
+// a setting with room to spare. Too little and the andante stays at its eighth
+// note; too much and a plain stream of quarters gets halved, because a reading
+// at half speed always has every other note sitting exactly between its beats
+// and starts collecting this reward for it.
+//
+// It was one while the beats were a rigid grid. Tracking moved it: a tracker
+// that can follow the music helps the wrong finer-grained reading more than the
+// right one, because more beats means more chances to settle onto an onset, so
+// the subdivision has to be worth more to hold the balance. Re-swept across the
+// whole test set — synthetic shapes and real piano together, with the room and
+// the noise seeded so the sweep measured the parameter and not the dice — the
+// plateau runs from about 2.8 to 3.2 and this is the middle of it.
+//
+// Every piece of real music in the set is read correctly there. What is given
+// up is the featureless end: a stream of identical quarter notes with nothing
+// between them reads an octave slow, because such a stream genuinely has no
+// answer — whether those are quarters or eighths is a question about music that
+// was never played. Lower settings buy one of those back and cost a rondo read
+// at four thirds of its speed, which is the worse failure by far: an octave is
+// one press of the double button in the review step, and four thirds is
+// nothing a user can straighten out.
+export const SUBDIVISION_WEIGHT = { k: 3 };
+
+// ── Following a tempo that moves ─────────────────────────────────────────────
+
+// Nobody plays to a click, and a single beat length laid over a whole
+// performance is wrong before the second bar. Worse, it fails in a particular
+// direction: a rigid grid at the true tempo drifts out of step with the
+// playing, while a grid at half that tempo has twice the tolerance and stays in
+// step long enough to score better. So rubato does not merely blur the answer,
+// it argues for the wrong one. Measured on a rondo with a little push and pull,
+// the rigid search read it at half speed and did so confidently.
+//
+// The fix is to stop asking where a fixed ruler lands and start asking where a
+// tapping foot would go — a beat sequence that prefers to sit on attacks and
+// prefers not to change speed abruptly, with the balance between those two
+// wishes settled by dynamic programming over every sequence at once. This is
+// the Ellis beat-tracking recurrence, over discrete attacks rather than an
+// onset envelope, because by this point the notes are already known.
+
+const GRID_MS = 10;             // how finely a beat may be placed
+const BEAT_TOL_MS = 70;         // how near an attack has to be to reward a beat
+
+// What it costs to change speed, against a reward of at most one per beat for
+// landing on an attack. A tenth of a beat's worth for a five percent change,
+// half a beat's for ten — loose enough to follow a performance, tight enough
+// that the tracker will not chase every stray note.
+export const TRANSITION_WEIGHT = { w: 60 };
+
+// The reward for putting a beat at each moment: how near the nearest attack is.
+function onsetCurve(attacks, startMs, cells) {
+  const curve = new Float32Array(cells);
+  const span = Math.ceil(BEAT_TOL_MS / GRID_MS);
+  for (const t of attacks) {
+    const c = Math.round((t - startMs) / GRID_MS);
+    for (let d = -span; d <= span; d++) {
+      const i = c + d;
+      if (i < 0 || i >= cells) continue;
+      const v = 1 - Math.abs(d * GRID_MS) / BEAT_TOL_MS;
+      if (v > curve[i]) curve[i] = v;
+    }
+  }
+  return curve;
+}
+
+// The best beat sequence at roughly this speed, allowed to drift.
+//
+// Every cell holds the score of the best sequence ending there, so one pass
+// forward considers every sequence there is and one walk back recovers the
+// winner. The interval may stretch from six tenths of the target to one and
+// six tenths, which is room for any rubato short of a written change of tempo.
+export function trackBeats(attacks, periodMs) {
+  const startMs = attacks[0];
+  const cells = Math.floor((attacks[attacks.length - 1] - startMs) / GRID_MS) + 1;
+  const tau = periodMs / GRID_MS;
+  const lo = Math.max(1, Math.round(tau * 0.6));
+  const hi = Math.max(lo + 1, Math.round(tau * 1.6));
+  if (cells < lo * 2) return [];
+
+  const curve = onsetCurve(attacks, startMs, cells);
+  const best = new Float32Array(cells);
+  const prev = new Int32Array(cells).fill(-1);
+  const w = TRANSITION_WEIGHT.w;
+
+  for (let i = 0; i < cells; i++) {
+    // A sequence may simply begin here, which is what the first beat does
+    let top = i < hi ? curve[i] : -Infinity;
+    let from = -1;
+    const near = Math.min(hi, i);
+    for (let d = lo; d <= near; d++) {
+      const ratio = Math.log(d / tau);
+      const v = best[i - d] - w * ratio * ratio;
+      if (v > top - curve[i]) { top = v + curve[i]; from = i - d; }
+    }
+    best[i] = top;
+    prev[i] = from;
+  }
+
+  // The winner ends somewhere in the final period; a longer sequence always
+  // outscores a shorter one, so this is only choosing where to stop
+  let end = cells - 1;
+  for (let i = Math.max(0, cells - hi); i < cells; i++) if (best[i] > best[end]) end = i;
+
+  const beats = [];
+  for (let i = end; i >= 0; i = prev[i]) {
+    beats.push(startMs + i * GRID_MS);
+    if (prev[i] < 0) break;
+  }
+  return beats.reverse();
+}
+
+// The same three questions as before, asked of beats that bend.
+//
+// `score` and `coverage` and `between` mean exactly what they meant against a
+// rigid grid — this only walks a list of beat times instead of stepping by a
+// constant, so a performance that speeds up is no longer punished for it.
+function scoreTrackedBeats(attacks, beats) {
+  if (beats.length < 4) return null;
+  const gaps = [];
+  for (let i = 1; i < beats.length; i++) gaps.push(beats[i] - beats[i - 1]);
+
+  let score = 0, hits = 0, filled = 0, between = 0;
+  let b = 0;
+  let lastFilled = -1;
+  for (const t of attacks) {
+    while (b < beats.length - 1 && Math.abs(beats[b + 1] - t) <= Math.abs(beats[b] - t)) b++;
+    // The beat interval this attack belongs to, for judging distance in beats
+    const gap = gaps[Math.min(b, gaps.length - 1)] || 1;
+    const dist = Math.abs(t - beats[b]) / gap;
+    if (dist <= ON_BEAT) {
+      score += 1 - dist / ON_BEAT;
+      hits++;
+      if (b !== lastFilled) { filled++; lastFilled = b; }
+    } else {
+      // Halfway to the neighbour it actually sits between
+      const side = t > beats[b] ? b : b - 1;
+      if (side >= 0 && side < gaps.length) {
+        const mid = beats[side] + gaps[side] / 2;
+        if (Math.abs(t - mid) / gaps[side] <= ON_BEAT) between++;
+      }
+    }
+  }
+  return {
+    score, hits,
+    coverage: Math.min(1, filled / beats.length),
+    between: hits ? Math.min(1, between / hits) : 0,
+    periodMs: meanPeriod(beats),
+    beats,
+  };
+}
+
+// The average beat, fitted rather than counted.
+//
+// Beats are placed on a ten millisecond grid, so any single gap is rounded by
+// up to five — which at a brisk tempo is a whole percent, and reporting 117.6
+// for a piece at 120 looks like an error even though every beat is in the right
+// place. A straight line through beat number against beat time has a slope that
+// averages that rounding away over the whole piece, and under rubato it is the
+// mean tempo, which is the honest single number to put on a score.
+function meanPeriod(beats) {
+  const n = beats.length;
+  const midIndex = (n - 1) / 2;
+  const midTime = beats.reduce((a, b) => a + b, 0) / n;
+  let num = 0, den = 0;
+  for (let i = 0; i < n; i++) {
+    const di = i - midIndex;
+    num += di * (beats[i] - midTime);
+    den += di * di;
+  }
+  return den > 0 ? num / den : beats[1] - beats[0];
+}
+
+// Which beat lengths are worth tracking.
+//
+// Tracking is far too expensive to run at all six hundred candidates, and it
+// does not need to: the rigid search is a good enough guide to where the peaks
+// are, even when it is wrong about which one to believe. Its favourites go in,
+// and so do their halves, doubles, thirds and triples — because being wrong by
+// exactly one of those is the whole failure mode this is here to survive, and a
+// shortlist that only contained the rigid answer would inherit its mistake.
+// A whole BPM apart is plenty: this only has to say which hills to climb, and
+// the tracker settles the exact tempo afterwards from the beats it places. It
+// used to step by a quarter, back when its answer was the answer, and that cost
+// four times as much for a precision that is now thrown away.
+const SHORTLIST_STEP = 1;
+
+function shortlist(attacks) {
+  const rigid = [];
+  for (let bpm = MIN_BPM; bpm <= MAX_BPM; bpm += SHORTLIST_STEP) {
+    const { score, between, coverage } = fitPeriod(attacks, 60000 / bpm);
+    rigid.push({ bpm, weighted: Math.max(0, score) * tempoPrior(bpm) * coverage
+                                * (1 + SUBDIVISION_WEIGHT.k * between) });
+  }
+  rigid.sort((a, b) => b.weighted - a.weighted);
+
+  const picks = [];
+  const seen = new Set();
+  const add = (bpm) => {
+    if (bpm < MIN_BPM || bpm > MAX_BPM) return;
+    const key = Math.round(bpm * 2);
+    if (seen.has(key)) return;
+    seen.add(key);
+    picks.push(bpm);
+  };
+  for (const r of rigid.slice(0, 3)) {
+    for (const mult of [1, 2, 0.5, 3, 1 / 3]) add(r.bpm * mult);
+  }
+  return picks;
+}
 
 export function detectTempo(notes) {
   const attacks = attackTimes(notes);
   if (attacks.length < 8) return null;
 
-  // Candidate beat lengths, a fifth of a semitone apart in tempo — fine enough
-  // that the winner is within a few tenths of a BPM
-  const candidates = [];
-  for (let bpm = MIN_BPM; bpm <= MAX_BPM; bpm += 0.25) {
-    const periodMs = 60000 / bpm;
-    const { score, phase, hits, between, coverage } = fitPeriod(attacks, periodMs);
-    candidates.push({ bpm, periodMs, score, phase, hits, between, coverage,
-                      weighted: Math.max(0, score) * tempoPrior(bpm) * coverage
-                                * (1 + SUBDIVISION_WEIGHT.k * between) });
+  let best = null;
+  for (const bpm of shortlist(attacks)) {
+    const fit = scoreTrackedBeats(attacks, trackBeats(attacks, 60000 / bpm));
+    if (!fit || fit.score <= 0) continue;
+    // Judged at the speed it actually settled on, not the one it was seeded
+    // with, since the tracker is free to have found something a little different
+    const settled = 60000 / fit.periodMs;
+    const weighted = fit.score * tempoPrior(settled) * fit.coverage
+                     * (1 + SUBDIVISION_WEIGHT.k * fit.between);
+    if (!best || weighted > best.weighted) best = { ...fit, bpm: settled, weighted };
   }
+  if (!best) return null;
 
-  const best = candidates.reduce((a, b) => (b.weighted > a.weighted ? b : a));
-  if (best.score <= 0) return null;
+  // A whole number, and the period that goes with it.
+  //
+  // A composition carries one integer tempo, so that is the grid the notation
+  // will be read against, and it has to be the same grid the notes are written
+  // onto. Keeping a fractional period here and letting the caller round the
+  // tempo puts the two a hair apart, which over twenty seconds is enough drift
+  // to take every note off the grid — and the grid detector answers that by
+  // halving the note value until they fit. It showed up as a page of
+  // thirty-second notes in a piece that has none.
+  const tempo = Math.max(MIN_BPM, Math.min(MAX_BPM, Math.round(best.bpm)));
 
   return {
-    tempo: Math.round(best.bpm * 10) / 10,
-    periodMs: best.periodMs,
-    offsetMs: best.phase,
+    tempo,
+    periodMs: 60000 / tempo,
+    offsetMs: best.beats[0],
     attacks: attacks.length,
+    // Where the beats actually fell, which is not a constant step apart when
+    // the playing was not. Everything downstream that wants to line up with the
+    // music should use these rather than counting periods from the offset.
+    beats: best.beats,
     // How far to trust the barlines, which is the share of beats that had
     // something on them — not the share of attacks that sat on a beat.
     //
@@ -190,16 +405,81 @@ export function detectTempo(notes) {
 // them is either an ornament or a mistake, and dragging it onto the grid would
 // hide which.
 export const SNAP_DIVISION = 4;   // sixteenths, as a count per beat
-const SNAP_TOLERANCE = 0.3;       // of a step; further off and it is left alone
+// How near a sixteenth a note has to be to be pulled onto it, as a fraction of
+// the step. It has to comfortably exceed the transcriber's own onset error,
+// which is about twenty milliseconds: at three tenths that is thirty
+// milliseconds at a rondo's tempo, close enough to the error that a good tenth
+// of the notes stayed off the grid — and a grid detector that sees a tenth of
+// the piece off the sixteenths answers by writing the whole thing in
+// thirty-seconds. Four tenths clears the error at both tempos in the set while
+// still leaving the middle of the step alone, so an ornament played between two
+// sixteenths stays where it was played instead of becoming a wrong one.
+export const SNAP = { tolerance: 0.4 };
 
+// Performance time in, metrical time out.
+//
+// The tracked beats say where the player put each beat; a score says where the
+// beats belong. Those are the same thing only for a metronome, so this reads
+// every note as a position in beats — interpolating between the beats either
+// side of it — and writes it back out against an even beat. A performance that
+// pushed and pulled comes out written straight, which is what a score is.
+//
+// This also has to happen for the notation to work at all. Everything
+// downstream measures bars from time zero at a constant tempo, so notes aligned
+// to a first beat that landed twenty milliseconds late read as off the grid,
+// and the grid detector answers by halving the note value until they fit. That
+// showed up as sixteenths where the piece is written in eighths.
+//
+// Snapping stays conservative: a position already close to a sixteenth is
+// pulled onto it, and one that is not keeps the fraction it was played at, so
+// an ornament stays an ornament rather than becoming a wrong sixteenth.
 export function snapToBeatGrid(notes, fit) {
   if (!fit) return notes;
-  const step = fit.periodMs / SNAP_DIVISION;
-  const tol = step * SNAP_TOLERANCE;
-  return notes.map(n => {
-    const target = Math.round(n.startTime / step) * step;
-    if (Math.abs(target - n.startTime) > tol) return n;
-    const shift = target - n.startTime;
-    return { ...n, startTime: Math.max(0, target), duration: Math.max(step, n.duration - shift) };
+  const period = fit.periodMs;
+  const beats = fit.beats && fit.beats.length >= 2 ? fit.beats : null;
+  if (!beats) {
+    const step = period / SNAP_DIVISION;
+    const tol = step * SNAP.tolerance;
+    return notes.map(n => {
+      const target = Math.round(n.startTime / step) * step;
+      if (Math.abs(target - n.startTime) > tol) return n;
+      return { ...n, startTime: Math.max(0, target),
+               duration: Math.max(step, n.duration - (target - n.startTime)) };
+    });
+  }
+
+  const first = beats[0];
+  const last = beats[beats.length - 1];
+  const headGap = beats[1] - first;
+  const tailGap = last - beats[beats.length - 2];
+  // Where a time sits in beats, carrying the end tempos on past either end
+  const toBeats = (t) => {
+    if (t <= first) return (t - first) / headGap;
+    if (t >= last) return beats.length - 1 + (t - last) / tailGap;
+    let lo = 0, hi = beats.length - 1;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (beats[mid] <= t) lo = mid; else hi = mid;
+    }
+    return lo + (t - beats[lo]) / (beats[lo + 1] - beats[lo]);
+  };
+  const tol = SNAP.tolerance / SNAP_DIVISION;
+  const onGrid = (p) => {
+    const target = Math.round(p * SNAP_DIVISION) / SNAP_DIVISION;
+    return Math.abs(target - p) <= tol ? target : p;
+  };
+
+  const mapped = notes.map(n => {
+    const start = onGrid(toBeats(n.startTime));
+    const end = onGrid(toBeats(n.startTime + n.duration));
+    return { n, start, length: Math.max(1 / SNAP_DIVISION, end - start) };
   });
+
+  // A pickup can sit before the first tracked beat. Shifting everything by a
+  // whole number of beats keeps the downbeats where they are.
+  let shift = 0;
+  for (const m of mapped) shift = Math.max(shift, Math.ceil(-m.start));
+  return mapped.map(m => ({ ...m.n,
+    startTime: (m.start + shift) * period,
+    duration: m.length * period }));
 }
