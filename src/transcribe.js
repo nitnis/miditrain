@@ -17,6 +17,34 @@
 // an octave above, because that C's fundamental is exactly the first C's second
 // harmonic and there is nothing in a single frame to tell them apart. Taking
 // the winner and removing the energy it accounts for is what settles it.
+//
+// It settles it for a rendering. It does not settle it for a piano, and that
+// is the largest known fault here. A recorded low F was measured with its
+// second partial at twice its own fundamental, so at the moment it is struck
+// the F an octave above scores higher than it does — every one of that upper
+// F's partials is one of this one's even partials, it has no evidence of its
+// own anywhere, and it still wins the round and is written down. The reported
+// symptom is notes shown as struck together that were played one after
+// another: a bass F and a treble A are held, a treble F joins a second and a
+// half later, and the score shows all three at the downbeat.
+//
+// Three fixes were built and measured against that recording and none worked.
+// Subtracting what is observed at each partial rather than what the template
+// predicts: no effect on the ghost, and it cost the genuine-octave test.
+// Preferring the pitch an octave below when it has support at its own
+// fundamental, so the real note is peeled first: same. Both together, across
+// sixteen combinations: same. The measured reason is in the salience — at that
+// instant the ghost stands at twice the gate level, and the real entries of
+// the same note a second later peak lower than it does. No threshold separates
+// them because the ghost is the stronger signal.
+//
+// What is left is not a threshold. For an exact octave every partial of the
+// upper note lies on an even partial of the lower, so a single frame holds no
+// evidence that could tell a real octave from an invented one; only the shape
+// of a particular instrument's partial envelope, or the two notes decaying at
+// their own rates over time, can. Both are a different design from this one.
+// The synthetic octave test does not catch any of it, because the app's own
+// voice has no even partials at all and so never creates the ambiguity.
 import {
   makeAnalyzer, midiToFreq, RATE, HOP,
   FINE_WINDOW, COARSE_WINDOW, COARSE_RATE, COARSE_CEILING, CROSSOVER_MIDI,
