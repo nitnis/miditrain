@@ -3,7 +3,7 @@ import { state, on } from './state.js';
 import { getAccuracyResults } from './accuracy.js';
 import { setEditorLayout } from './note-editor.js';
 import { handOf, isPractised, practiceHand } from './hands.js';
-import { detectChord } from './chords.js';
+import { detectChord, midiToNoteWithOctave } from './chords.js';
 import { subdivision } from './metronome.js';
 import { beatOffsets } from './swing.js';
 import { suggestedFinger } from './autofinger.js';
@@ -1208,7 +1208,7 @@ function drawVerticalPiano(ctx, minPitch, maxPitch, noteH, h, pitchesWithNotes) 
     ctx.textBaseline = 'middle';
     for (let p = minPitch; p <= maxPitch; p++) {
       if (p % 12 !== 0) continue;
-      ctx.fillText(`C${Math.floor(p / 12) - 1}`, pw - 4, rowY(p) + noteH / 2);
+      ctx.fillText(midiToNoteWithOctave(p, state.ui.middleC), pw - 4, rowY(p) + noteH / 2);
     }
     ctx.textBaseline = 'alphabetic';
   }

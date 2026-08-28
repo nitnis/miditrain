@@ -182,6 +182,7 @@ function applyStateToControls() {
   for (const sel of quantizeSelects()) sel.value = String(ui.quantize);
   document.getElementById('swing-select').value = ui.swing;
   syncSwingAmount();
+  document.getElementById('middle-c-select').value = String(ui.middleC);
   document.getElementById('learn-sections').value = String(ui.learnSectionBars);
   syncRecordHand();
   syncPracticeHand();
@@ -1335,7 +1336,7 @@ function showTranscribeProgress(stage, fraction) {
 }
 
 function describeRange(lo, hi) {
-  return `${midiToNoteWithOctave(lo)} – ${midiToNoteWithOctave(hi)}`;
+  return `${midiToNoteWithOctave(lo, state.ui.middleC)} – ${midiToNoteWithOctave(hi, state.ui.middleC)}`;
 }
 
 function syncTranscribeTempo() {
@@ -1963,6 +1964,16 @@ function bindToolbar() {
     update('ui.swing', e.target.value);
     scheduleSheetRender();
   };
+  // Naming only: the pitch, the key and the exported MIDI are untouched, so
+  // nothing needs rebuilding beyond whatever is currently drawing labels.
+  const middleCSelect = document.getElementById('middle-c-select');
+  middleCSelect.value = String(state.ui.middleC);
+  middleCSelect.onchange = (e) => {
+    update('ui.middleC', parseInt(e.target.value, 10));
+    scheduleSheetRender();
+    showToast(`Middle C is now ${midiToNoteWithOctave(60, state.ui.middleC)}`, 1400);
+  };
+
   const amountSlider = document.getElementById('swing-amount');
   amountSlider.value = String(SWING_STOPS.indexOf(state.ui.swingAmount));
   amountSlider.oninput = (e) => setSwingAmount(SWING_STOPS[Number(e.target.value)]);
@@ -3117,7 +3128,7 @@ function buildVoicingCaption(pitches) {
   const sorted = [...new Set(pitches)].sort((a, b) => a - b);
   return sorted
     .map((p, i) => {
-      const name = midiToNoteWithOctave(p);
+      const name = midiToNoteWithOctave(p, state.ui.middleC);
       return i === 0 ? `<span class="voicing-bass">${name}</span>` : name;
     })
     .join(' · ');
