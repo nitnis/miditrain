@@ -53,6 +53,10 @@ const _state = {
     swing: 'auto',          // 'auto' | 'on' | 'off' — write uneven eighths straight, under a swing marking
     swingAmount: 'medium',  // 'light' | 'medium' | 'hard' — how far the offbeat is pushed back
     keySignature: 'C',
+    // The octave number shown against middle C. Four is scientific pitch, which
+    // is what the score and this app count in; three is what Yamaha keyboards
+    // and Logic show, so a player can make the labels match their own gear.
+    middleC: 4,
     transpose: 0,           // semitones the piece has been shifted by, for the slider
     editorSelectedNotes: new Set(), // selected note IDs in piano roll editor
   },
