@@ -143,9 +143,23 @@ export function midiToNoteName(midi, useFlats = false) {
   return names[midi % 12];
 }
 
-export function midiToNoteWithOctave(midi) {
+// Which octave number middle C gets, and there is no single right answer.
+//
+// Scientific pitch notation ties the numbering to frequency — A4 is 440 Hz, so
+// middle C is C4 — and that is what this app counts in, along with most
+// notation software and everything written about acoustics. MIDI itself never
+// settled it: the specification numbers the keys 0 to 127 and says nothing
+// about octaves, which is why Yamaha called middle C "C3" and the instruments
+// and software that followed them still do. Logic Pro shows C3 out of the box.
+//
+// So a player reading their own gear sees every octave one lower than this app
+// does, and neither is wrong. The key, the pitch and the MIDI number are the
+// same either way; only the label moves.
+export const SCIENTIFIC_MIDDLE_C = 4;
+
+export function midiToNoteWithOctave(midi, middleC = SCIENTIFIC_MIDDLE_C) {
   const name = NOTE_NAMES_SHARP[midi % 12];
-  const octave = Math.floor(midi / 12) - 1;
+  const octave = Math.floor(midi / 12) - 1 + (middleC - SCIENTIFIC_MIDDLE_C);
   return `${name}${octave}`;
 }
 
