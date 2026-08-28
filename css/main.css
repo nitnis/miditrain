@@ -1671,3 +1671,50 @@ input[type="number"] { -webkit-appearance: none; }
 
 #practice-hand.left  { border-color: #f472b6; color: #f472b6; }
 #practice-hand.right { border-color: #3d8bfd; color: #3d8bfd; }
+
+
+/* ── Transcribing an uploaded recording ────────────────────────────────── */
+.transcribe-box { max-width: 520px; }
+
+.transcribe-bar {
+  height: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 18px 0 10px;
+}
+.transcribe-bar span {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 0.2s linear;
+}
+.transcribe-stage { font-size: 12px; color: var(--muted); }
+.transcribe-progress.hidden, .transcribe-report.hidden { display: none; }
+
+.transcribe-facts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin: 18px 0 16px;
+}
+.transcribe-facts dt {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.8px;
+  color: var(--muted); text-transform: uppercase; margin-bottom: 3px;
+}
+.transcribe-facts dd { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.transcribe-tempo {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface);
+}
+.transcribe-note { font-size: 11px; color: var(--muted); margin-left: auto; text-align: right; }
+
+.transcribe-caveat {
+  font-size: 12px; line-height: 1.5; color: var(--muted);
+  margin-top: 14px; padding-left: 10px;
+  border-left: 2px solid var(--border);
+}
