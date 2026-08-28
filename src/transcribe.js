@@ -65,7 +65,8 @@ const SUBTRACT_STRENGTH = 0.7;
 export const TUNING = {
   gateHi: 0.40, gateLo: 0.18, reattack: 0.16,
   voiceFloor: VOICE_FLOOR, subtract: SUBTRACT_STRENGTH,
-  minFrames: 4, restrikeLag: 2, presence: 0.6, dip: 0.75,
+  minFrames: 4, restrikeLag: 2, presence: 0.6, dip: 0.75, restrikeSpan: 4,
+  reattackFloor: 0.14,
 };
 
 // ── Where each pitch's partials live ─────────────────────────────────────────
@@ -254,6 +255,12 @@ const PLATEAU_LOOKAHEAD = 10;   // ~230 ms, long enough to see the note settle
 // an unbounded search walks back through it to the start of the piece.
 const BACKTRACK_LIMIT = 5;
 
+// How far back to look for the rise that dates a second strike. Half the fine
+// window, and the same for both bands: this is not asking how long a note takes
+// to speak, it is asking when the level turned upward, and that moment is the
+// strike whichever band heard it.
+
+
 // How many frames a note takes to come into view, which is not one number.
 //
 // Everything about reading an attack — how far back the half-way point can be,
@@ -298,7 +305,7 @@ export function tracksToNotes(salience, frames, pitches, frameMs, reference, ori
   const onsetOf = (p, gateFrame, ramp) => onsetFrame(salience, frames, pitches, p, gateFrame, ramp);
   const hi = reference * TUNING.gateHi;
   const lo = reference * TUNING.gateLo;
-  const jump = reference * TUNING.reattack;
+  const jump = reference * TUNING.reattackFloor;
   const notes = [];
   let id = 0;
 
@@ -359,8 +366,30 @@ export function tracksToNotes(salience, frames, pitches, frameMs, reference, ori
       // back, so the climb itself never qualifies — while it is climbing, the
       // trough climbs with it — and a note that decays and is struck again does,
       // however long its instrument takes to speak.
+      // Two conditions, and each rules out a different mistake. Against the
+      // trough since the peak, so a first attack never qualifies — while it
+      // climbs the trough climbs with it — which is what stopped every bass
+      // note being cut in two partway up its own long ramp. And across a fixed
+      // span as well, which is what says *when*: the trough condition is
+      // satisfied the moment the level clears its low point, and a note struck
+      // again does not start there. Timed by the trough alone, every re-strike
+      // was reported early enough to miss the note it belonged to.
+      const back = salience[Math.max(0, f - TUNING.restrikeSpan) * pitches + p];
+      // How big the rise has to be: a proportion of this note's own peak, or an
+      // absolute share of the recording's loudest, whichever is larger.
+      //
+      // The floor is what quiet notes are held to, and the proportion only
+      // binds above about seven eighths of the reference — so in practice this
+      // asks more of loud notes than of quiet ones, and that asymmetry is the
+      // point. A loud note's sustain wanders by more in absolute terms than a
+      // quiet note's does, so a single absolute bar is simultaneously too tight
+      // to let a quiet inner voice be struck again and too loose to stop a loud
+      // one wobbling into two. Scaling the bar with the note stops the second
+      // without giving up the first.
+      const bar = Math.max(peak * TUNING.reattack, jump);
       const again = v >= hi && v >= prev
-                    && (v - trough) >= jump && (peak - trough) >= jump * TUNING.dip;
+                    && (v - trough) >= bar && (peak - trough) >= bar * TUNING.dip
+                    && (v - back) >= bar;
       if (again && f - start >= TUNING.minFrames) {
         close(f); start = f; peak = v; trough = v; quiet = 0; restruck = true; continue;
       }
