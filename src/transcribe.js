@@ -411,6 +411,21 @@ export function tracksToNotes(salience, frames, pitches, frameMs, reference, ori
 
 // What counts as loud, for this recording. A high percentile rather than the
 // maximum, so one clipped chord does not set the scale for the whole piece.
+//
+// One number for the whole recording is a real limitation and not an oversight.
+// A bass line under a melody was measured sitting at a third of this level for
+// half a minute — plainly audible, a full harmonic series, verified in the
+// samples — and never reached the four tenths that opens the gate, so not one
+// of its notes was written down.
+//
+// Letting the level follow the music was tried: a four-second running mean of
+// the loudest thing per frame, floored at a fraction of this. It finds those
+// notes and costs more than they are worth. Swept from a tenth to none, it
+// moved unexplained energy in a real recording by half a point while taking
+// chroma, onset agreement and round-trip agreement all down with it, and the
+// rendered test set fell from 0.90 to 0.88. The gate is not what should be
+// adapting — a threshold that chases the music finds notes in whatever the
+// music is quiet enough to leave behind.
 export function referenceLevel(salience) {
   const sample = [];
   const stride = Math.max(1, Math.floor(salience.length / 40000));
