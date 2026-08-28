@@ -23,6 +23,7 @@ import { loopBars } from './range.js';
 import { inferHands } from './hands.js';
 import { SCALES, CHORDS, LICKS, PATTERNS, HANDS, DIRECTIONS, NOTE_VALUES, ROOTS, buildExercise } from './scales.js';
 import { SWING_AMOUNTS } from './quantizer.js';
+import { looksLikeAudio, transcribeAudioFile } from './audio-import.js';
 import {
   listProfiles, current as currentProfile, switchProfile, createProfile, deleteProfile,
   adoptProfile, sectionKey, sectionTempo, rememberSectionTempo, setLearningPosition,
@@ -1303,14 +1304,121 @@ function importComposition() {
   document.getElementById('import-file').click();
 }
 
-// One Import button for both formats. A MIDI file announces itself in its
-// first four bytes, which is more reliable than trusting the extension.
+// One Import button for every format. A MIDI file announces itself in its first
+// four bytes, which is more reliable than trusting the extension; audio is
+// asked about first, because a .wav read as text is nonsense rather than an
+// error. Audio returns null here and is handled on its own path, since it is
+// the one import that takes seconds and can be wrong.
 async function readImportedFile(file) {
+  if (looksLikeAudio(file)) return null;
   const head = new Uint8Array(await file.slice(0, 4).arrayBuffer());
   const isMidi = String.fromCharCode(...head) === 'MThd';
   if (isMidi) return midiToComposition(await file.arrayBuffer());
   if (/\.midi?$/i.test(file.name)) throw new Error('That .mid file does not start with a MIDI header');
   return compositionFromJSON(await file.text());
+}
+
+// ── Listening to a recording ─────────────────────────────────────────────────
+
+// Transcription is a guess that takes a few seconds, so unlike every other
+// import it shows its working and asks before replacing what is loaded.
+let pendingTranscription = null;
+
+const STAGE_TEXT = {
+  decoding: 'Decoding the file…',
+  listening: 'Listening for notes…',
+};
+
+function showTranscribeProgress(stage, fraction) {
+  document.getElementById('transcribe-stage').textContent = STAGE_TEXT[stage] || 'Working…';
+  document.getElementById('transcribe-fill').style.width = `${Math.round((fraction || 0) * 100)}%`;
+}
+
+function describeRange(lo, hi) {
+  return `${midiToNoteWithOctave(lo)} – ${midiToNoteWithOctave(hi)}`;
+}
+
+function syncTranscribeTempo() {
+  if (!pendingTranscription) return;
+  tempoOctave = 0;
+  const { composition, report } = pendingTranscription;
+  document.getElementById('tr-tempo').value = String(composition.tempo);
+  // Confidence is the share of beats that had something on them, so a clean
+  // reading sits at or near 1 and anything much below it means the pulse had
+  // gaps to guess across — which is exactly when the barlines are worth a look.
+  const shaky = report.tempoConfidence < 0.8;
+  document.getElementById('tr-tempo-note').textContent = shaky
+    ? 'the beat was hard to find here — check the barlines'
+    : 'halve or double it if the bars look long or short';
+}
+
+async function importAudio(file) {
+  const modal = document.getElementById('transcribe-modal');
+  const progress = document.getElementById('transcribe-progress');
+  const report = document.getElementById('transcribe-report');
+  const keep = document.getElementById('btn-transcribe-keep');
+
+  pendingTranscription = null;
+  modal.classList.remove('hidden');
+  progress.classList.remove('hidden');
+  report.classList.add('hidden');
+  keep.classList.add('hidden');
+  document.getElementById('transcribe-title').textContent = 'Listening…';
+  document.getElementById('transcribe-sub').textContent = file.name;
+  showTranscribeProgress('decoding', 0);
+
+  try {
+    const result = await transcribeAudioFile(file, {
+      onProgress: ({ stage, fraction }) => showTranscribeProgress(stage, fraction),
+    });
+    pendingTranscription = result;
+
+    document.getElementById('transcribe-title').textContent = 'Here is what it heard';
+    document.getElementById('transcribe-sub').textContent =
+      'Nothing has changed yet — look it over first.';
+    document.getElementById('tr-notes').textContent = String(result.report.noteCount);
+    document.getElementById('tr-range').textContent =
+      describeRange(result.report.lowest, result.report.highest);
+    document.getElementById('tr-length').textContent =
+      `${Math.round(result.report.seconds)}s`;
+    syncTranscribeTempo();
+
+    progress.classList.add('hidden');
+    report.classList.remove('hidden');
+    keep.classList.remove('hidden');
+  } catch (err) {
+    modal.classList.add('hidden');
+    pendingTranscription = null;
+    showToast(err.message || 'Could not read that audio', 4000);
+  }
+}
+
+function keepTranscription() {
+  if (!pendingTranscription) return;
+  const { composition } = pendingTranscription;
+  composition.tempo = Math.max(20, Math.min(300,
+    Number(document.getElementById('tr-tempo').value) || composition.tempo));
+  document.getElementById('transcribe-modal').classList.add('hidden');
+  const song = { ...composition, id: `heard-${Date.now()}` };
+  pendingTranscription = null;
+  loadComposition(song);
+  emit('transport:noteschanged', state.composition.notes);
+}
+
+// Halving and doubling step around what was detected rather than around the
+// last rounded value. Compounding the rounding turns 151 into 76 into 152, and
+// a control that does not come back to where it started is a control nobody
+// trusts.
+let tempoOctave = 0;
+
+function nudgeTranscribeTempo(direction) {
+  if (!pendingTranscription) return;
+  const base = pendingTranscription.report.tempo;
+  const next = tempoOctave + direction;
+  const shifted = base * Math.pow(2, next);
+  if (shifted < 20 || shifted > 300) return;
+  tempoOctave = next;
+  document.getElementById('tr-tempo').value = String(Math.round(shifted));
 }
 
 function openMidiInfo() {
@@ -2111,6 +2219,7 @@ function bindCompositionControls() {
     importInput.value = '';
     if (!file) return;
     try {
+      if (looksLikeAudio(file)) { await importAudio(file); return; }
       const imported = await readImportedFile(file);
       if (state.composition.notes.length &&
           !confirm('Replace the current composition with the imported one?')) return;
@@ -2216,6 +2325,14 @@ function bindModalControls() {
   document.getElementById('btn-close-browser').onclick = () => {
     document.getElementById('song-browser-modal').classList.add('hidden');
   };
+  document.getElementById('btn-transcribe-cancel').onclick = () => {
+    document.getElementById('transcribe-modal').classList.add('hidden');
+    pendingTranscription = null;
+  };
+  document.getElementById('btn-transcribe-keep').onclick = keepTranscription;
+  document.getElementById('tr-halve').onclick = () => nudgeTranscribeTempo(-1);
+  document.getElementById('tr-double').onclick = () => nudgeTranscribeTempo(1);
+
   document.getElementById('btn-close-accuracy').onclick = () => {
     document.getElementById('accuracy-modal').classList.add('hidden');
     lastTrainingBars = null;

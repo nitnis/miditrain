@@ -118,9 +118,14 @@ function peakFor(velocity) {
   return 0.04 + v * 0.11;
 }
 
-// Oscillator → lowpass → envelope gain → master
-function createVoice(pitch, velocity, when) {
-  const c = getAudioContext();
+// Oscillator → lowpass → envelope gain → wherever it is going.
+//
+// Takes its context rather than reaching for the live one, so the same note can
+// be built on an OfflineAudioContext and rendered to a buffer. That matters
+// because the only honest way to test transcription is to feed it audio this
+// app made, and a second copy of the voice for the test rig would be a second
+// thing to drift.
+export function makeVoice(c, dest, pitch, velocity, when) {
   const osc = c.createOscillator();
   const filter = c.createBiquadFilter();
   const gain = c.createGain();
@@ -137,18 +142,22 @@ function createVoice(pitch, velocity, when) {
 
   osc.connect(filter);
   filter.connect(gain);
-  gain.connect(getNoteBus());
+  gain.connect(dest);
 
-  const voice = { osc, gain, filter, peak: peakFor(velocity) };
-  osc.addEventListener('ended', () => {
-    try { osc.disconnect(); filter.disconnect(); gain.disconnect(); } catch (_) {}
+  osc.start(when);
+  return { osc, gain, filter, peak: peakFor(velocity) };
+}
+
+function createVoice(pitch, velocity, when) {
+  const voice = makeVoice(getAudioContext(), getNoteBus(), pitch, velocity, when);
+  voice.osc.addEventListener('ended', () => {
+    try { voice.osc.disconnect(); voice.filter.disconnect(); voice.gain.disconnect(); } catch (_) {}
     scheduledVoices.delete(voice);
   });
-  osc.start(when);
   return voice;
 }
 
-function applyAttack(voice, when) {
+export function applyAttack(voice, when) {
   const g = voice.gain.gain;
   const sustain = Math.max(voice.peak * SUSTAIN_RATIO, MIN_GAIN);
   g.cancelScheduledValues(when);
@@ -252,11 +261,14 @@ function pump() {
   scheduledUpToMs = horizonMs;
 }
 
-// The whole envelope is planned up front against `when`. Reading the live gain
-// value to build a release for a note that has not started yet is what stepped
-// the gain from peak straight to silence and clicked at every note edge.
-function scheduleVoice(pitch, velocity, when, durSec) {
-  const voice = createVoice(pitch, velocity, when);
+// A whole note, envelope and all, planned up front against `when`. Reading the
+// live gain value to build a release for a note that has not started yet is
+// what stepped the gain from peak straight to silence and clicked at every
+// note edge.
+//
+// Exported for the offline renderer, which needs exactly this and on its own
+// context — so what a transcription test listens to is what the speakers play.
+export function playNoteAt(voice, when, durSec) {
   const sustain = applyAttack(voice, when);
   const g = voice.gain.gain;
 
@@ -266,7 +278,12 @@ function scheduleVoice(pitch, velocity, when, durSec) {
   g.setValueAtTime(sustain, releaseAt);
   g.exponentialRampToValueAtTime(MIN_GAIN, releaseAt + RELEASE_S);
   voice.osc.stop(releaseAt + RELEASE_S + 0.05);
+  return releaseAt + RELEASE_S + 0.05;
+}
 
+function scheduleVoice(pitch, velocity, when, durSec) {
+  const voice = createVoice(pitch, velocity, when);
+  playNoteAt(voice, when, durSec);
   scheduledVoices.add(voice);
   return voice;
 }
