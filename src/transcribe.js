@@ -65,7 +65,7 @@ const SUBTRACT_STRENGTH = 0.7;
 export const TUNING = {
   gateHi: 0.40, gateLo: 0.18, reattack: 0.16,
   voiceFloor: VOICE_FLOOR, subtract: SUBTRACT_STRENGTH,
-  minFrames: 4, restrikeLag: 2,
+  minFrames: 4, restrikeLag: 2, presence: 0.6, dip: 0.75,
 };
 
 // ── Where each pitch's partials live ─────────────────────────────────────────
@@ -113,11 +113,35 @@ function partialEnergy(spec, lo, hi) {
 
 // ── One frame ────────────────────────────────────────────────────────────────
 
+// A pitch is only sounding if something is at its own fundamental.
+//
+// The score is an average over the partial series, which is what makes it a
+// good detector and also what lets a pitch score well on partials it does not
+// own. Every note shares its whole series with the note an octave below, so a
+// loud C4 hands C3 four of its six partials, and C3 comes back as a chord tone
+// nobody played. Peeling is supposed to settle that and cannot: it subtracts
+// only after a pitch has won, and the ghost's evidence is what the winner left
+// behind.
+//
+// So the fundamental gets a vote. Not a demand that it dominate — on a real
+// piano a low string's first partial is often weaker than its second, which is
+// the very thing that had this transcriber hearing a bass F an octave high — but
+// a demand that it be there at all, with the score tapering off as it goes
+// missing rather than falling off a cliff.
 function scorePitch(entry, fine, coarse) {
   const spec = entry.coarse ? coarse : fine;
+  if (!entry.partials.length) return 0;
   let acc = 0;
-  for (const p of entry.partials) acc += p.weight * partialEnergy(spec, p.lo, p.hi);
-  return acc / entry.weightSum;
+  let f0 = 0;
+  for (let i = 0; i < entry.partials.length; i++) {
+    const p = entry.partials[i];
+    const e = partialEnergy(spec, p.lo, p.hi);
+    if (i === 0) f0 = e;
+    acc += p.weight * e;
+  }
+  const score = acc / entry.weightSum;
+  const need = score * TUNING.presence;
+  return need > 0 && f0 < need ? score * (f0 / need) : score;
 }
 
 // How loud this pitch's fundamental actually is. Not the same number as its
@@ -202,13 +226,13 @@ export function computeSalience(pcm, onProgress) {
 
 const MAX_GAP_FRAMES = 1;    // a single frame's dip is the envelope, not a rest
 
-// How long a strike takes to show up: the same half-window ramp an onset climbs,
-// because a note struck again is an onset that happens to land on a pitch that
-// was already sounding. Comparing against the frame before misses it entirely —
-// the rise is real, but spread over four frames it is a quarter of its size in
-// any one of them, and a threshold able to see that quarter splits every held
-// note in the piece.
-const RAMP_FRAMES = 4;
+// How long a strike takes to show up is the same half-window ramp an onset
+// climbs, because a note struck again is an onset that happens to land on a
+// pitch that was already sounding. Comparing against the frame before misses it
+// entirely — the rise is real, but spread across the ramp it is a fraction of
+// its size in any one frame, and a threshold able to see that fraction splits
+// every held note in the piece. `rampFrames` below has the length, which is not
+// the same for both bands.
 
 // Where in the frame the note actually started.
 //
@@ -230,9 +254,28 @@ const PLATEAU_LOOKAHEAD = 10;   // ~230 ms, long enough to see the note settle
 // an unbounded search walks back through it to the start of the piece.
 const BACKTRACK_LIMIT = 5;
 
-function onsetFrame(salience, frames, pitches, p, gateFrame) {
+// How many frames a note takes to come into view, which is not one number.
+//
+// Everything about reading an attack — how far back the half-way point can be,
+// how long to wait for the level to settle, how wide a rise has to be measured
+// to mean a second strike — is a fraction of the window that saw it. The bass
+// is analysed through a 743 ms window against the treble's 186, so its notes
+// ramp up over four times as many frames.
+//
+// Using the treble's figure for both is what split every bass note in two: a
+// rise measured across four frames, a third of the way up a sixteen-frame ramp,
+// is indistinguishable from the same note being struck again.
+const FRAME_MS = (HOP / RATE) * 1000;
+const FINE_RAMP = Math.round((FINE_WINDOW / RATE) * 500 / FRAME_MS);
+const COARSE_RAMP = Math.round((COARSE_WINDOW / COARSE_RATE) * 500 / FRAME_MS);
+
+function rampFrames(pitch) {
+  return pitch < CROSSOVER_MIDI ? COARSE_RAMP : FINE_RAMP;
+}
+
+function onsetFrame(salience, frames, pitches, p, gateFrame, ramp) {
   let plateau = 0;
-  const until = Math.min(frames, gateFrame + PLATEAU_LOOKAHEAD);
+  const until = Math.min(frames, gateFrame + Math.max(PLATEAU_LOOKAHEAD, ramp + 2));
   for (let f = gateFrame; f < until; f++) {
     const v = salience[f * pitches + p];
     if (v > plateau) plateau = v;
@@ -241,7 +284,7 @@ function onsetFrame(salience, frames, pitches, p, gateFrame) {
   // Back up to before the gate opened: on a slow ramp the half-way point can be
   // a frame or two behind the threshold crossing
   let f = gateFrame;
-  const floor = Math.max(0, gateFrame - BACKTRACK_LIMIT);
+  const floor = Math.max(0, gateFrame - Math.max(BACKTRACK_LIMIT, ramp));
   while (f > floor && salience[(f - 1) * pitches + p] >= half) f--;
   // ...and forward, for the usual case where the gate opened below half
   while (f < until && salience[f * pitches + p] < half) f++;
@@ -252,7 +295,7 @@ function onsetFrame(salience, frames, pitches, p, gateFrame) {
 // sits in the recording, which is the middle of its window rather than its
 // start. Leaving that out reports every onset most of a window early.
 export function tracksToNotes(salience, frames, pitches, frameMs, reference, originMs = 0) {
-  const onsetOf = (p, gateFrame) => onsetFrame(salience, frames, pitches, p, gateFrame);
+  const onsetOf = (p, gateFrame, ramp) => onsetFrame(salience, frames, pitches, p, gateFrame, ramp);
   const hi = reference * TUNING.gateHi;
   const lo = reference * TUNING.gateLo;
   const jump = reference * TUNING.reattack;
@@ -260,8 +303,10 @@ export function tracksToNotes(salience, frames, pitches, frameMs, reference, ori
   let id = 0;
 
   for (let p = 0; p < pitches; p++) {
+    const ramp = rampFrames(p + LOWEST_PITCH);
     let start = -1;
     let peak = 0;
+    let trough = 0;
     let quiet = 0;
     // Whether this segment began from silence or from the note being struck
     // again while it was still sounding. The two need different answers about
@@ -277,7 +322,7 @@ export function tracksToNotes(salience, frames, pitches, frameMs, reference, ori
         // note struck again never drops below half of anything, so the search
         // walks back as far as it is allowed and reports the strike early by
         // exactly that. Here the strike itself is the best evidence there is.
-        const began = restruck ? Math.max(0, start - TUNING.restrikeLag) : onsetOf(p, start);
+        const began = restruck ? Math.max(0, start - TUNING.restrikeLag) : onsetOf(p, start, ramp);
         notes.push({
           id: `tr-${id++}`,
           pitch: p + LOWEST_PITCH,
@@ -295,25 +340,29 @@ export function tracksToNotes(salience, frames, pitches, frameMs, reference, ori
       const prev = f > 0 ? salience[(f - 1) * pitches + p] : 0;
 
       if (start < 0) {
-        if (v >= hi) { start = f; peak = v; quiet = 0; restruck = false; }
+        if (v >= hi) { start = f; peak = v; trough = v; quiet = 0; restruck = false; }
         continue;
       }
 
       // Struck again without ever stopping — which is most of what a repeated
       // note in a held chord looks like, since the gate never gets a chance to
-      // close. Measured across the ramp, and only counted at the top of it, so
-      // one strike does not read as four.
+      // close.
       //
-      // As a ratio rather than a difference, because that is what the thing
-      // being looked for actually is: a note re-struck goes from its sustain
-      // back to its peak, and that is the same proportion however quiet the
-      // note is. An absolute threshold big enough not to fire on the loud notes
-      // can never see it happen to a quiet inner voice.
-      const idx = Math.max(0, f - RAMP_FRAMES) * pitches + p;
-      const rise = v - salience[idx];
-      const again = v >= hi && v >= prev && rise >= jump;
+      // What makes it a second strike is that the level fell and came back. A
+      // rise on its own is not enough and was the whole trouble: a note's first
+      // attack is a rise too, and measuring it across any fixed span reads as a
+      // strike partway up. That span was half the treble's window, and the bass
+      // is heard through a window four times longer, so every bass note climbed
+      // for long enough to be caught rising and was cut in two.
+      //
+      // Against the trough since the peak rather than a fixed number of frames
+      // back, so the climb itself never qualifies — while it is climbing, the
+      // trough climbs with it — and a note that decays and is struck again does,
+      // however long its instrument takes to speak.
+      const again = v >= hi && v >= prev
+                    && (v - trough) >= jump && (peak - trough) >= jump * TUNING.dip;
       if (again && f - start >= TUNING.minFrames) {
-        close(f); start = f; peak = v; quiet = 0; restruck = true; continue;
+        close(f); start = f; peak = v; trough = v; quiet = 0; restruck = true; continue;
       }
 
       if (v < lo) {
@@ -321,7 +370,8 @@ export function tracksToNotes(salience, frames, pitches, frameMs, reference, ori
         if (quiet > MAX_GAP_FRAMES) { close(f - quiet + 1); quiet = 0; }
       } else {
         quiet = 0;
-        if (v > peak) peak = v;
+        if (v > peak) { peak = v; trough = v; }
+        else if (v < trough) trough = v;
       }
     }
     close(frames);

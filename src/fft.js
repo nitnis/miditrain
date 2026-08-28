@@ -82,12 +82,38 @@ export function hann(n) {
   return w;
 }
 
+// What a windowed transform does to the height of a sinusoid.
+//
+// A transform of length n gives a unit sinusoid a peak of half the window's
+// sum, so a longer window reports a louder note for the same sound. That is
+// harmless when everything is measured with one window and quietly wrong when
+// it is not: this analyser runs two, and a note read with the shorter one
+// scored less than half of what the same note scored with the longer, purely
+// for being in the band that uses it. Dividing it out puts both on the scale of
+// the signal itself, where a unit sinusoid reads one whatever measured it.
+const windowGains = new Map();
+
+function hannGain(n) {
+  let gain = windowGains.get(n);
+  if (gain === undefined) {
+    const w = hann(n);
+    let sum = 0;
+    for (let i = 0; i < n; i++) sum += w[i];
+    gain = sum / 2;
+    windowGains.set(n, gain);
+  }
+  return gain;
+}
+
 // Magnitude spectrum of one windowed frame of real samples, first half only —
 // the rest is the mirror image and carries nothing a real signal has not
 // already said. `out` is reused across frames rather than reallocated.
+//
+// Calibrated in amplitude, so the numbers mean the same thing at any n.
 export function magnitudes(samples, at, n, out, scratchRe, scratchIm) {
   const plan = fftPlan(n);
   const w = hann(n);
+  const gain = hannGain(n);
   // A window may reach past either end of the signal — before it, for the frame
   // centred on the very first sample. Silence outside is what a recording that
   // began a moment earlier would have held.
@@ -101,7 +127,7 @@ export function magnitudes(samples, at, n, out, scratchRe, scratchIm) {
 
   const half = n >> 1;
   for (let k = 0; k <= half; k++) {
-    out[k] = Math.sqrt(scratchRe[k] * scratchRe[k] + scratchIm[k] * scratchIm[k]);
+    out[k] = Math.sqrt(scratchRe[k] * scratchRe[k] + scratchIm[k] * scratchIm[k]) / gain;
   }
   return out;
 }
