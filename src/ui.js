@@ -1752,9 +1752,11 @@ let lastTrainingBars = null;
 // The identity of the run in progress, and the tempo its note times are in
 let trainingRunKey = null;
 let trainingRunTempo = 120;
-// What stood before the run that just finished, and whether it beat it
+// What stood before the run that just finished, whether it beat it, and
+// whether it counted at all
 let bestBefore = null;
 let lastWasBest = false;
+let lastAbandoned = false;
 
 // The rate the notes actually arrive at. The tempo is what they are written at;
 // the speed slider is a second multiplier on top of it, and a passage taken at
@@ -1776,8 +1778,15 @@ function keyForRun(bars) {
 function recordBest(results) {
   bestBefore = null;
   lastWasBest = false;
+  lastAbandoned = false;
   // A run with nothing in it to grade is not an attempt at anything
   if (!trainingRunKey || !results.total) return;
+
+  // A run stopped before the end is not one either. Everything past where it
+  // stopped counts as missed, so its score says when the player gave up rather
+  // than how they played — and on a first attempt it would stand as a best that
+  // every later run "beats" for no reason at all.
+  if (!results.completed) { lastAbandoned = true; return; }
 
   bestBefore = bestFor(trainingRunKey);
   lastWasBest = rememberBest(trainingRunKey, {
@@ -3527,7 +3536,7 @@ function showBestLine() {
   const best = trainingRunKey ? bestFor(trainingRunKey) : null;
   const bpm = effectiveBpm();
 
-  if (!best) {
+  if (!best && !lastAbandoned) {
     line.classList.add('hidden');
     replayBtn.classList.add('hidden');
     return;
@@ -3535,7 +3544,13 @@ function showBestLine() {
 
   line.classList.remove('hidden');
   line.classList.toggle('fresh', lastWasBest);
-  if (lastWasBest) {
+  if (lastAbandoned) {
+    // Said rather than left to be noticed: a run that scored well on the part
+    // that was played and then vanished without setting anything looks broken.
+    line.innerHTML = best
+      ? `Stopped early, so this one is not kept · your best at ${bpm} BPM is <b>${best.score}%</b>`
+      : 'Stopped before the end, so this one is not kept as a best';
+  } else if (lastWasBest) {
     line.innerHTML = bestBefore
       ? `New best at ${bpm} BPM — <b>${best.score}%</b>, past your <b>${bestBefore.score}%</b>`
       : `Your first time through at ${bpm} BPM — <b>${best.score}%</b> to beat`;
@@ -3546,7 +3561,7 @@ function showBestLine() {
 
   // Only when it is a different run from the one already on the screen — after
   // a new best the two are the same take, and "Replay my take" is that button.
-  const offerBest = !lastWasBest && Boolean(best.take);
+  const offerBest = !lastWasBest && Boolean(best?.take);
   replayBtn.classList.toggle('hidden', !offerBest);
   if (offerBest) replayBtn.onclick = replayBest;
 }

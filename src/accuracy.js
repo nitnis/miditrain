@@ -255,15 +255,30 @@ function emitProgress() {
   });
 }
 
+// Whether the run was played through or cut short.
+//
+// A run stopped halfway is not an attempt at the passage — everything past
+// where it stopped is marked missed, and the score it comes out with is a
+// measure of when the player gave up rather than of how they played. Read from
+// where the playhead had got to at the moment it stopped: past the last note's
+// due time, every note has had its chance and the passage has been played,
+// whatever became of it. `stop()` holds the position, and `stopAndRewind`
+// rewinds only after the event this is read on, so it is still there.
+function playedThrough() {
+  if (!expectedNotes.length) return false;
+  return state.transport.currentTime >= expectedNotes[expectedNotes.length - 1].startTimeMs;
+}
+
 export function stopAccuracy() {
   cleanupFns.forEach(fn => fn());
   cleanupFns = [];
 
+  const completed = playedThrough();
   for (const n of expectedNotes) {
     if (n.grade === null) n.grade = 'miss';
   }
 
-  const results = computeResults();
+  const results = { ...computeResults(), completed };
   update('accuracy.results', results);
   update('accuracy.active', false);
   emit('accuracy:complete', results);

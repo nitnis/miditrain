@@ -53,6 +53,22 @@ await page.evaluate(async () => {
     emit('transport:noteschanged', notes);
   };
 
+  // A run given up on partway: press a couple of keys, then Stop
+  T.abandon = (presses, stopAt) => new Promise((resolve) => {
+    const pending = [...presses];
+    const tick = (now) => {
+      while (pending.length && pending[0][0] <= now) {
+        const pitch = pending.shift()[1];
+        emit('midi:noteon', { pitch, velocity: 90 });
+      }
+      if (now >= stopAt) { offTick(); document.getElementById('btn-stop').click(); }
+    };
+    const offTick = on('transport:tick', tick);
+    const offDone = on('accuracy:complete', (results) => { offDone(); resolve(results); });
+    if (!state.ui.trainMode) document.getElementById('btn-train-mode').click();
+    document.getElementById('btn-play').click();
+  });
+
   // Loop bars are how this app names a section
   T.section = (startBar, endBar) => {
     update('transport.loopStartBar', startBar);
@@ -91,6 +107,8 @@ await page.evaluate(async () => {
 const setup = () => page.evaluate(() => window.__t.setup());
 const section = (a, b) => page.evaluate(([s, e]) => window.__t.section(s, e), [a, b]);
 const run = (presses) => page.evaluate(p => window.__t.run(p), presses);
+const abandon = (presses, stopAt) =>
+  page.evaluate(([p, s]) => window.__t.abandon(p, s), [presses, stopAt]);
 const profile = () => page.evaluate(async () =>
   (await import('/src/profiles.js')).current());
 
@@ -104,8 +122,8 @@ let r;
 await section(1, 1);
 r = await run([...CLEAN, [2200, 71]]);
 check('clean run, one key struck after the section: no extras', r.extra, 0);
-check('...and it still scores as a clean run', r.score, 100);
-check('...with all four notes graded', [r.perfect + r.good, r.missed], [4, 0]);
+check('...with all four notes graded and none missed', [r.perfect + r.good, r.missed], [4, 0]);
+check('...so nothing at all was charged against it', r.penalty, 0);
 
 // The same keypress inside the section is what an extra is
 r = await run([...CLEAN, [1250, 71]]);
@@ -121,7 +139,9 @@ r = await run([
   [3900, 59],   // 400 ms past the last note: too late to be it, too late to count
 ]);
 check('whole piece: a key past the last note is not an extra', r.extra, 0);
-check('...and the whole piece scored clean', r.score, 100);
+// Graded rather than scored: the subject here is what was charged, and the
+// first press of a run lands on whichever tick the transport gets to first
+check('...and every note of the piece was played', [r.missed, r.perfect + r.good], [0, 8]);
 
 // ── the take says which keypress was which ───────────────────────────────────
 check('the take marks it as after the run', await page.evaluate(async () => {
@@ -137,9 +157,25 @@ await page.evaluate(async () =>
   (await import('/src/profiles.js')).createProfile('Bests under test'));
 await section(1, 1);
 
-// Two notes of four, so there is something for a later run to beat
+// ── a run given up on partway is not an attempt at the passage ───────────────
+//
+// Its score is a measure of when the player stopped, not of how they played,
+// and left to stand on a first attempt it would be a best that every later run
+// "beats" for no reason at all.
+r = await abandon([[10, 60], [500, 62]], 900);
+check('a run stopped partway says so', r.completed, false);
+check('...and is not kept', Object.keys((await profile()).bests).length, 0);
+check('...but the two notes played were still graded',
+  [r.perfect + r.good + r.almost, r.missed], [2, 2]);
+await page.waitForTimeout(250);
+check('...and says why nothing was kept',
+  (await page.locator('#best-line').textContent()).includes('not kept'), true);
+
+// Two notes of four, played through to the end of the section: a real attempt,
+// and something for a later run to beat
 r = await run([[10, 60], [500, 62]]);
-check('a partial run is recorded as the best so far', r.score < 100, true);
+check('a partial run played to the end is recorded as the best so far', r.score < 100, true);
+check('...and counts as played through', r.completed, true);
 
 let p = await profile();
 const key120 = Object.keys(p.bests).find(k => k.endsWith('|1-1|both|120'));
