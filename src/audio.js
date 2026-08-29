@@ -8,6 +8,7 @@
 // leaving the metronome and the count-in audible through their own path.
 import { state } from './state.js';
 import { atOrPast, EDGE_MS } from './quantizer.js';
+import { isAudible } from './tracks.js';
 
 let ctx = null;
 let master = null;
@@ -250,6 +251,7 @@ function pump() {
 
   for (const note of (playbackSource || state.composition.notes)) {
     if (note.startTime < scheduledUpToMs || note.startTime >= horizonMs) continue;
+    if (!isAudible(note)) continue;
     // A bounded stretch runs a little past its last barline so the note it
     // ends on can ring. That is room for one note to finish, not for the next
     // section's to begin — and asked through atOrPast, so the section sounds

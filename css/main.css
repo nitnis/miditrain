@@ -106,6 +106,9 @@ html, body {
 }
 .hdr-btn:hover { background: var(--border); }
 .hdr-btn:active { background: var(--accent); color: var(--bg); }
+/* There is no blanket `.hidden` in this stylesheet — each thing that can be
+   hidden says so itself — so a header button that comes and goes needs its own. */
+.hdr-btn.hidden { display: none; }
 
 .midi-status {
   display: flex;
@@ -881,6 +884,77 @@ select:focus { outline: 1px solid var(--accent); }
   max-width: 560px;
   width: 92vw;
   text-align: left;
+}
+
+/* ── Tracks ── */
+.tracks-box {
+  max-width: 620px;
+  width: 92vw;
+  text-align: left;
+}
+.track-list {
+  margin: 14px 0 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  max-height: 46vh;
+  overflow: auto;
+}
+.track-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.track-row:last-child { border-bottom: none; }
+/* A part that is off is dimmed, but its controls stay live — the colour and the
+   hand are what you set before switching it back on. */
+.track-row.off { opacity: 0.55; }
+.track-on { display: flex; align-items: center; }
+.track-on input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+/* The colour the track's notes actually fall in, beside its name, so the list
+   reads as the stage does */
+.track-chip {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex: none;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+.track-name {
+  flex: 1;
+  min-width: 100px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 5px 8px;
+  font-size: 13px;
+  font-family: inherit;
+}
+.track-color,
+.track-hand {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 5px 6px;
+  font-size: 12px;
+  font-family: inherit;
+}
+.track-color { min-width: 96px; }
+.track-hand { min-width: 76px; }
+.track-count {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 60px;
+  text-align: right;
+}
+@media (max-width: 620px) {
+  .track-row { flex-wrap: wrap; }
+  .track-name { min-width: 140px; }
+  .track-count { min-width: 0; }
 }
 
 /* ── Scale and arpeggio generator ── */
