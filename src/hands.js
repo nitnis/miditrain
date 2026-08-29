@@ -7,8 +7,10 @@
 // cluster and a high one, each inside a hand's reach, with daylight between.
 //
 // A file that already knows is believed instead. Nothing inferred here beats
-// two tracks named "Piano right" and "Piano left".
+// two tracks named "Piano right" and "Piano left" — and once a file has said
+// so, the player can say otherwise from the track list.
 import { state } from './state.js';
+import { trackHand, isAudible } from './tracks.js';
 
 const MAX_HAND_SPAN = 14;   // a tenth, about as far as a hand stretches
 const MIN_GAP = 2;          // adjacent semitones are one shape, not two hands
@@ -17,9 +19,18 @@ const MIN_SLICE_MS = 120;
 
 let inferred = new Map();   // note id → 'left' | 'right'
 
-export function handOf(note) {
+// The hand a note has been given rather than one worked out for it. A hand set
+// on the note itself is the most particular thing anyone has said about it and
+// wins; a hand set on its track covers the whole part.
+export function statedHand(note) {
   if (note.hand === 'left' || note.hand === 'right') return note.hand;
-  return inferred.get(note.id) || (note.pitch >= DEFAULT_SPLIT ? 'right' : 'left');
+  return trackHand(note);
+}
+
+export function handOf(note) {
+  return statedHand(note) ||
+    inferred.get(note.id) ||
+    (note.pitch >= DEFAULT_SPLIT ? 'right' : 'left');
 }
 
 export function isRightHand(note) {
@@ -34,7 +45,12 @@ export function practiceHand() {
   return want === 'left' || want === 'right' ? want : 'both';
 }
 
+// What the practice modes count: training grades it, learn mode waits for it,
+// and a section is built out of it. A part switched off in the track list is
+// not being worked on, so it is not any of those things either — which is the
+// point of switching it off, rather than merely turning its volume down.
 export function isPractised(note) {
+  if (!isAudible(note)) return false;
   const want = practiceHand();
   return want === 'both' || handOf(note) === want;
 }
@@ -92,7 +108,7 @@ function twoHandSplit(sorted, previous, bounds) {
 // each edit: one pass to slice, one to assign.
 export function inferHands(notes, beatMs = 500) {
   inferred = new Map();
-  const loose = notes.filter(n => n.hand !== 'left' && n.hand !== 'right');
+  const loose = notes.filter(n => !statedHand(n));
   if (!loose.length) return;
 
   const sliceMs = Math.max(MIN_SLICE_MS, beatMs / 2);

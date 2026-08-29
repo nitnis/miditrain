@@ -379,8 +379,12 @@ export function applyLegato(noteIds) {
 
 export function clearAllNotes() {
   state.composition.notes = [];
+  // The parts went with the notes. Left behind they would be a list of parts
+  // that no longer have any, still deciding what sounds.
+  state.composition.tracks = [];
   update('transport.currentTime', 0);
   emit('transport:noteschanged', []);
+  emit('tracks:changed', []);
 }
 
 export function getCurrentTime() {

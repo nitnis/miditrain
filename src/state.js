@@ -8,6 +8,11 @@ const _state = {
     timeSignature: { numerator: 4, denominator: 4 },
     keySignature: 'C',
     notes: [], // NoteEvent[]
+    // The parts a multi-track MIDI file was written in, each one switchable,
+    // colourable and assignable to a hand. Empty for anything that arrived as
+    // a single part — a recording, a generated exercise, a format-0 file — and
+    // a note with no `trackId` belongs to none of them. See tracks.js.
+    tracks: [], // { id, name, enabled, color, hand }[]
   },
   transport: {
     mode: 'stopped', // 'stopped' | 'playing' | 'recording' | 'step-recording' | 'count-in' | 'learning'

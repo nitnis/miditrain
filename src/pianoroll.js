@@ -3,6 +3,7 @@ import { state, on } from './state.js';
 import { getAccuracyResults } from './accuracy.js';
 import { setEditorLayout } from './note-editor.js';
 import { handOf, isPractised, practiceHand } from './hands.js';
+import { isAudible, trackColor } from './tracks.js';
 import { detectChord, midiToNoteWithOctave } from './chords.js';
 import { subdivision } from './metronome.js';
 import { beatOffsets } from './swing.js';
@@ -29,7 +30,7 @@ const PC_COLORS = [
 // know while sight-reading them — and by white or black key within it. The
 // right hand keeps the blue and deep purple it has always had; the left takes
 // a warm pair, far enough from the greens and yellows that grade a hit.
-const HAND_COLORS = {
+export const HAND_COLORS = {
   right: { white: '#3d8bfd', black: '#7c3aed' },
   left:  { white: '#f472b6', black: '#db2777' },
 };
@@ -572,7 +573,23 @@ function handColor(hand, midi) {
   return IS_WHITE[midi % 12] ? pair.white : pair.black;
 }
 
+// Towards black by `amount`. The hand colours come as a light/dark pair so the
+// two rows of keys read apart; a colour picked for a track comes as one value,
+// and its black keys are that value taken down to match.
+function darken(hex, amount) {
+  const n = parseInt(hex.slice(1), 16);
+  const k = 1 - amount;
+  const ch = (shift) => Math.round(((n >> shift) & 0xff) * k);
+  return `rgb(${ch(16)},${ch(8)},${ch(0)})`;
+}
+const BLACK_KEY_SHADE = 0.35;
+
+// A track's own colour outranks the hand's, because a player who has set one
+// has said what they want to tell apart. Without one — which is every piece
+// that did not arrive as parts — nothing here changes.
 function fallingColor(note) {
+  const own = trackColor(note);
+  if (own) return IS_WHITE[note.pitch % 12] ? own : darken(own, BLACK_KEY_SHADE);
   return handColor(handOf(note), note.pitch);
 }
 
@@ -694,8 +711,12 @@ export function drawFallingNotes(notes, composition, currentTimeMs, accuracyResu
   // and is already holding the notes and the time that decide it
   collectFingerings(notes, currentTimeMs);
 
+  // A track switched off is gone from the stage entirely rather than drawn
+  // faintly: the falling notes are what the player reads to play, and a part
+  // they have put aside is not part of that reading. It is still in the piece,
+  // still in the editor and still in the export.
   const visibleNotes = blind ? [] : notes.filter(n =>
-    n.startTime < windowEnd && (n.startTime + n.duration) > windowStart
+    isAudible(n) && n.startTime < windowEnd && (n.startTime + n.duration) > windowStart
   );
 
   for (const note of visibleNotes) {
@@ -1307,16 +1328,23 @@ export function renderPianoRoll(canvas, notes, currentTimeMs) {
     const nw = Math.max(2, note.duration / msPerPx);
     const y = h - (note.pitch - minPitch + 1) * noteH;
     const isSelected = sel.has(note.id);
+    const own = trackColor(note);
 
+    // The editor still shows a track that has been switched off, faintly. This
+    // is the view for working on the piece rather than for playing it, and a
+    // part you cannot see is a part you cannot select, move or switch back on
+    // by finding it.
+    ctx.globalAlpha = isAudible(note) ? 1 : 0.3;
     ctx.fillStyle = isSelected
       ? 'rgba(255,255,255,0.9)'
-      : getNoteColor(note.pitch, 0.9);
-    ctx.shadowColor = isSelected ? '#fff' : getNoteColor(note.pitch, 0.5);
+      : (own || getNoteColor(note.pitch, 0.9));
+    ctx.shadowColor = isSelected ? '#fff' : (own || getNoteColor(note.pitch, 0.5));
     ctx.shadowBlur = isSelected ? 6 : 0;
     ctx.beginPath();
     ctx.roundRect(x, y + 1, nw, noteH - 2, 2);
     ctx.fill();
     ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
 
     // Resize handle hint on selected notes
     if (isSelected && nw > 10) {
