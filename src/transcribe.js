@@ -17,6 +17,34 @@
 // an octave above, because that C's fundamental is exactly the first C's second
 // harmonic and there is nothing in a single frame to tell them apart. Taking
 // the winner and removing the energy it accounts for is what settles it.
+//
+// It settles it for a rendering. It does not settle it for a piano, and that
+// is the largest known fault here. A recorded low F was measured with its
+// second partial at twice its own fundamental, so at the moment it is struck
+// the F an octave above scores higher than it does — every one of that upper
+// F's partials is one of this one's even partials, it has no evidence of its
+// own anywhere, and it still wins the round and is written down. The reported
+// symptom is notes shown as struck together that were played one after
+// another: a bass F and a treble A are held, a treble F joins a second and a
+// half later, and the score shows all three at the downbeat.
+//
+// Three fixes were built and measured against that recording and none worked.
+// Subtracting what is observed at each partial rather than what the template
+// predicts: no effect on the ghost, and it cost the genuine-octave test.
+// Preferring the pitch an octave below when it has support at its own
+// fundamental, so the real note is peeled first: same. Both together, across
+// sixteen combinations: same. The measured reason is in the salience — at that
+// instant the ghost stands at twice the gate level, and the real entries of
+// the same note a second later peak lower than it does. No threshold separates
+// them because the ghost is the stronger signal.
+//
+// What is left is not a threshold. For an exact octave every partial of the
+// upper note lies on an even partial of the lower, so a single frame holds no
+// evidence that could tell a real octave from an invented one; only the shape
+// of a particular instrument's partial envelope, or the two notes decaying at
+// their own rates over time, can. Both are a different design from this one.
+// The synthetic octave test does not catch any of it, because the app's own
+// voice has no even partials at all and so never creates the ambiguity.
 import {
   makeAnalyzer, midiToFreq, RATE, HOP,
   FINE_WINDOW, COARSE_WINDOW, COARSE_RATE, COARSE_CEILING, CROSSOVER_MIDI,
@@ -411,6 +439,21 @@ export function tracksToNotes(salience, frames, pitches, frameMs, reference, ori
 
 // What counts as loud, for this recording. A high percentile rather than the
 // maximum, so one clipped chord does not set the scale for the whole piece.
+//
+// One number for the whole recording is a real limitation and not an oversight.
+// A bass line under a melody was measured sitting at a third of this level for
+// half a minute — plainly audible, a full harmonic series, verified in the
+// samples — and never reached the four tenths that opens the gate, so not one
+// of its notes was written down.
+//
+// Letting the level follow the music was tried: a four-second running mean of
+// the loudest thing per frame, floored at a fraction of this. It finds those
+// notes and costs more than they are worth. Swept from a tenth to none, it
+// moved unexplained energy in a real recording by half a point while taking
+// chroma, onset agreement and round-trip agreement all down with it, and the
+// rendered test set fell from 0.90 to 0.88. The gate is not what should be
+// adapting — a threshold that chases the music finds notes in whatever the
+// music is quiet enough to leave behind.
 export function referenceLevel(salience) {
   const sample = [];
   const stride = Math.max(1, Math.floor(salience.length / 40000));
