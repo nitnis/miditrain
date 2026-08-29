@@ -40,6 +40,9 @@
       <button class="hdr-btn" id="btn-export" title="Download this composition as a JSON file">Export</button>
       <button class="hdr-btn" id="btn-export-midi" title="Download this composition as a MIDI file">Export MIDI</button>
       <button class="hdr-btn" id="btn-import" title="Load a composition from a JSON or MIDI file">Import</button>
+      <!-- Only a file written in parts has anything to say here, so the button
+           appears when one is loaded and is gone the rest of the time. -->
+      <button class="hdr-btn hidden" id="btn-tracks" title="The parts this file was written in — switch one off, colour it, or put it in a hand">Tracks…</button>
       <input type="file" id="import-file" accept="application/json,.json,audio/midi,.mid,.midi,audio/*,.wav,.mp3,.m4a,.ogg,.flac" hidden>
       <button class="hdr-btn" id="btn-shortcuts" title="Keyboard shortcuts (?)">⌨</button>
       <div class="midi-status" id="midi-status" title="Click for MIDI settings">
@@ -538,6 +541,22 @@
         <button class="modal-btn" id="btn-train-section" hidden>Practise bars 1–2</button>
         <button class="modal-btn" id="btn-train-again">Try Again</button>
         <button class="modal-btn primary" id="btn-close-accuracy">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- The parts a multi-track file was written in -->
+  <div class="modal-overlay hidden" id="tracks-modal">
+    <div class="modal-box tracks-box">
+      <h2>Tracks</h2>
+      <p class="section-sub">The parts this file was written in. Switching one off takes it out of the sound, the falling notes and the score — it stays in the piece, and in anything you export.</p>
+
+      <div class="track-list" id="track-list"></div>
+
+      <div class="modal-actions">
+        <button class="modal-btn" id="btn-tracks-all" title="Bring every part back">All on</button>
+        <button class="modal-btn" id="btn-tracks-none" title="Silence every part">All off</button>
+        <button class="modal-btn primary" id="btn-close-tracks">Done</button>
       </div>
     </div>
   </div>
