@@ -11,6 +11,31 @@ node test/roundtrip.mjs              # in another shell
 
 `ORIGIN` and `CHROME` override the server address and the browser binary.
 
+## `training.mjs` — what a run gets charged, and what it leaves behind
+
+Grading needs a MIDI keyboard, which is the one input this repository cannot
+plug in. So the run is driven by emitting `midi:noteon` on the app's own event
+bus — the same event `midi.js` emits from a real device — and everything on the
+other side of it is the real thing: the real transport, the real section range,
+the real grading windows, the real profile store.
+
+The keys go down on `transport:tick` rather than on a timer of the driver's. A
+`setTimeout` on a page that is also animating falling notes drifts by a couple of
+hundred milliseconds under load, which is exactly the gap between *perfect* and
+*almost*, and every score here would have been a measurement of how busy the
+machine was.
+
+It covers the two things that are easy to get subtly wrong: which keypresses are
+charged as extras (a note struck after the passage is over is not one), and what
+makes two runs comparable — the same piece, the same bars, the same hand, the
+same speed.
+
+## `tracks.mjs` — multi-track MIDI
+
+Walks a three-part file, built in the script rather than kept as a fixture,
+through the reader, the real import path, the writer, playback, both drawings,
+the score, the hand inference, the practice modes and both save paths.
+
 ## `roundtrip.mjs` — transcription against a real recording
 
 The transcriber's other checks render a MIDI file, transcribe the rendering, and
