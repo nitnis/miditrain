@@ -3,6 +3,11 @@
 // The app stores notes in milliseconds against a single tempo, which is what
 // both directions have to bridge: ticks are musical, milliseconds are not.
 // Everything here is plain bytes — no dependency, and no build step to add one.
+//
+// The file's own division into tracks survives the trip: reading returns a
+// `tracks` list alongside the notes, each note tagged with the track it came
+// from, and writing puts the parts back into their own chunks. See tracks.js.
+import { normalizeTracks } from './tracks.js';
 
 const TICKS_PER_BEAT = 480;
 const NOTE_ON = 0x90;
@@ -56,8 +61,61 @@ function metaEvent(type, data) {
   return [META, type, ...varLen(data.length), ...data];
 }
 
+// One MTrk from one list of notes, with its name if it has one
+function noteTrack(notes, toTicks, name) {
+  // One event per note edge. Note-offs sort before note-ons at the same tick,
+  // or a note repeated on the beat would be switched off the instant it began.
+  const events = [];
+  for (const note of notes) {
+    const start = toTicks(note.startTime);
+    const end = Math.max(start + 1, toTicks(note.startTime + note.duration));
+    events.push({ tick: start, order: 1, bytes: [NOTE_ON, note.pitch, Math.max(1, Math.min(127, note.velocity ?? 90))] });
+    events.push({ tick: end, order: 0, bytes: [NOTE_OFF, note.pitch, 64] });
+  }
+  events.sort((a, b) => a.tick - b.tick || a.order - b.order);
+
+  const track = name ? [...varLen(0), ...metaEvent(0x03, textBytes(name))] : [];
+  let last = 0;
+  for (const event of events) {
+    track.push(...varLen(event.tick - last), ...event.bytes);
+    last = event.tick;
+  }
+  track.push(...varLen(0), ...metaEvent(0x2f, []));
+  return track;
+}
+
+// How the notes are divided across MTrk chunks on the way out.
+//
+// A piece that arrived as one part leaves as one, with no track name on it —
+// which is what this always did, and what a recording or a generated exercise
+// should be. A piece that arrived with parts leaves with the same parts, named,
+// so that opening the export gets back the list the player set up rather than
+// one merged blob. Switching a part off silences it in the app; it does not
+// delete it, so the export still holds it.
+//
+// The colour and the hand do not survive: a MIDI file has nowhere to put them.
+// The hand comes back if the name still reads as one — "Piano left" does, and
+// is how it was read in the first place — and the app's own JSON export is
+// what keeps all of it.
+function partition(composition) {
+  const { notes, tracks } = composition;
+  if (!tracks || tracks.length < 2) return [{ name: null, notes }];
+  const parts = tracks.map(t => ({ name: t.name, notes: [] }));
+  const slot = new Map(tracks.map((t, i) => [t.id, i]));
+  const loose = [];
+  for (const note of notes) {
+    const at = slot.get(note.trackId);
+    if (at === undefined) loose.push(note);
+    else parts[at].notes.push(note);
+  }
+  // Notes added since the import belong to no part. They go in their own rather
+  // than being dropped or quietly folded into somebody else's.
+  if (loose.length) parts.push({ name: 'Added', notes: loose });
+  return parts.filter(p => p.notes.length);
+}
+
 export function compositionToMidi(composition) {
-  const { name, tempo, timeSignature, keySignature, notes } = composition;
+  const { name, tempo, timeSignature, keySignature } = composition;
   const msPerBeat = 60000 / tempo;
   const toTicks = (ms) => Math.max(0, Math.round((ms / msPerBeat) * TICKS_PER_BEAT));
 
@@ -72,32 +130,17 @@ export function compositionToMidi(composition) {
     ...varLen(0), ...metaEvent(0x2f, []),
   ];
 
-  // One event per note edge. Note-offs sort before note-ons at the same tick,
-  // or a note repeated on the beat would be switched off the instant it began.
-  const events = [];
-  for (const note of notes) {
-    const start = toTicks(note.startTime);
-    const end = Math.max(start + 1, toTicks(note.startTime + note.duration));
-    events.push({ tick: start, order: 1, bytes: [NOTE_ON, note.pitch, Math.max(1, Math.min(127, note.velocity ?? 90))] });
-    events.push({ tick: end, order: 0, bytes: [NOTE_OFF, note.pitch, 64] });
-  }
-  events.sort((a, b) => a.tick - b.tick || a.order - b.order);
-
-  const track = [];
-  let last = 0;
-  for (const event of events) {
-    track.push(...varLen(event.tick - last), ...event.bytes);
-    last = event.tick;
-  }
-  track.push(...varLen(0), ...metaEvent(0x2f, []));
-
+  const parts = partition(composition);
+  const count = parts.length + 1;              // and the conductor
   const header = chunk('MThd', [
-    0, 1,                                   // format 1
-    0, 2,                                   // two tracks
+    0, 1,                                      // format 1
+    (count >> 8) & 0xff, count & 0xff,
     (TICKS_PER_BEAT >> 8) & 0xff, TICKS_PER_BEAT & 0xff,
   ]);
 
-  return new Uint8Array([...header, ...chunk('MTrk', conductor), ...chunk('MTrk', track)]);
+  const bytes = [...header, ...chunk('MTrk', conductor)];
+  for (const part of parts) bytes.push(...chunk('MTrk', noteTrack(part.notes, toTicks, part.name)));
+  return new Uint8Array(bytes);
 }
 
 // ── Reading ──────────────────────────────────────────────────────────────────
@@ -135,6 +178,16 @@ function handFromTrackName(name) {
   if (/\b(right|treble|rh|r\.h)\b/.test(text)) return 'right';
   if (/\b(left|bass|lh|l\.h)\b/.test(text)) return 'left';
   return null;
+}
+
+// What to call a track in the list. Its own name if it has one; the instrument
+// name if the writer put one there instead, which some engravers do; and a
+// number if neither, because a row with no label is worse than a dull one.
+function trackName(events, ordinal) {
+  const meta = (type) => events.find(e => e.meta === type && e.data.length);
+  const named = meta(0x03) || meta(0x04);
+  const text = named ? new TextDecoder().decode(named.data).trim() : '';
+  return text.slice(0, 60) || `Track ${ordinal}`;
 }
 
 // One track's events, at absolute ticks
@@ -200,18 +253,26 @@ export function midiToComposition(buffer) {
   if (!division) throw new Error('MIDI file has no timing division');
 
   const events = [];
+  const tracks = [];
   for (let i = 0; i < trackCount && !reader.done; i++) {
     const id = reader.string(4);
     const length = reader.uint32();
     if (id !== 'MTrk') { reader.bytesN(length); continue; }   // skip unknown chunks
     const trackEvents = readTrack(reader, length);
-    // The track's own name decides the hand for everything on it
-    const named = trackEvents.find(e => e.meta === 0x03);
-    const hand = named ? handFromTrackName(new TextDecoder().decode(named.data)) : null;
     // Both hands are usually written on the same channel, and their ranges
     // overlap, so a note has to be matched to its note-off within its own track
-    for (const event of trackEvents) { event.track = i; if (hand) event.hand = hand; }
+    for (const event of trackEvents) event.track = i;
     events.push(...trackEvents);
+    // A conductor track carries the tempo and the key and no notes at all, and
+    // is not a part anybody plays. Listing it would put a row in the track
+    // control that switches nothing off.
+    if (!trackEvents.some(e => e.pitch !== undefined && e.on)) continue;
+    const name = trackName(trackEvents, tracks.length + 1);
+    // The track's own name decides the hand for everything on it, and nothing
+    // inferred from the notes beats being told. It is a starting point rather
+    // than a verdict: the player can put the part in the other hand, or hand
+    // it back to the texture, from the track list.
+    tracks.push({ id: i, name, enabled: true, color: null, hand: handFromTrackName(name) || 'auto' });
   }
   if (!events.length) throw new Error('No usable tracks in this MIDI file');
 
@@ -252,7 +313,7 @@ export function midiToComposition(buffer) {
   // Honouring a tempo map would put the notes in the right places in time but
   // the wrong places on the stave, which is the half that matters here.
   const msPerTick = (60000 / tempo) / division;
-  const held = new Map();   // `${track}:${channel}:${pitch}` -> { pitch, tick, velocity, hand }
+  const held = new Map();   // `${track}:${channel}:${pitch}` -> { pitch, tick, velocity, track }
   const notes = [];
   let dropped = 0;
   let clamped = 0;
@@ -268,7 +329,7 @@ export function midiToComposition(buffer) {
       velocity: Math.max(1, Math.min(127, start.velocity)),
       startTime: start.tick * msPerTick,
       duration: Math.max(20, (endTick - start.tick) * msPerTick),
-      ...(start.hand ? { hand: start.hand } : {}),
+      trackId: start.track,
     });
   };
 
@@ -281,7 +342,7 @@ export function midiToComposition(buffer) {
       // A pitch restruck before its note-off ends the first one where the
       // second begins, rather than being dropped or left hanging
       if (held.has(key)) closeNote(key, e.tick);
-      held.set(key, { pitch: e.pitch, tick: e.tick, velocity: e.velocity, hand: e.hand });
+      held.set(key, { pitch: e.pitch, tick: e.tick, velocity: e.velocity, track: e.track });
     } else if (held.has(key)) {
       closeNote(key, e.tick);
     }
@@ -305,6 +366,7 @@ export function midiToComposition(buffer) {
     timeSignature,
     keySignature,
     notes,
+    tracks: normalizeTracks(tracks, notes),
     warnings,
   };
 }

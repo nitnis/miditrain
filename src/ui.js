@@ -3,7 +3,7 @@ import { state, update, emit, on } from './state.js';
 import { record, play, stop, stopAndRewind, startCountIn, playRange, seekTo, seekToStart, seekToEnd, clearAllNotes, transposeNotes, transposeAll, setNotesHand, applyLegato, deleteNotes, changeTempo, getCompositionDuration } from './transport.js';
 import { renderSheet, initSheet, getChordOverlayData, getStaveGeometry, movePlayhead, markLoopRange, barAtPoint } from './sheet.js';
 import { refreshSuggestions, hasSuggestions } from './autofinger.js';
-import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWaitingPitches, setFallingBlind, setLoopPick, setTakeGhosts, noteAtFallingPoint, fallingMsPerPixel } from './pianoroll.js';
+import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWaitingPitches, setFallingBlind, setLoopPick, setTakeGhosts, noteAtFallingPoint, fallingMsPerPixel, HAND_COLORS } from './pianoroll.js';
 import { startLearn, stopLearn, isHoldingMessage, CLUSTERS } from './learn.js';
 import {
   startSectionWalk, stopSectionWalk, repeatSection, advanceSection,
@@ -21,6 +21,10 @@ import { staffPositionName, midiToNoteWithOctave } from './chords.js';
 import { barRangeMs, barAtMs, detectGridDivision } from './quantizer.js';
 import { loopBars } from './range.js';
 import { inferHands } from './hands.js';
+import {
+  TRACK_PALETTE, TRACK_HANDS, trackList, hasTracks, isAudible,
+  updateTrack, setAllEnabled, noteCounts, normalizeTracks,
+} from './tracks.js';
 import { SCALES, CHORDS, LICKS, PATTERNS, HANDS, DIRECTIONS, NOTE_VALUES, ROOTS, buildExercise } from './scales.js';
 import { SWING_AMOUNTS } from './quantizer.js';
 import { looksLikeAudio, transcribeAudioFile } from './audio-import.js';
@@ -68,6 +72,8 @@ export function initUI() {
   bindSectionWalk();
   bindProfiles();
   bindPracticeGenerator();
+  bindTracks();
+  syncTracksButton();
   initHistory();
 
   // The piano roll canvas is sized from its viewport, so re-render whenever
@@ -803,7 +809,9 @@ function writeExercise() {
     document.getElementById('swing-select').value = exercise.swing ? 'on' : 'off';
   }
   state.composition.notes = exercise.notes;
+  state.composition.tracks = [];   // a generated exercise is one part
   state.composition.name = exercise.title;
+  syncTracksButton();
   // A generated exercise starts at the top, and the last thing loop-marked was
   // about some other piece
   update('transport.currentTime', 0);
@@ -848,6 +856,109 @@ function bindPracticeGenerator() {
 function openPracticeGenerator(kind = genKind) {
   setGenKind(kind);
   document.getElementById('practice-modal').classList.remove('hidden');
+}
+
+// ── Tracks ───────────────────────────────────────────────────────────────────
+//
+// A multi-track file arrives as parts, and the four things worth setting per
+// part are all here: whether it sounds, what colour it falls in, which hand it
+// belongs to, and what it is called. Everything applies the moment it is
+// changed — there is no Apply — because the piece behind the dialog is what
+// says whether the change was the one you wanted.
+
+const HAND_LABELS = { auto: 'Auto', left: 'Left', right: 'Right' };
+
+// The colour a track's notes actually fall in. A track with no colour of its
+// own falls in its hand's colour, which is what a piano score should do, so the
+// chip shows the hand colours side by side rather than pretending to be one.
+function chipStyle(track) {
+  if (track.color) return `background:${track.color}`;
+  const { right, left } = HAND_COLORS;
+  return `background:linear-gradient(135deg,${right.white} 0 50%,${left.white} 50% 100%)`;
+}
+
+function renderTrackList() {
+  const listEl = document.getElementById('track-list');
+  const tracks = trackList();
+  const counts = noteCounts();
+  if (!tracks.length) {
+    listEl.innerHTML = '<div class="empty-msg">This piece is in one part.</div>';
+    return;
+  }
+
+  listEl.innerHTML = tracks.map(t => {
+    const n = counts.get(t.id) || 0;
+    const colors = [
+      `<option value=""${t.color ? '' : ' selected'}>By hand</option>`,
+      ...TRACK_PALETTE.map(c =>
+        `<option value="${c.hex}"${t.color === c.hex ? ' selected' : ''}>${c.name}</option>`),
+    ].join('');
+    const hands = TRACK_HANDS.map(h =>
+      `<option value="${h}"${t.hand === h ? ' selected' : ''}>${HAND_LABELS[h]}</option>`).join('');
+    return `
+      <div class="track-row${t.enabled ? '' : ' off'}" data-id="${t.id}">
+        <label class="track-on" title="Play this part">
+          <input type="checkbox" class="track-enabled"${t.enabled ? ' checked' : ''}>
+        </label>
+        <span class="track-chip" style="${chipStyle(t)}"></span>
+        <input type="text" class="track-name" value="${escapeHtml(t.name)}" maxlength="60"
+               title="What to call this part">
+        <select class="track-color" title="The colour this part's notes fall in">${colors}</select>
+        <select class="track-hand" title="Which hand plays this part. Auto lets the texture decide, the way it does for a piece that never said.">${hands}</select>
+        <span class="track-count">${n} note${n === 1 ? '' : 's'}</span>
+      </div>`;
+  }).join('');
+
+  for (const row of listEl.querySelectorAll('.track-row')) {
+    const id = Number(row.dataset.id);
+    const track = () => trackList().find(t => t.id === id);
+    // The row is patched where it changed rather than rebuilt. Rebuilding would
+    // take the focus out of the very control that was just used, which turns
+    // stepping down a colour list with the keyboard into one change per press.
+    const changed = () => {
+      const t = track();
+      row.classList.toggle('off', !t.enabled);
+      row.querySelector('.track-chip').setAttribute('style', chipStyle(t));
+      scheduleSheetRender();
+    };
+    row.querySelector('.track-enabled').onchange = (e) =>
+      updateTrack(id, { enabled: e.target.checked }) && changed();
+    row.querySelector('.track-color').onchange = (e) =>
+      updateTrack(id, { color: e.target.value || null }) && changed();
+    row.querySelector('.track-hand').onchange = (e) =>
+      updateTrack(id, { hand: e.target.value }) && changed();
+    // As it is typed, so the name is never a keystroke behind — but an empty
+    // field is somebody midway through renaming rather than a part called
+    // nothing, so it keeps the last name it had and gets it back on leaving.
+    const nameEl = row.querySelector('.track-name');
+    nameEl.oninput = (e) => {
+      const text = e.target.value.trim();
+      if (text) updateTrack(id, { name: text });
+    };
+    nameEl.onchange = (e) => { e.target.value = track().name; };
+  }
+}
+
+// The button is only ever worth showing for a file written in more than one
+// part, so it comes and goes with the piece.
+function syncTracksButton() {
+  document.getElementById('btn-tracks').classList.toggle('hidden', !hasTracks());
+}
+
+function openTracks() {
+  renderTrackList();
+  document.getElementById('tracks-modal').classList.remove('hidden');
+}
+
+function bindTracks() {
+  const modal = document.getElementById('tracks-modal');
+  document.getElementById('btn-tracks').onclick = openTracks;
+  document.getElementById('btn-close-tracks').onclick = () => modal.classList.add('hidden');
+  const setAll = (wanted) => { if (setAllEnabled(wanted)) { renderTrackList(); scheduleSheetRender(); } };
+  document.getElementById('btn-tracks-all').onclick = () => setAll(true);
+  document.getElementById('btn-tracks-none').onclick = () => setAll(false);
+  // Clearing the piece takes its parts with it, and the button has to go too
+  on('tracks:changed', syncTracksButton);
 }
 
 // ── Profiles ─────────────────────────────────────────────────────────────────
@@ -2127,7 +2238,11 @@ function endPicking() {
 }
 
 function pickNoteForLoop(x, y) {
-  const note = noteAtFallingPoint(x, y, state.composition.notes, state.transport.currentTime);
+  // Only what is on the stage can be clicked on it — a part that is switched
+  // off is not drawn, and picking one to mark a loop with would be picking
+  // something nobody can see.
+  const note = noteAtFallingPoint(x, y, state.composition.notes.filter(isAudible),
+                                  state.transport.currentTime);
   if (!note) { showToast('Click one of the falling notes', 1600); return; }
 
   const { tempo, timeSignature } = state.composition;
@@ -2237,8 +2352,11 @@ function bindCompositionControls() {
       const regrid = loadComposition(imported);
       const n = imported.notes.length;
       const detail = imported.warnings?.length ? ` · ${imported.warnings.join(' · ')}` : '';
-      showToast(`Imported "${imported.name}" — ${n} note${n === 1 ? '' : 's'}${detail}${gridNote(regrid)}`,
-        imported.warnings?.length ? 5000 : 2500);
+      // Worth saying, because the control for it only just appeared in the
+      // header and nothing else on screen shows the piece came in parts
+      const parts = hasTracks() ? ` · ${trackList().length} tracks — see Tracks…` : '';
+      showToast(`Imported "${imported.name}" — ${n} note${n === 1 ? '' : 's'}${parts}${detail}${gridNote(regrid)}`,
+        imported.warnings?.length || parts ? 5000 : 2500);
     } catch (err) {
       showToast(`Import failed: ${err.message}`, 4000);
     }
@@ -2295,6 +2413,11 @@ async function openSongBrowser() {
 function loadComposition(song) {
   stop();
   Object.assign(state.composition, song);
+  // Assigned rather than left to the spread: a piece written in one part has no
+  // `tracks` at all, and without this the previous piece's parts would still be
+  // sitting there deciding what sounds.
+  state.composition.tracks = normalizeTracks(song.tracks, song.notes);
+  syncTracksButton();
   document.getElementById('composition-name').textContent = song.name || 'Untitled';
   // The slider measures distance from where the piece arrived, so a new piece
   // starts back at zero
@@ -2943,7 +3066,11 @@ function scheduleSheetRender() {
     sheetShowsStepCursor = state.transport.mode === 'step-recording';
     const t = sheetShowsStepCursor ? null : state.transport.currentTime;
     if (state.ui.view !== 'piano-roll') {
-      renderSheet(state.composition.notes, state.composition, t);
+      // A part that has been switched off is off the stave too. Two staves hold
+      // two hands, and a four-part file with everything on them is unreadable —
+      // narrowing it to the parts being worked on is most of why the track list
+      // is worth having.
+      renderSheet(state.composition.notes.filter(isAudible), state.composition, t);
       updateChordOverlay();
       // The bands are placed from the layout that was just built
       refreshLoopMarker();

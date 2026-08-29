@@ -1,4 +1,5 @@
 // IndexedDB persistence via localforage
+import { normalizeTracks } from './tracks.js';
 
 let store;
 let workingStore;
@@ -51,7 +52,7 @@ const FILE_FORMAT = 'miditrain.composition';
 const FILE_VERSION = 1;
 
 export function compositionToJSON(composition) {
-  const { name, tempo, timeSignature, keySignature, notes } = composition;
+  const { name, tempo, timeSignature, keySignature, notes, tracks } = composition;
   return JSON.stringify({
     format: FILE_FORMAT,
     version: FILE_VERSION,
@@ -61,6 +62,11 @@ export function compositionToJSON(composition) {
       tempo,
       timeSignature,
       keySignature,
+      // The parts the piece arrived in, and what the player has done with them:
+      // which are switched off, what colour each falls in, which hand it is
+      // for. Left out, reopening a saved arrangement would put every part back
+      // on and hand the colours back to the app.
+      ...(tracks?.length ? { tracks: tracks.map(t => ({ ...t })) } : {}),
       notes: notes.map(n => ({
         id: n.id,
         pitch: n.pitch,
@@ -70,6 +76,9 @@ export function compositionToJSON(composition) {
         // Only when the source actually said so — an inferred hand is derived
         // from the notes and would go stale the moment they are edited
         ...(n.hand ? { hand: n.hand } : {}),
+        // Which part it belongs to. Meaningless without the track list above,
+        // and harmless with it: normalizeTracks drops a track nothing points at.
+        ...(n.trackId !== undefined ? { trackId: n.trackId } : {}),
         // Things a note knows about itself that cannot be worked out again from
         // its pitch. How it is spelled is the generator's decision — the
         // seventh degree of A harmonic minor is a raised G, and nothing about
@@ -138,6 +147,7 @@ export function compositionFromJSON(text) {
       startTime: Math.max(0, n.startTime),
       duration: Math.max(1, n.duration),
       ...(n.hand === 'left' || n.hand === 'right' ? { hand: n.hand } : {}),
+      ...(Number.isInteger(n.trackId) ? { trackId: n.trackId } : {}),
       ...(isSpelling(n.spelling) ? { spelling: n.spelling } : {}),
       ...(isFinger(n.finger) ? { finger: n.finger } : {}),
     }))
@@ -160,5 +170,6 @@ export function compositionFromJSON(text) {
     },
     keySignature: typeof src.keySignature === 'string' ? src.keySignature : 'C',
     notes,
+    tracks: normalizeTracks(src.tracks, notes),
   };
 }
