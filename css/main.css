@@ -1170,6 +1170,7 @@ body.hands-shown #hand-canvas { display: block; }
 
 .modal-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   justify-content: flex-end;
   margin-top: 20px;
@@ -1178,6 +1179,10 @@ body.hands-shown #hand-canvas { display: block; }
 .modal-btn {
   height: 40px;
   padding: 0 20px;
+  /* The results screen can carry five of these. Wrapping the row is fine;
+     wrapping the words inside a button so it reads down the page is not. */
+  white-space: nowrap;
+  flex: none;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -1335,6 +1340,20 @@ body.hands-shown #hand-canvas { display: block; }
   color: var(--muted);
   margin: 10px 0 -2px;
 }
+
+/* Your best at this passage, hand and speed */
+.best-line {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 14px 0 0;
+}
+.best-line.hidden { display: none; }
+.best-line b { color: var(--text); font-variant-numeric: tabular-nums; }
+/* A new best is the one thing on this screen worth interrupting for */
+.best-line.fresh { color: var(--green); }
+.best-line.fresh b { color: var(--green); }
+.best-detail { opacity: 0.75; }
+.modal-btn.hidden { display: none; }
 
 /* Take the same passage again a notch slower or faster */
 .retry-tempo {

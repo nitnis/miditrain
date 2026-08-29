@@ -68,6 +68,31 @@ let playedNotes = [];   // { pitch, time, matched }
 let cleanupFns = [];
 let sessionRange = null; // { startMs, endMs } when training a section
 let sessionBeatMs = 500; // the beat this run was played at
+// After this, the passage is over and keypresses stop being anybody's business
+let sessionEndMs = Infinity;
+
+// When the passage stops being playable.
+//
+// Playback does not stop at the end of a section: it runs on by a tail so the
+// last note can ring, and for the whole piece it runs to the end of the piece
+// whatever the notes do. Anything pressed in there was pressed after the run
+// had finished — a phrase carried on out of habit, the next section's first
+// note, a hand coming off the keys — and charging it as a wrong note billed
+// the player for something that was not part of the attempt.
+//
+// Two things have to be over. The last note's grading window has to have
+// closed, because until it has the keypress might still be that note played
+// very late; and a section that ends in a rest has to have run out its time,
+// because a note struck in that rest is a note in the passage.
+function endOfPassage(range) {
+  if (!expectedNotes.length) return 0;   // nothing was asked for, so nothing is wrong
+  const lastDue = expectedNotes[expectedNotes.length - 1].startTimeMs + ALMOST_MS;
+  return Math.max(lastDue, range ? range.endMs : 0);
+}
+
+function afterThePassage(timeMs) {
+  return timeMs > sessionEndMs;
+}
 
 // A note is expected where it sounds, not where it is drawn.
 //
@@ -105,6 +130,7 @@ export function startAccuracy(composition, range = null) {
     // Training a section only grades what is inside it
     .filter(n => !range || (atOrPast(n.startTimeMs, range.startMs) && !atOrPast(n.startTimeMs, range.endMs)));
 
+  sessionEndMs = endOfPassage(range);
   playedNotes = [];
   update('accuracy.active', true);
   update('accuracy.results', []);
@@ -203,6 +229,7 @@ function classifyStrays() {
   const strays = new Set();
   for (const played of playedNotes) {
     if (played.matched) continue;
+    if (afterThePassage(played.time)) continue;   // the run was already over
     const stoodInFor = unplayed.find(c => !c.taken && Math.abs(c.at - played.time) <= window);
     if (stoodInFor) stoodInFor.taken = true;
     else strays.add(played);
@@ -298,6 +325,8 @@ export function getTake() {
       // missed — the distinction the score already makes, passed on so the
       // replay's running count lands on the same total
       stray: strays.has(n),
+      // Pressed once the passage was over, and charged as nothing at all
+      after: afterThePassage(n.time),
     })),
     // What was written, with how each one turned out and when it was due, so a
     // tally can be run forward alongside the replay
@@ -337,9 +366,12 @@ export function getWorstSection(composition) {
   const barMs = timeSignature.numerator * (4 / timeSignature.denominator) * beatMs;
   if (!barMs) return null;
 
+  // Only what happened inside the passage shapes where it went worst. A note
+  // struck after it ended is not charged anywhere else either, and left in it
+  // would nominate a bar past the end of the run as the one to go and practise.
   const lastMs = Math.max(
     ...expectedNotes.map(n => n.startTimeMs),
-    ...playedNotes.map(n => n.time),
+    ...playedNotes.filter(n => !afterThePassage(n.time)).map(n => n.time),
     0
   );
   const barCount = Math.floor(lastMs / barMs) + 1;
@@ -351,7 +383,7 @@ export function getWorstSection(composition) {
     else if (n.grade === 'almost') errors[bucket(n.startTimeMs)] += 0.5;
   }
   for (const n of playedNotes) {
-    if (!n.matched) errors[bucket(n.time)] += 1;
+    if (!n.matched && !afterThePassage(n.time)) errors[bucket(n.time)] += 1;
   }
 
   let bestStart = 0;
