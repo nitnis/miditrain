@@ -240,12 +240,21 @@ check('the best plays back as ghosts over the piece', await page.evaluate(async 
 await page.click('#btn-stop');
 await page.waitForTimeout(400);
 
-// A new best says it is one, and does not offer itself back — "Replay my take"
-// is already that run
+// ── the best is the highest run, not the latest ──────────────────────────────
+//
+// Asserted against whichever of the two actually scored higher rather than
+// against a tie. Two runs of the same notes do not reliably grade the same: one
+// press landing a frame late is an "almost" rather than a "perfect", and a test
+// that demanded a tie would be demanding that the machine was equally busy both
+// times.
 r = await run(CLEAN);
 await page.waitForTimeout(300);
-check('a run that ties does not claim a new best',
-  (await page.locator('#best-line').textContent()).startsWith('Your best'), true);
+const top = Math.max(clean.score, r.score);
+p = await profile();
+check('the best is the highest run, not the last one played', p.bests[key120].score, top);
+check('...and the line says which of the two just happened',
+  (await page.locator('#best-line').textContent())
+    .startsWith(r.score > clean.score ? 'New best' : 'Your best'), true);
 
 // ── it survives a reload ─────────────────────────────────────────────────────
 const before = JSON.stringify((await profile()).bests[key120]);
