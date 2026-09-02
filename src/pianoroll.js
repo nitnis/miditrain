@@ -229,6 +229,10 @@ function drawTakeGhosts(currentTimeMs, ch, pixelsPerMs, windowStart, windowEnd) 
     const color = note.matched ? TAKE_HIT : TAKE_STRAY;
 
     fallingCtx.save();
+    // A key pressed after the passage had finished is drawn, because it did
+    // happen, but faintly — nothing was charged for it, and an outline as loud
+    // as the ones inside the run would read as a mistake it was not.
+    if (note.after) fallingCtx.globalAlpha = 0.3;
     fallingCtx.strokeStyle = color;
     fallingCtx.lineWidth = 2;
     fallingCtx.shadowColor = color;

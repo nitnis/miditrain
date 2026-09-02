@@ -20,7 +20,7 @@ import { initNoteEditor, getSelectedIds, clearSelection } from './note-editor.js
 import { staffPositionName, midiToNoteWithOctave } from './chords.js';
 import { barRangeMs, barAtMs, detectGridDivision } from './quantizer.js';
 import { loopBars } from './range.js';
-import { inferHands } from './hands.js';
+import { inferHands, practiceHand } from './hands.js';
 import {
   TRACK_PALETTE, TRACK_HANDS, trackList, hasTracks, isAudible,
   updateTrack, setAllEnabled, noteCounts, normalizeTracks,
@@ -31,6 +31,7 @@ import { looksLikeAudio, transcribeAudioFile } from './audio-import.js';
 import {
   listProfiles, current as currentProfile, switchProfile, createProfile, deleteProfile,
   adoptProfile, sectionKey, sectionTempo, rememberSectionTempo, setLearningPosition,
+  trainingKey, bestFor, rememberBest,
   learningPosition, canUseFolder, chooseFolder, folderHandle, scanFolder, writeToFolder,
   fileNameFor, bundleToJSON, bundleFromJSON,
 } from './profiles.js';
@@ -164,7 +165,9 @@ export function initUI() {
   });
 
   on('accuracy:progress', (p) => updateGauge(p));
-  on('accuracy:complete', (results) => showAccuracyResults(results));
+  // The best is recorded once, where the run ends — not in the results screen,
+  // which the replay puts back up again afterwards
+  on('accuracy:complete', (results) => { recordBest(results); showAccuracyResults(results); });
 
   updateMidiStatus(false);
   applyStateToControls();
@@ -1739,6 +1742,58 @@ function withCountIn(start) {
 // at whatever the tempo happens to be by then
 let lastTrainingBars = null;
 
+// ── What a run is a run *of* ─────────────────────────────────────────────────
+//
+// Taken when the run starts rather than when it ends, because the results
+// screen changes the tempo from underneath: its retry buttons move it before
+// anything has been recorded, and a best filed under the tempo of the next
+// attempt would be filed under a speed nobody has played yet.
+
+// The identity of the run in progress, and the tempo its note times are in
+let trainingRunKey = null;
+let trainingRunTempo = 120;
+// What stood before the run that just finished, whether it beat it, and
+// whether it counted at all
+let bestBefore = null;
+let lastWasBest = false;
+let lastAbandoned = false;
+
+// The rate the notes actually arrive at. The tempo is what they are written at;
+// the speed slider is a second multiplier on top of it, and a passage taken at
+// 60 BPM with the slider at 150% is a passage at 90 BPM to the fingers.
+function effectiveBpm() {
+  return Math.round(state.composition.tempo * (state.transport.speed || 1));
+}
+
+function keyForRun(bars) {
+  return trainingKey({
+    songName: state.composition.name,
+    bars,
+    hand: practiceHand(),
+    bpm: effectiveBpm(),
+  });
+}
+
+// Called once, where the run ends
+function recordBest(results) {
+  bestBefore = null;
+  lastWasBest = false;
+  lastAbandoned = false;
+  // A run with nothing in it to grade is not an attempt at anything
+  if (!trainingRunKey || !results.total) return;
+
+  // A run stopped before the end is not one either. Everything past where it
+  // stopped counts as missed, so its score says when the player gave up rather
+  // than how they played — and on a first attempt it would stand as a best that
+  // every later run "beats" for no reason at all.
+  if (!results.completed) { lastAbandoned = true; return; }
+
+  bestBefore = bestFor(trainingRunKey);
+  lastWasBest = rememberBest(trainingRunKey, {
+    ...results, tempo: trainingRunTempo, take: getTake(),
+  });
+}
+
 // The section size divides a piece for training the same way it divides one for
 // learning — it is one setting, and the two disagreeing about what a section is
 // would make it useless. Training read only the loop range, so a player who had
@@ -1785,6 +1840,9 @@ function startTrainingSession(bars = null) {
   const range = lastTrainingBars ? rangeForBars(lastTrainingBars) : null;
   update('transport.currentTime', range ? range.startMs : 0);
 
+  trainingRunKey = keyForRun(lastTrainingBars);
+  trainingRunTempo = state.composition.tempo;
+
   withCountIn(() => {
     startAccuracy(state.composition, range);
     if (range) playRange(range.startMs, range.endMs, range.tailMs);
@@ -1808,8 +1866,26 @@ let replayStopper = null;
 // The last run's results, kept so the replay can put the screen back up
 let lastResults = null;
 
-function replayTake() {
-  const take = getTake();
+// A take is a list of times in milliseconds, and milliseconds only mean
+// anything against the tempo the notes were at when it was recorded. Changing
+// the tempo rescales every note in the piece, so a take kept from an earlier
+// session has to be rescaled the same way or its outlines land on nothing.
+function scaleTake(take, from, to) {
+  if (!take || !from || !to || from === to) return take;
+  const k = from / to;
+  const scale = (n) => ({ ...n, startTime: n.startTime * k, duration: n.duration * k });
+  return {
+    range: take.range
+      ? { startMs: take.range.startMs * k, endMs: take.range.endMs * k,
+          tailMs: (take.range.tailMs || 0) * k }
+      : null,
+    notes: take.notes.map(scale),
+    expected: take.expected.map(n => ({ ...n, startTime: n.startTime * k })),
+  };
+}
+
+function replayTake(source = null, what = 'your take') {
+  const take = source || getTake();
   if (!take || !take.notes.length) {
     showToast('Nothing to replay — no keys were pressed in that run', 2200);
     return;
@@ -1831,8 +1907,20 @@ function replayTake() {
   // Reaching the end puts the results back up, so Try Again and the practice
   // suggestion are where they were rather than a screen the replay swallowed
   replayStopper = on('transport:stop', () => endReplay(true));
-  showToast('Replaying your take — outlines are the keys you pressed', 2600);
+  showToast(`Replaying ${what} — outlines are the keys you pressed`, 2600);
   playRange(from, to);
+}
+
+// The best run of this passage, at this hand setting and this speed, played
+// back against the piece as it stands now
+function replayBest() {
+  const best = trainingRunKey && bestFor(trainingRunKey);
+  if (!best?.take) {
+    showToast('No best run kept for this passage yet', 2200);
+    return;
+  }
+  replayTake(scaleTake(best.take, best.tempo, state.composition.tempo),
+             `your best (${best.score}%)`);
 }
 
 // Whatever ends the replay — it running out, the transport being stopped, a new
@@ -3436,6 +3524,48 @@ function updateChordOverlay() {
   }, 120);
 }
 
+// What this passage says about itself, under the score: whether the run just
+// played is the best one at this speed with this hand, and what it beat.
+//
+// Nothing at all on a first attempt. A number to compare against is only worth
+// putting on the screen once there is something to compare with, and a line
+// saying "best: 64%" under a 64% is noise.
+function showBestLine() {
+  const line = document.getElementById('best-line');
+  const replayBtn = document.getElementById('btn-replay-best');
+  const best = trainingRunKey ? bestFor(trainingRunKey) : null;
+  const bpm = effectiveBpm();
+
+  if (!best && !lastAbandoned) {
+    line.classList.add('hidden');
+    replayBtn.classList.add('hidden');
+    return;
+  }
+
+  line.classList.remove('hidden');
+  line.classList.toggle('fresh', lastWasBest);
+  if (lastAbandoned) {
+    // Said rather than left to be noticed: a run that scored well on the part
+    // that was played and then vanished without setting anything looks broken.
+    line.innerHTML = best
+      ? `Stopped early, so this one is not kept · your best at ${bpm} BPM is <b>${best.score}%</b>`
+      : 'Stopped before the end, so this one is not kept as a best';
+  } else if (lastWasBest) {
+    line.innerHTML = bestBefore
+      ? `New best at ${bpm} BPM — <b>${best.score}%</b>, past your <b>${bestBefore.score}%</b>`
+      : `Your first time through at ${bpm} BPM — <b>${best.score}%</b> to beat`;
+  } else {
+    line.innerHTML = `Your best at ${bpm} BPM is <b>${best.score}%</b>` +
+      `<span class="best-detail"> · ${best.perfect} perfect, ${best.missed} missed, ${best.extra} extra</span>`;
+  }
+
+  // Only when it is a different run from the one already on the screen — after
+  // a new best the two are the same take, and "Replay my take" is that button.
+  const offerBest = !lastWasBest && Boolean(best?.take);
+  replayBtn.classList.toggle('hidden', !offerBest);
+  if (offerBest) replayBtn.onclick = replayBest;
+}
+
 function showAccuracyResults(results) {
   lastResults = results;
   const modal = document.getElementById('accuracy-modal');
@@ -3468,9 +3598,11 @@ function showAccuracyResults(results) {
     arc.style.stroke = score >= 80 ? '#2ecc71' : score >= 50 ? '#f1c40f' : '#e74c3c';
   }
 
+  showBestLine();
+
   // Offer the roughest couple of bars, when there is one worth repeating
   const worst = getWorstSection(state.composition);
-  document.getElementById('btn-replay-take').onclick = replayTake;
+  document.getElementById('btn-replay-take').onclick = () => replayTake();
   const sectionBtn = document.getElementById('btn-train-section');
   if (worst) {
     sectionBtn.hidden = false;
