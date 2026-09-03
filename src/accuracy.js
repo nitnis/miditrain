@@ -12,10 +12,33 @@ const ALMOST_MS = 350;
 // at roughly the right time, which is not the same as missing it.
 const GRADE_CREDIT = { perfect: 1, good: 1, almost: 0.5, miss: 0 };
 
+// ── Stars ────────────────────────────────────────────────────────────────────
+//
+// The percentage answers "did you get the notes". It deliberately does not
+// separate a note played inside fifty milliseconds from one played inside a
+// hundred and fifty: both are the right note at the right time, and a player
+// working a passage up needs to see it reach a hundred.
+//
+// Which leaves nothing above a hundred to aim at. The stars are that: ten of
+// them, and only a run where every single note landed *perfect* gets all ten.
+// A run that is entirely "good" — every note right, none of them tight — is a
+// creditable seven and a half, and the last two and a half are the difference
+// between playing the passage and owning it.
+export const STAR_COUNT = 10;
+const STAR_CREDIT = { perfect: 1, good: 0.75, almost: 0.4, miss: 0 };
+// Quarters. Finer would be a number nobody can read off a row of stars.
+const STAR_STEP = 0.25;
+
 // A wrong note is not free. Credit alone only measures the notes that were
 // written, so a run peppered with extras could otherwise score as cleanly as
 // one that hit nothing it shouldn't have. Each extra costs a flat slice.
-export const EXTRA_PENALTY_PCT = 3;
+//
+// A small slice. It was three points, which on a short exercise put a single
+// slip most of the way to a grade of its own — and a wrong note struck while
+// reaching for the right one is the ordinary texture of practising something
+// too fast, not a thing to be fined for. What the charge is really here to
+// stop is further down: covering the keyboard so that something lands right.
+export const EXTRA_PENALTY_PCT = 1.5;
 
 // ...but a flat slice is the wrong price for a stray note in an ordinary run.
 // A missed note costs one note's worth of the piece — 100/total — so in
@@ -46,6 +69,18 @@ function extraCost(extras, total) {
 
 function extraPenalty(extras, total) {
   return extraCost(extras, total).penalty;
+}
+
+// Ten stars, off the same run as the percentage but reading it more strictly.
+// Extras are charged here too, converted at the rate the percentage uses them —
+// one rule for what a wrong note costs, expressed in whichever unit is being
+// shown.
+function starsFor(notes, extras) {
+  if (!notes.length) return 0;
+  const credit = notes.reduce((sum, n) => sum + (STAR_CREDIT[n.grade] ?? 0), 0);
+  const earned = (credit / notes.length) * STAR_COUNT;
+  const charged = earned - extraCost(extras, notes.length).penalty / (100 / STAR_COUNT);
+  return Math.max(0, Math.round(charged / STAR_STEP) * STAR_STEP);
 }
 
 // How near an unplayed note a stray keypress has to be to have been played
@@ -292,7 +327,7 @@ function countGrade(grade) {
 function computeResults() {
   const total = expectedNotes.length;
   if (total === 0) {
-    return { score: 0, perfect: 0, good: 0, almost: 0, correct: 0, missed: 0, extra: 0, avgLatencyMs: 0, total: 0 };
+    return { score: 0, stars: 0, perfect: 0, good: 0, almost: 0, correct: 0, missed: 0, extra: 0, avgLatencyMs: 0, total: 0 };
   }
 
   const perfect = countGrade('perfect');
@@ -309,7 +344,8 @@ function computeResults() {
   const score = scoreFor(credit, total, extra);
 
   return {
-    score, perfect, good, almost, correct: perfect + good, missed, extra, avgLatencyMs, total,
+    score, stars: starsFor(expectedNotes, extra),
+    perfect, good, almost, correct: perfect + good, missed, extra, avgLatencyMs, total,
     // What the extras actually cost, so the results screen can say it rather
     // than recomputing a rule it does not own
     penalty: Math.round(extraCost(extra, total).penalty),
