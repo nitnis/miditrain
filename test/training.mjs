@@ -35,7 +35,31 @@ await page.waitForTimeout(1300);
 // leaves a real second bar on the other side of it to stray into.
 await page.evaluate(async () => {
   const { state, update, emit, on } = await import('/src/state.js');
+  const acc = await import('/src/accuracy.js');
   const T = { state, update, emit, on };
+
+  // Every run, kept whole. Printed only when something fails — a failure here
+  // is nearly always about what one keypress graded as, and a name and a
+  // got/want two hundred lines from the run that caused it is not enough to
+  // tell a real defect from the machine having been busy.
+  T.log = [];
+  const record = (label, results) => {
+    const take = acc.getTake();
+    T.log.push({
+      label,
+      score: results.score,
+      perfect: results.perfect, good: results.good, almost: results.almost,
+      missed: results.missed, extra: results.extra,
+      penalty: results.penalty, total: results.total,
+      completed: results.completed,
+      // How each written note turned out, and by how much it was late or early
+      notes: acc.getAccuracyResults().map(n => [n.grade, Math.round(n.latencyMs ?? 0)]),
+      // Every key that went down: when, and what it was counted as
+      keys: (take?.notes || []).map(n =>
+        [n.pitch, Math.round(n.startTime), n.matched ? 'hit' : n.after ? 'after' : n.stray ? 'stray' : 'stood-in']),
+    });
+    return results;
+  };
 
   T.setup = async () => {
     const notes = [];
@@ -54,7 +78,7 @@ await page.evaluate(async () => {
   };
 
   // A run given up on partway: press a couple of keys, then Stop
-  T.abandon = (presses, stopAt) => new Promise((resolve) => {
+  T.abandon = (label, presses, stopAt) => new Promise((resolve) => {
     const pending = [...presses];
     const tick = (now) => {
       while (pending.length && pending[0][0] <= now) {
@@ -64,7 +88,9 @@ await page.evaluate(async () => {
       if (now >= stopAt) { offTick(); document.getElementById('btn-stop').click(); }
     };
     const offTick = on('transport:tick', tick);
-    const offDone = on('accuracy:complete', (results) => { offDone(); resolve(results); });
+    const offDone = on('accuracy:complete', (results) => {
+      offDone(); resolve(record(label, results));
+    });
     if (!state.ui.trainMode) document.getElementById('btn-train-mode').click();
     document.getElementById('btn-play').click();
   });
@@ -84,7 +110,7 @@ await page.evaluate(async () => {
   // driver's. A timer under a busy page drifts by a couple of hundred
   // milliseconds, which is the difference between "perfect" and "almost" and
   // would make every score here a measure of how loaded the machine was.
-  T.run = (presses) => new Promise((resolve) => {
+  T.run = (label, presses) => new Promise((resolve) => {
     const pending = [...presses];
     const tick = (now) => {
       while (pending.length && pending[0][0] <= now) {
@@ -95,7 +121,7 @@ await page.evaluate(async () => {
     };
     const offTick = on('transport:tick', tick);
     const offDone = on('accuracy:complete', (results) => {
-      offTick(); offDone(); resolve(results);
+      offTick(); offDone(); resolve(record(label, results));
     });
     if (!state.ui.trainMode) document.getElementById('btn-train-mode').click();
     document.getElementById('btn-play').click();
@@ -106,9 +132,10 @@ await page.evaluate(async () => {
 
 const setup = () => page.evaluate(() => window.__t.setup());
 const section = (a, b) => page.evaluate(([s, e]) => window.__t.section(s, e), [a, b]);
-const run = (presses) => page.evaluate(p => window.__t.run(p), presses);
-const abandon = (presses, stopAt) =>
-  page.evaluate(([p, s]) => window.__t.abandon(p, s), [presses, stopAt]);
+const run = (label, presses) =>
+  page.evaluate(([l, p]) => window.__t.run(l, p), [label, presses]);
+const abandon = (label, presses, stopAt) =>
+  page.evaluate(([l, p, s]) => window.__t.abandon(l, p, s), [label, presses, stopAt]);
 const profile = () => page.evaluate(async () =>
   (await import('/src/profiles.js')).current());
 
@@ -120,13 +147,13 @@ let r;
 
 // ── a key struck after the section is over ───────────────────────────────────
 await section(1, 1);
-r = await run([...CLEAN, [2200, 71]]);
+r = await run('bar 1 clean, one key struck at 2200 (after the section)', [...CLEAN, [2200, 71]]);
 check('clean run, one key struck after the section: no extras', r.extra, 0);
 check('...with all four notes graded and none missed', [r.perfect + r.good, r.missed], [4, 0]);
 check('...so nothing at all was charged against it', r.penalty, 0);
 
 // The same keypress inside the section is what an extra is
-r = await run([...CLEAN, [1250, 71]]);
+r = await run('bar 1 clean, one key struck at 1250 (inside the section)', [...CLEAN, [1250, 71]]);
 check('the same key struck inside the section is an extra', r.extra, 1);
 
 // ── the boundary is the last note's window, not just the barline ─────────────
@@ -134,7 +161,7 @@ check('the same key struck inside the section is an extra', r.extra, 1);
 // Training the whole piece has no range at all. The passage is over once the
 // last note can no longer be played, and playback runs on past that.
 await section(0, 0);
-r = await run([
+r = await run('whole piece clean, one key struck at 3900 (past the last note)', [
   ...CLEAN, [2000, 67], [2500, 69], [3000, 71], [3500, 72],
   [3900, 59],   // 400 ms past the last note: too late to be it, too late to count
 ]);
@@ -162,7 +189,7 @@ await section(1, 1);
 // Its score is a measure of when the player stopped, not of how they played,
 // and left to stand on a first attempt it would be a best that every later run
 // "beats" for no reason at all.
-r = await abandon([[10, 60], [500, 62]], 900);
+r = await abandon('two of four, then Stop at 900', [[10, 60], [500, 62]], 900);
 check('a run stopped partway says so', r.completed, false);
 check('...and is not kept', Object.keys((await profile()).bests).length, 0);
 check('...but the two notes played were still graded',
@@ -173,7 +200,7 @@ check('...and says why nothing was kept',
 
 // Two notes of four, played through to the end of the section: a real attempt,
 // and something for a later run to beat
-r = await run([[10, 60], [500, 62]]);
+r = await run('two of four, played through', [[10, 60], [500, 62]]);
 check('a partial run played to the end is recorded as the best so far', r.score < 100, true);
 check('...and counts as played through', r.completed, true);
 
@@ -186,14 +213,14 @@ check('...and the tempo those times are in', p.bests[key120].tempo, 120);
 const partialScore = p.bests[key120].score;
 
 // A better run takes it over, take and all
-const clean = await run(CLEAN);
+const clean = await run('the reference clean run', CLEAN);
 p = await profile();
 check('a clean run beats it', clean.score > partialScore, true);
 check('...and takes the best', p.bests[key120].score, clean.score);
 check('...bringing its own take with it', p.bests[key120].take.notes.length, 4);
 
 // A worse one afterwards does not displace it
-r = await run([[10, 60]]);
+r = await run('one of four', [[10, 60]]);
 check('a worse run scores lower', r.score < clean.score, true);
 p = await profile();
 check('...and the best still stands', p.bests[key120].score, clean.score);
@@ -205,7 +232,7 @@ await page.evaluate(async () => {
   const { update } = await import('/src/state.js');
   update('ui.practiceHand', 'right');
 });
-r = await run(CLEAN);
+r = await run('clean, right hand only', CLEAN);
 p = await profile();
 check('practising one hand keeps its own best',
   Object.keys(p.bests).some(k => k.endsWith('|1-1|right|120')), true);
@@ -217,7 +244,7 @@ await page.evaluate(async () => {
   update('ui.practiceHand', 'both');
   update('transport.speed', 1.5);       // 120 BPM taken at 150% is 180 to the fingers
 });
-r = await run(CLEAN);
+r = await run('clean, at 150% speed', CLEAN);
 p = await profile();
 check('a faster run is a separate best',
   Object.keys(p.bests).some(k => k.endsWith('|1-1|both|180')), true);
@@ -225,7 +252,7 @@ await page.evaluate(async () =>
   (await import('/src/state.js')).update('transport.speed', 1));
 
 // ── the results screen says so, and offers the best back ─────────────────────
-r = await run([[10, 60], [500, 62]]);          // deliberately worse, so a best stands over it
+r = await run('two of four, so a best stands over it', [[10, 60], [500, 62]]);
 await page.waitForTimeout(300);
 check('the results screen names the best',
   (await page.locator('#best-line').textContent()).includes(`Your best at 120 BPM is ${clean.score}%`), true);
@@ -247,7 +274,7 @@ await page.waitForTimeout(400);
 // press landing a frame late is an "almost" rather than a "perfect", and a test
 // that demanded a tie would be demanding that the machine was equally busy both
 // times.
-r = await run(CLEAN);
+r = await run('a second clean run, against the reference one', CLEAN);
 await page.waitForTimeout(300);
 const top = Math.max(clean.score, r.score);
 p = await profile();
@@ -257,11 +284,21 @@ check('...and the line says which of the two just happened',
     .startsWith(r.score > clean.score ? 'New best' : 'Your best'), true);
 
 // ── it survives a reload ─────────────────────────────────────────────────────
+// The log lives on the page, and the reload below is about to take it with
+// everything else, so it comes off here rather than at the end
+const log = await page.evaluate(() => window.__t.log);
 const before = JSON.stringify((await profile()).bests[key120]);
 await page.reload();
 await page.waitForTimeout(1400);
 check('the best is still there after a reload',
   JSON.stringify((await profile()).bests[key120]), before);
+
+// Pulled before the browser goes, printed only if it is needed
+const bests = await page.evaluate(async () => {
+  const { current } = await import('/src/profiles.js');
+  return Object.fromEntries(Object.entries(current().bests || {})
+    .map(([k, v]) => [k, { score: v.score, tempo: v.tempo, takeNotes: v.take?.notes.length ?? null }]));
+});
 
 await browser.close();
 
@@ -270,6 +307,29 @@ for (const c of checks) {
   console.log(`  ${c.ok ? 'ok  ' : 'FAIL'}  ${c.name}`);
   if (!c.ok) console.log(`          got ${JSON.stringify(c.got)}\n         want ${JSON.stringify(c.want)}`);
 }
+
+// On failure, the whole session — because a failure here is usually about what
+// one keypress graded as, and the check that reports it can be twenty runs
+// downstream of the run that caused it. `latency` is the one to read first: a
+// press over 50 ms out is an "almost" rather than a "perfect", which moves a
+// score without moving anything the app decided.
+if (failed.length) {
+  console.log('\n  ── every run, in order ─────────────────────────────────────');
+  for (const [i, run] of log.entries()) {
+    console.log(`\n  ${i + 1}. ${run.label}`);
+    console.log(`     score ${run.score}  ·  ${run.perfect} perfect, ${run.good} good, ` +
+                `${run.almost} almost, ${run.missed} missed, ${run.extra} extra ` +
+                `(−${run.penalty}%)  ·  of ${run.total}  ·  ` +
+                `${run.completed ? 'played through' : 'stopped early'}`);
+    console.log(`     written  ${run.notes.map(([g, ms]) => `${g}${g === 'miss' ? '' : `+${ms}ms`}`).join('  ')}`);
+    console.log(`     pressed  ${run.keys.map(([p, at, how]) => `${p}@${at}=${how}`).join('  ')}`);
+  }
+  console.log(`\n  ── bests held at the end ───────────────────────────────────`);
+  for (const [key, b] of Object.entries(bests)) {
+    console.log(`     ${key}  →  ${b.score}% at ${b.tempo} BPM, take of ${b.takeNotes} notes`);
+  }
+}
+
 console.log(`\n  console: ${problems.length ? problems.slice(0, 5).join('\n    ') : 'clean'}`);
 console.log(failed.length ? `\n${failed.length} of ${checks.length} failed.\n`
                           : `\nAll ${checks.length} passed.\n`);
