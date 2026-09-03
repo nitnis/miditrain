@@ -11,7 +11,7 @@ import {
 } from './section-learn.js';
 import { saveComposition, listCompositions, deleteComposition, compositionToJSON, compositionFromJSON } from './storage.js';
 import { compositionToMidi, midiToComposition } from './midi-file.js';
-import { startAccuracy, stopAccuracy, getWorstSection, getTake, EXTRA_PENALTY_PCT } from './accuracy.js';
+import { startAccuracy, stopAccuracy, getWorstSection, getTake, STAR_COUNT } from './accuracy.js';
 import { startMetronome, stopMetronome } from './metronome.js';
 import { resumeAudioContext, applyOutputLevel, applyClicksOnly, silenceMonitored, setPlaybackSource } from './audio.js';
 import { setInputEnabled } from './midi.js';
@@ -3566,11 +3566,34 @@ function showBestLine() {
   if (offerBest) replayBtn.onclick = replayBest;
 }
 
+// ── The star rating ──────────────────────────────────────────────────────────
+
+// Quarters, written the way they are read: 8¾ rather than 8.75.
+const QUARTERS = ['', '¼', '½', '¾'];
+function starText(value) {
+  const whole = Math.floor(value + 1e-9);
+  const quarter = Math.round((value - whole) * 4);
+  return `${whole}${QUARTERS[quarter] || ''}`;
+}
+
+function showStars(value) {
+  const row = document.getElementById('star-rating');
+  row.innerHTML = Array.from({ length: STAR_COUNT }, (_, i) => {
+    // How much of this one was earned: the whole of it until the rating runs
+    // out, then whatever fraction is left, then nothing
+    const fill = Math.max(0, Math.min(1, value - i));
+    return `<span class="star"><i>★</i><b style="width:${(fill * 100).toFixed(0)}%">★</b></span>`;
+  }).join('');
+  row.setAttribute('aria-label', `${starText(value)} out of ${STAR_COUNT} stars`);
+  document.getElementById('star-value').textContent = starText(value);
+}
+
 function showAccuracyResults(results) {
   lastResults = results;
   const modal = document.getElementById('accuracy-modal');
-  const { score, perfect, good, almost, missed, extra, avgLatencyMs } = results;
+  const { score, stars, perfect, good, almost, missed, extra, avgLatencyMs } = results;
 
+  showStars(stars ?? 0);
   showGauge(false);
   // Each results screen re-bases the retry steps on the tempo just played
   retryTempoBase = state.composition.tempo;

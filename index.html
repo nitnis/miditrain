@@ -494,6 +494,11 @@
   <div class="modal-overlay hidden" id="accuracy-modal">
     <div class="modal-box">
       <h2>Training Results</h2>
+      <!-- The headline. The percentage says whether the notes were got; the
+           stars are stricter, and ten of them means every note landed dead on
+           rather than merely in time. -->
+      <div class="star-rating" id="star-rating" role="img" aria-label="0 out of 10 stars"></div>
+      <p class="star-count"><b id="star-value">0</b> of 10</p>
       <div class="accuracy-score-display">
         <svg class="score-ring" viewBox="0 0 120 120">
           <circle class="score-bg" cx="60" cy="60" r="50"/>

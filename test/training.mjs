@@ -30,9 +30,18 @@ await page.waitForTimeout(1300);
 
 // Everything the driver needs, installed once on the page.
 //
-// 120 BPM in 4/4, so a bar is 2000 ms: four notes on the beats of bar one, four
-// more in bar two. Training bar one alone makes the boundary a round number and
-// leaves a real second bar on the other side of it to stray into.
+// 120 BPM in 4/4, so a bar is 2000 ms. Training bar one alone makes the boundary
+// a round number and leaves a real second bar on the other side of it to stray
+// into.
+//
+// Nothing is written on the downbeat. A note due at zero cannot be played on
+// time by anything driven off the transport: the first tick after Play arrives
+// 50-70 ms in, once the audio and the metronome have started and a frame has
+// been laid out, which is one millisecond past the "perfect" window. That made
+// the first note of every run grade "good" instead, and under load "almost" —
+// and the moving score underneath was the whole of this suite's flakiness. So
+// bar one starts on beat two, and every press lands within a frame of its
+// note.
 await page.evaluate(async () => {
   const { state, update, emit, on } = await import('/src/state.js');
   const acc = await import('/src/accuracy.js');
@@ -66,7 +75,7 @@ await page.evaluate(async () => {
     const add = (pitch, at) => notes.push({
       id: crypto.randomUUID(), pitch, velocity: 90, startTime: at, duration: 400,
     });
-    [60, 62, 64, 65].forEach((p, i) => add(p, i * 500));          // bar 1
+    [62, 64, 65].forEach((p, i) => add(p, 500 + i * 500));        // bar 1, beats 2-4
     [67, 69, 71, 72].forEach((p, i) => add(p, 2000 + i * 500));   // bar 2
     state.composition.notes = notes;
     state.composition.tracks = [];
@@ -141,15 +150,15 @@ const profile = () => page.evaluate(async () =>
 
 await setup();
 
-// The four notes of bar one, played dead on
-const CLEAN = [[10, 60], [500, 62], [1000, 64], [1500, 65]];
+// The three notes of bar one, played dead on
+const CLEAN = [[500, 62], [1000, 64], [1500, 65]];
 let r;
 
 // ── a key struck after the section is over ───────────────────────────────────
 await section(1, 1);
 r = await run('bar 1 clean, one key struck at 2200 (after the section)', [...CLEAN, [2200, 71]]);
 check('clean run, one key struck after the section: no extras', r.extra, 0);
-check('...with all four notes graded and none missed', [r.perfect + r.good, r.missed], [4, 0]);
+check('...with every note of the bar graded and none missed', [r.perfect, r.missed], [3, 0]);
 check('...so nothing at all was charged against it', r.penalty, 0);
 
 // The same keypress inside the section is what an extra is
@@ -161,14 +170,12 @@ check('the same key struck inside the section is an extra', r.extra, 1);
 // Training the whole piece has no range at all. The passage is over once the
 // last note can no longer be played, and playback runs on past that.
 await section(0, 0);
-r = await run('whole piece clean, one key struck at 3900 (past the last note)', [
+r = await run('whole piece clean, one key struck at 4000 (past the last note)', [
   ...CLEAN, [2000, 67], [2500, 69], [3000, 71], [3500, 72],
-  [3900, 59],   // 400 ms past the last note: too late to be it, too late to count
+  [4000, 59],   // 500 ms past the last note: too late to be it, too late to count
 ]);
 check('whole piece: a key past the last note is not an extra', r.extra, 0);
-// Graded rather than scored: the subject here is what was charged, and the
-// first press of a run lands on whichever tick the transport gets to first
-check('...and every note of the piece was played', [r.missed, r.perfect + r.good], [0, 8]);
+check('...and every note of the piece was played', [r.missed, r.perfect], [0, 7]);
 
 // ── the take says which keypress was which ───────────────────────────────────
 check('the take marks it as after the run', await page.evaluate(async () => {
@@ -177,6 +184,41 @@ check('the take marks it as after the run', await page.evaluate(async () => {
   const late = t.notes[t.notes.length - 1];
   return { pitch: late.pitch, matched: late.matched, stray: late.stray, after: late.after };
 }), { pitch: 59, matched: false, stray: false, after: true });
+
+// ── stars ────────────────────────────────────────────────────────────────────
+//
+// The claim the stars exist to make: the percentage says whether the notes were
+// got, and reaches a hundred for a note played inside a hundred and fifty
+// milliseconds. Ten stars is stricter than that and can only be had by playing
+// every note inside fifty.
+await section(1, 1);
+r = await run('bar 1, every note dead on', CLEAN);
+check('every note perfect: ten stars', [r.stars, r.perfect], [10, 3]);
+check('...and a hundred per cent', r.score, 100);
+
+// The same three notes, one of them a hundred milliseconds late. Still "good",
+// so still a hundred per cent — and no longer ten stars.
+r = await run('bar 1, one note 100 ms late', [[500, 62], [1000, 64], [1600, 65]]);
+check('a note merely in time still scores a hundred', [r.score, r.good], [100, 1]);
+check('...but not ten stars', r.stars < 10, true);
+check('...at three quarters of a star for the good one', r.stars, 9.25);
+
+// An "almost" is worth less again
+r = await run('bar 1, one note 250 ms late', [[500, 62], [1000, 64], [1750, 65]]);
+check('an almost costs more stars than a good', [r.almost, r.stars], [1, 8]);
+check('...and the percentage notices this one too', r.score < 100, true);
+
+// Stars land on quarters and never below nothing
+check('nothing played at all is no stars', (await run('nothing played', [])).stars, 0);
+
+// ── what a wrong note costs ──────────────────────────────────────────────────
+//
+// Halved, from three points an extra to one and a half. On a three-note
+// exercise a single slip used to be worth more than a missed note.
+r = await run('bar 1 clean, two strays on top', [[500, 62], [700, 73], [1000, 64], [1200, 74], [1500, 65]]);
+check('two extras on a three-note bar', r.extra, 2);
+check('...cost three points, not six', r.penalty, 3);
+check('...and a quarter of a star between them', r.stars, 9.75);
 
 // ── personal bests ───────────────────────────────────────────────────────────
 // On a profile of its own, so what is in it is only what these runs put there
@@ -189,18 +231,17 @@ await section(1, 1);
 // Its score is a measure of when the player stopped, not of how they played,
 // and left to stand on a first attempt it would be a best that every later run
 // "beats" for no reason at all.
-r = await abandon('two of four, then Stop at 900', [[10, 60], [500, 62]], 900);
+r = await abandon('two of three, then Stop at 1400', [[500, 62], [1000, 64]], 1400);
 check('a run stopped partway says so', r.completed, false);
 check('...and is not kept', Object.keys((await profile()).bests).length, 0);
-check('...but the two notes played were still graded',
-  [r.perfect + r.good + r.almost, r.missed], [2, 2]);
+check('...but the two notes played were still graded', [r.perfect, r.missed], [2, 1]);
 await page.waitForTimeout(250);
 check('...and says why nothing was kept',
   (await page.locator('#best-line').textContent()).includes('not kept'), true);
 
 // Two notes of four, played through to the end of the section: a real attempt,
 // and something for a later run to beat
-r = await run('two of four, played through', [[10, 60], [500, 62]]);
+r = await run('two of three, played through', [[500, 62], [1000, 64]]);
 check('a partial run played to the end is recorded as the best so far', r.score < 100, true);
 check('...and counts as played through', r.completed, true);
 
@@ -217,14 +258,14 @@ const clean = await run('the reference clean run', CLEAN);
 p = await profile();
 check('a clean run beats it', clean.score > partialScore, true);
 check('...and takes the best', p.bests[key120].score, clean.score);
-check('...bringing its own take with it', p.bests[key120].take.notes.length, 4);
+check('...bringing its own take with it', p.bests[key120].take.notes.length, 3);
 
 // A worse one afterwards does not displace it
-r = await run('one of four', [[10, 60]]);
+r = await run('one of three', [[500, 62]]);
 check('a worse run scores lower', r.score < clean.score, true);
 p = await profile();
 check('...and the best still stands', p.bests[key120].score, clean.score);
-check('...still holding the run that set it', p.bests[key120].take.notes.length, 4);
+check('...still holding the run that set it', p.bests[key120].take.notes.length, 3);
 check('...and the partial run it beat is gone', partialScore < 100, true);
 
 // ── the same passage with the other hand is a different thing ────────────────
@@ -252,7 +293,7 @@ await page.evaluate(async () =>
   (await import('/src/state.js')).update('transport.speed', 1));
 
 // ── the results screen says so, and offers the best back ─────────────────────
-r = await run('two of four, so a best stands over it', [[10, 60], [500, 62]]);
+r = await run('two of three, so a best stands over it', [[500, 62], [1000, 64]]);
 await page.waitForTimeout(300);
 check('the results screen names the best',
   (await page.locator('#best-line').textContent()).includes(`Your best at 120 BPM is ${clean.score}%`), true);
