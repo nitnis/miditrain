@@ -48,6 +48,20 @@ That dump is still here: on any failure the suite prints every run — the count
 whether it played through, how each written note graded and by how much it was
 late, and every key that went down with what it was counted as.
 
+### Some things only go wrong on a long passage
+
+Most of the runs here are a three-note bar, which is quick and enough for
+almost everything. It is not enough for anything to do with how the rating is
+rounded: on three notes one loose note is worth a third of a star, so no
+rounding rule can hide it, and every star case passed while the released
+build gave a full ten stars to a forty-two-note run with two loose notes in
+it. The suite could not have caught that, because none of it was long enough
+for the fault to exist.
+
+So there is a twenty-note fixture as well, and the star checks that depend on
+length use it. Its rule of thumb: if a property is about a *proportion* of the
+notes, it has to be tested at a length where that proportion can be small.
+
 ## `tracks.mjs` — multi-track MIDI
 
 Walks a three-part file, built in the script rather than kept as a fixture,
