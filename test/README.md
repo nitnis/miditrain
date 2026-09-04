@@ -19,16 +19,34 @@ bus — the same event `midi.js` emits from a real device — and everything on 
 other side of it is the real thing: the real transport, the real section range,
 the real grading windows, the real profile store.
 
+It covers the things that are easy to get subtly wrong: which keypresses are
+charged as extras (a note struck after the passage is over is not one), what
+separates ten stars from a hundred per cent, and what makes two runs comparable
+— the same piece, the same bars, the same hand, the same speed.
+
+### Playing in time, from a script
+
+Two things had to be right before any of the scores here meant anything, and
+both were learned by getting them wrong.
+
 The keys go down on `transport:tick` rather than on a timer of the driver's. A
 `setTimeout` on a page that is also animating falling notes drifts by a couple of
 hundred milliseconds under load, which is exactly the gap between *perfect* and
-*almost*, and every score here would have been a measurement of how busy the
-machine was.
+*almost*, and every score here was a measurement of how busy the machine was.
 
-It covers the two things that are easy to get subtly wrong: which keypresses are
-charged as extras (a note struck after the passage is over is not one), and what
-makes two runs comparable — the same piece, the same bars, the same hand, the
-same speed.
+And **nothing in the fixture is written on the downbeat.** A note due at zero
+cannot be played on time by anything driven off the transport: the first tick
+after Play arrives 50–70 ms in, once the audio and the metronome have started
+and a frame has been laid out. That is one millisecond past the *perfect*
+window, so the first note of every run graded *good* instead — and under load,
+*almost*. It was the whole of this suite's intermittent failure, and it took a
+full dump of every run to see it, because the check that failed was usually
+twenty runs downstream of the run that caused it. Bar one now starts on beat
+two, and every press lands within a frame of its note.
+
+That dump is still here: on any failure the suite prints every run — the counts,
+whether it played through, how each written note graded and by how much it was
+late, and every key that went down with what it was counted as.
 
 ## `tracks.mjs` — multi-track MIDI
 
