@@ -153,6 +153,7 @@ await setup();
 // The three notes of bar one, played dead on
 const CLEAN = [[500, 62], [1000, 64], [1500, 65]];
 let r;
+let p;
 
 // ── a key struck after the section is over ───────────────────────────────────
 await section(1, 1);
@@ -220,6 +221,46 @@ check('two extras on a three-note bar', r.extra, 2);
 check('...cost three points, not six', r.penalty, 3);
 check('...and a quarter of a star between them', r.stars, 9.75);
 
+// ── the stars decide which run was the better one ────────────────────────────
+//
+// The percentage and the stars can disagree, and this is the case where they
+// do. The percentage cannot tell a note played inside fifty milliseconds from
+// one played inside a hundred and fifty; the stars can. So a run that is
+// entirely "good" takes a hundred per cent with seven and a half stars, while
+// one that is mostly "perfect" with a sloppy note takes eighty-three with
+// eight — and ranking those by percentage put the looser run on top and then
+// showed the player their stars going down as they "improved".
+await page.evaluate(async () =>
+  (await import('/src/profiles.js')).createProfile('Stars decide'));
+await section(1, 1);
+
+const tight = await run('two dead on, one 250 ms late', [[500, 62], [1000, 64], [1750, 65]]);
+const loose = await run('all three 100 ms late', [[600, 62], [1100, 64], [1600, 65]]);
+check('the looser run scores higher', loose.score > tight.score, true);
+check('...and the tighter run earns more stars', tight.stars > loose.stars, true);
+
+p = await profile();
+const inverted = Object.keys(p.bests)[0];
+check('the best kept is the one with more stars', p.bests[inverted].stars, tight.stars);
+check('...not the one with the higher percentage', p.bests[inverted].score, tight.score);
+await page.waitForTimeout(250);
+check('...and the screen does not call the looser run a new best',
+  (await page.locator('#best-line').textContent()).startsWith('Your best'), true);
+check('...saying where the bar is in stars',
+  (await page.locator('#best-line').textContent()).includes('8 stars'), true);
+
+// A best set before the stars existed carries none, and none can be worked out
+// from its percentage — so those fall back to comparing percentages rather than
+// being written off by the first run that comes along.
+await page.evaluate(async (key) => {
+  const { current } = await import('/src/profiles.js');
+  current().bests[key] = { ...current().bests[key], stars: null, score: 50 };
+}, inverted);
+r = await run('clean, over a best that predates the stars', CLEAN);
+p = await profile();
+check('a best with no stars is judged on percentage instead',
+  [p.bests[inverted].score, p.bests[inverted].stars], [r.score, r.stars]);
+
 // ── personal bests ───────────────────────────────────────────────────────────
 // On a profile of its own, so what is in it is only what these runs put there
 await page.evaluate(async () =>
@@ -245,7 +286,7 @@ r = await run('two of three, played through', [[500, 62], [1000, 64]]);
 check('a partial run played to the end is recorded as the best so far', r.score < 100, true);
 check('...and counts as played through', r.completed, true);
 
-let p = await profile();
+p = await profile();
 const key120 = Object.keys(p.bests).find(k => k.endsWith('|1-1|both|120'));
 check('one best, keyed by piece, bars, hand and speed', Object.keys(p.bests).length, 1);
 check('the key names the bars, the hand and the speed', Boolean(key120), true);
@@ -296,7 +337,8 @@ await page.evaluate(async () =>
 r = await run('two of three, so a best stands over it', [[500, 62], [1000, 64]]);
 await page.waitForTimeout(300);
 check('the results screen names the best',
-  (await page.locator('#best-line').textContent()).includes(`Your best at 120 BPM is ${clean.score}%`), true);
+  (await page.locator('#best-line').textContent())
+    .includes(`Your best at 120 BPM is ${clean.stars} stars`), true);
 check('...and offers to play it', await page.locator('#btn-replay-best').isVisible(), true);
 
 await page.click('#btn-replay-best');
