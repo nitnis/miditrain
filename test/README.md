@@ -48,6 +48,18 @@ That dump is still here: on any failure the suite prints every run — the count
 whether it played through, how each written note graded and by how much it was
 late, and every key that went down with what it was counted as.
 
+### Two things about driving the app from here
+
+A run leaves its results screen up, and that screen covers the toolbar. Runs
+press Play from *inside* the page — `document.getElementById('btn-play').click()`
+— which does not care about overlays. Real Playwright clicks on real toolbar
+buttons do, so anything driving the toolbar calls `closeResults()` first.
+
+The profile folder is a browser handle a person can only grant by clicking, so
+the folder tests fake it — and only it. What decides when to write, what the
+file is called and what goes into it is the real code; every write it makes
+lands in an array the test reads back.
+
 ### Some things only go wrong on a long passage
 
 Most of the runs here are a three-note bar, which is quick and enough for

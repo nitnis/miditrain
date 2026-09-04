@@ -6,7 +6,7 @@ import { refreshSuggestions, hasSuggestions } from './autofinger.js';
 import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWaitingPitches, setFallingBlind, setLoopPick, setTakeGhosts, noteAtFallingPoint, fallingMsPerPixel, HAND_COLORS } from './pianoroll.js';
 import { startLearn, stopLearn, isHoldingMessage, CLUSTERS } from './learn.js';
 import {
-  startSectionWalk, stopSectionWalk, repeatSection, advanceSection,
+  startSectionWalk, stopSectionWalk, repeatSection, advanceSection, previousSection,
   handOverForTraining, isWalking, buildSections,
 } from './section-learn.js';
 import { saveComposition, listCompositions, deleteComposition, compositionToJSON, compositionFromJSON } from './storage.js';
@@ -1141,8 +1141,72 @@ function barsLabel({ startBar, endBar }) {
   return startBar === endBar ? `bar ${startBar}` : `bars ${startBar}–${endBar}`;
 }
 
+// ── Stepping between sections ────────────────────────────────────────────────
+//
+// Train and Learn both work on the section the playhead is in, so choosing a
+// section meant scrubbing until the playhead landed in the right one. These
+// move it a whole section at a time instead.
+//
+// While a section walk is running they step the walk itself, because that is
+// what "the next section" means at that moment — the walk owns the transport
+// and moving the playhead underneath it would be talking past it.
+
+function sectionList() {
+  const size = sectionSize();
+  return size ? buildSections(size) : [];
+}
+
+function stepSection(delta) {
+  if (isWalking()) {
+    if (delta < 0) previousSection(); else advanceSection();
+    return;
+  }
+  const sections = sectionList();
+  if (!sections.length) {
+    showToast('Choose a section size to step through the piece', 2000);
+    return;
+  }
+
+  const { tempo, timeSignature } = state.composition;
+  const here = barAtMs(state.transport.currentTime, tempo, timeSignature);
+  // The last section that has started. A playhead sitting before the first one
+  // — or in a stretch of rests between two — belongs to the one behind it.
+  let at = -1;
+  for (let i = 0; i < sections.length; i++) if (sections[i].startBar <= here) at = i;
+
+  const to = Math.min(sections.length - 1, Math.max(0, at + delta));
+  if (to === at) {
+    showToast(delta < 0 ? 'Already at the first section' : 'Already at the last section', 1600);
+    return;
+  }
+
+  const target = sections[to];
+  seekTo(barRangeMs(target.startBar, target.endBar, tempo, timeSignature).startMs);
+  showToast(`Section ${to + 1} of ${sections.length} · bars ${target.startBar}–${target.endBar}`, 1900);
+}
+
+// Nothing to step through while the piece is one section, or while it has no
+// notes. The buttons dim rather than vanishing, so the row does not reflow.
+function syncSectionButtons() {
+  const usable = isWalking() || sectionList().length > 1;
+  for (const id of ['btn-prev-section', 'btn-next-section']) {
+    document.getElementById(id).disabled = !usable;
+  }
+}
+
 function bindSectionWalk() {
   const modal = document.getElementById('section-modal');
+
+  document.getElementById('btn-prev-section').onclick = () => stepSection(-1);
+  document.getElementById('btn-next-section').onclick = () => stepSection(1);
+  on('change:ui.learnSectionBars', syncSectionButtons);
+  on('change:ui.practiceHand', syncSectionButtons);
+  on('transport:noteschanged', syncSectionButtons);
+  on('change:transport.loopEnabled', syncSectionButtons);
+  // A walk owns the buttons while it runs, so they follow it starting and ending
+  on('sections:preview', syncSectionButtons);
+  on('sections:end', syncSectionButtons);
+  syncSectionButtons();
 
   on('sections:preview', (s) => {
     showLearnStatus(true);
@@ -1792,6 +1856,35 @@ function recordBest(results) {
   lastWasBest = rememberBest(trainingRunKey, {
     ...results, tempo: trainingRunTempo, take: getTake(),
   });
+  if (lastWasBest) keepBestOnDisk();
+}
+
+// A best is written out the moment it is set, rather than waiting for Save.
+//
+// It is the thing a player would most mind losing, and until now the only copy
+// lived in browser storage — which a browser is entitled to evict, and which
+// does not survive clearing site data or moving to another machine. Pressing
+// Save was the only thing that ever put it on disk.
+//
+// The folder can only be asked for with a gesture behind it, and finishing a
+// run is not one, so this writes only where the player has already chosen a
+// folder and granted it. Where they have not, the best is still kept in the
+// browser and they are told once what would make it durable.
+let toldAboutFolder = false;
+async function keepBestOnDisk() {
+  try {
+    if (!canUseFolder()) return;
+    const handle = await folderHandle();
+    if (!handle) {
+      if (toldAboutFolder) return;
+      toldAboutFolder = true;
+      showToast('New best kept in this browser · choose a profile folder under Profiles… to keep it on disk too', 5000);
+      return;
+    }
+    await writeToFolder(handle, fileNameFor(currentProfile()), bundleToJSON(collectBundle()));
+  } catch (err) {
+    showToast(`New best kept, but the folder refused it: ${err.message}`, 4000);
+  }
 }
 
 // The section size divides a piece for training the same way it divides one for
