@@ -277,8 +277,24 @@ await page.evaluate(async (key) => {
 }, inverted);
 r = await run('clean, over a best that predates the stars', CLEAN);
 p = await profile();
-check('a best with no stars is judged on percentage instead',
+check('a best that cannot be rated yields to one that can',
   [p.bests[inverted].score, p.bests[inverted].stars], [r.score, r.stars]);
+
+// ...and a stored one is rated from the tallies it kept rather than left
+// unrateable. This is the reported run: forty perfect notes and two good ones,
+// recorded before the stars existed. Left without them it sat at a hundred per
+// cent, which nothing can beat, and every later run tied it and stood down.
+check('a best from before the stars is rated from its tallies',
+  await page.evaluate(async () => {
+    const { adoptProfile } = await import('/src/profiles.js');
+    const key = 'Legacy|1-1|both|120';
+    const adopted = adoptProfile({
+      id: crypto.randomUUID(), name: 'From before the stars',
+      bests: { [key]: { score: 100, perfect: 40, good: 2, almost: 0, missed: 0,
+                        extra: 0, total: 42, tempo: 120 } },
+    });
+    return adopted.bests[key].stars;
+  }), 9.75);
 
 // ── personal bests ───────────────────────────────────────────────────────────
 // On a profile of its own, so what is in it is only what these runs put there
@@ -319,10 +335,16 @@ p = await profile();
 check('a clean run beats it', clean.score > partialScore, true);
 check('...and takes the best', p.bests[key120].score, clean.score);
 check('...bringing its own take with it', p.bests[key120].take.notes.length, 3);
+await page.waitForTimeout(250);
+check('...and is said out loud', await page.locator('#best-cheer').isVisible(), true);
+check('...in terms of what was achieved',
+  (await page.locator('#best-cheer').textContent()).includes('Flawless'), true);
 
 // A worse one afterwards does not displace it
 r = await run('one of three', [[500, 62]]);
 check('a worse run scores lower', r.score < clean.score, true);
+await page.waitForTimeout(250);
+check('...and nothing is cheered', await page.locator('#best-cheer').isVisible(), false);
 p = await profile();
 check('...and the best still stands', p.bests[key120].score, clean.score);
 check('...still holding the run that set it', p.bests[key120].take.notes.length, 3);

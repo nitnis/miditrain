@@ -8,6 +8,7 @@
 // then a profile can be written out and read back — but the browser is where
 // the app looks first, because a folder needs permission the app may not have.
 import { emit } from './state.js';
+import { starsFromCounts } from './accuracy.js';
 
 const STORE_KEY = 'miditrain.profiles';
 const HANDLE_DB = 'miditrain-folder';
@@ -137,20 +138,29 @@ function sanitiseBests(raw) {
     // Field for field, and in the same order, as what `rememberBest` writes —
     // so a record read back off disk is indistinguishable from the one that was
     // just put there, down to the shape
-    out[String(key).slice(0, 240)] = {
-      score: int(value.score, 0, 100, 0),
-      // Null on a record written before the stars existed. Not guessed from
-      // the score, because the two do not determine each other — see
-      // `beats` below.
-      stars: Number.isFinite(value.stars)
-        ? Math.min(10, Math.max(0, Math.round(value.stars * 4) / 4))
-        : null,
+    const counts = {
       perfect: int(value.perfect, 0, 1e6, 0),
       good: int(value.good, 0, 1e6, 0),
       almost: int(value.almost, 0, 1e6, 0),
       missed: int(value.missed, 0, 1e6, 0),
       extra: int(value.extra, 0, 1e6, 0),
       total: int(value.total, 0, 1e6, 0),
+    };
+    out[String(key).slice(0, 240)] = {
+      score: int(value.score, 0, 100, 0),
+      // A record written before the stars existed has none. It is worked out
+      // here from the tallies it does have — which is exactly what the rating
+      // is made of — rather than left empty.
+      //
+      // Left empty it was unbeatable. Two records can only be compared on stars
+      // when both have them, so one without fell back to the percentage, and a
+      // percentage already at a hundred can never be improved on: every later
+      // run tied it and stood down, however much better it actually was. The
+      // player watched their stars climb and their best sit still.
+      stars: Number.isFinite(value.stars)
+        ? Math.min(10, Math.max(0, Math.round(value.stars * 4) / 4))
+        : (counts.total ? starsFromCounts(counts) : null),
+      ...counts,
       avgLatencyMs: int(value.avgLatencyMs, 0, 100000, 0),
       // The composition tempo the run was played at. The take's times are in
       // milliseconds against that tempo, so replaying it against the piece at
@@ -306,7 +316,11 @@ export function bestFor(key) {
 // inferred from its score for exactly that reason. Those fall back to the
 // percentage rather than being written off.
 function beats(run, standing) {
-  if (run.stars == null || standing.stars == null) return run.score > standing.score;
+  // A record with no stars and no tallies to work them out from cannot be rated
+  // at all. It yields to one that can be, as soon as it is matched, rather than
+  // standing for ever on a percentage that has nothing above it to beat.
+  if (standing.stars == null) return run.score >= standing.score;
+  if (run.stars == null) return run.score > standing.score;
   return run.stars !== standing.stars ? run.stars > standing.stars : run.score > standing.score;
 }
 

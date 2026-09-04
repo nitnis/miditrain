@@ -89,12 +89,28 @@ function extraPenalty(extras, total) {
 // Extras are charged here too, converted at the rate the percentage uses them —
 // one rule for what a wrong note costs, expressed in whichever unit is being
 // shown.
-function starsFor(notes, extras) {
-  if (!notes.length) return 0;
-  const credit = notes.reduce((sum, n) => sum + (STAR_CREDIT[n.grade] ?? 0), 0);
-  const earned = (credit / notes.length) * STAR_COUNT;
-  const charged = earned - extraCost(extras, notes.length).penalty / (100 / STAR_COUNT);
+//
+// Taken from the counts rather than from the notes, so that a run whose notes
+// are long gone — a personal best recorded before the stars existed, which kept
+// its tallies and nothing else — can still be given the rating it earned. One
+// implementation, so a stored run and a fresh one cannot come to be rated by
+// different rules.
+export function starsFromCounts({ perfect = 0, good = 0, almost = 0, total = 0, extra = 0 }) {
+  if (!total) return 0;
+  const credit = perfect * STAR_CREDIT.perfect
+               + good * STAR_CREDIT.good
+               + almost * STAR_CREDIT.almost;
+  const earned = (credit / total) * STAR_COUNT;
+  const charged = earned - extraCost(extra, total).penalty / (100 / STAR_COUNT);
   return Math.max(0, Math.floor(charged / STAR_STEP + STAR_EPSILON) * STAR_STEP);
+}
+
+function starsFor(notes, extras) {
+  const count = (grade) => notes.filter(n => n.grade === grade).length;
+  return starsFromCounts({
+    perfect: count('perfect'), good: count('good'), almost: count('almost'),
+    total: notes.length, extra: extras,
+  });
 }
 
 // How near an unplayed note a stray keypress has to be to have been played

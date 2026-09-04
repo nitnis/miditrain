@@ -3530,11 +3530,34 @@ function updateChordOverlay() {
 // Nothing at all on a first attempt. A number to compare against is only worth
 // putting on the screen once there is something to compare with, and a line
 // saying "best: 64%" under a 64% is noise.
+// What to say when a passage has just had its best run. Louder the closer it
+// came to perfect, and quieter for a first attempt — which sets a best without
+// having beaten anything.
+function cheerFor(best, previous) {
+  const stars = best.stars ?? 0;
+  if (!previous) return `${starText(stars)} stars — that is the bar to beat`;
+  if (stars >= STAR_COUNT) return 'Flawless. Every note dead on 🎉';
+  if (stars >= 9) return 'New personal best — outstanding 🎉';
+  if (stars >= 7) return 'New personal best 🎉';
+  return 'Better than last time — a new personal best 🎉';
+}
+
 function showBestLine() {
   const line = document.getElementById('best-line');
+  const cheer = document.getElementById('best-cheer');
   const replayBtn = document.getElementById('btn-replay-best');
   const best = trainingRunKey ? bestFor(trainingRunKey) : null;
   const bpm = effectiveBpm();
+
+  // Restarted from the class rather than left running, so a second best in a
+  // row is announced again instead of inheriting a finished animation
+  cheer.classList.toggle('hidden', !(lastWasBest && best));
+  cheer.classList.remove('pop');
+  if (lastWasBest && best) {
+    cheer.textContent = cheerFor(best, bestBefore);
+    void cheer.offsetWidth;
+    cheer.classList.add('pop');
+  }
 
   if (!best && !lastAbandoned) {
     line.classList.add('hidden');
