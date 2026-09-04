@@ -70,6 +70,24 @@ await page.evaluate(async () => {
     return results;
   };
 
+  // A long passage, for the things that only go wrong on one.
+  //
+  // Twenty notes 300 ms apart, every one a different pitch so a press can only
+  // match its own. On a three-note bar a single loose note is worth a third of
+  // a star and no rounding rule can hide it; at this length it is worth an
+  // eighth, which is where the rating used to quietly give it back.
+  T.setupLong = async (count) => {
+    const notes = [];
+    for (let i = 0; i < count; i++) {
+      notes.push({ id: crypto.randomUUID(), pitch: 60 + i, velocity: 90,
+                   startTime: 500 + i * 300, duration: 250 });
+    }
+    state.composition.notes = notes;
+    state.composition.tracks = [];
+    emit('transport:noteschanged', notes);
+    return notes.map((n, i) => [n.startTime, 60 + i]);
+  };
+
   T.setup = async () => {
     const notes = [];
     const add = (pitch, at) => notes.push({
@@ -145,6 +163,7 @@ const run = (label, presses) =>
   page.evaluate(([l, p]) => window.__t.run(l, p), [label, presses]);
 const abandon = (label, presses, stopAt) =>
   page.evaluate(([l, p, s]) => window.__t.abandon(l, p, s), [label, presses, stopAt]);
+const setupLong = (count) => page.evaluate(n => window.__t.setupLong(n), count);
 const profile = () => page.evaluate(async () =>
   (await import('/src/profiles.js')).current());
 
@@ -202,7 +221,7 @@ check('...and a hundred per cent', r.score, 100);
 r = await run('bar 1, one note 100 ms late', [[500, 62], [1000, 64], [1600, 65]]);
 check('a note merely in time still scores a hundred', [r.score, r.good], [100, 1]);
 check('...but not ten stars', r.stars < 10, true);
-check('...at three quarters of a star for the good one', r.stars, 9.25);
+check('...landing on the quarter below, not the nearest one', r.stars, 9);
 
 // An "almost" is worth less again
 r = await run('bar 1, one note 250 ms late', [[500, 62], [1000, 64], [1750, 65]]);
@@ -219,7 +238,7 @@ check('nothing played at all is no stars', (await run('nothing played', [])).sta
 r = await run('bar 1 clean, two strays on top', [[500, 62], [700, 73], [1000, 64], [1200, 74], [1500, 65]]);
 check('two extras on a three-note bar', r.extra, 2);
 check('...cost three points, not six', r.penalty, 3);
-check('...and a quarter of a star between them', r.stars, 9.75);
+check('...and half a star between them', r.stars, 9.5);
 
 // ── the stars decide which run was the better one ────────────────────────────
 //
@@ -365,6 +384,25 @@ check('the best is the highest run, not the last one played', p.bests[key120].sc
 check('...and the line says which of the two just happened',
   (await page.locator('#best-line').textContent())
     .startsWith(r.score > clean.score ? 'New best' : 'Your best'), true);
+
+// ── ten stars means ten stars, on a long passage too ─────────────────────────
+//
+// The rating used to round to the nearest quarter, and a loose note on a long
+// piece is worth less than half a step: forty perfect notes and two merely good
+// ones came out at a full ten, which is the one thing the stars were added to be
+// unable to say. Every star case above is a three-note bar, where a loose note
+// is worth a third of a star and no rounding rule could hide it — so none of
+// them could have caught it. This one can.
+await section(1, 4);
+const beats20 = await setupLong(20);
+const late = (i) => beats20.map(([at, pitch], k) => [k === i ? at + 100 : at, pitch]);
+
+r = await run('twenty notes, every one dead on', beats20);
+check('a long run played perfectly is still ten stars', [r.perfect, r.stars], [20, 10]);
+
+r = await run('twenty notes, one of them 100 ms late', late(7));
+check('one loose note in twenty still scores a hundred', [r.score, r.good], [100, 1]);
+check('...and is no longer rounded away into ten stars', r.stars, 9.75);
 
 // ── it survives a reload ─────────────────────────────────────────────────────
 // The log lives on the page, and the reload below is about to take it with
