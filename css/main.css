@@ -1196,18 +1196,71 @@ body.hands-shown #hand-canvas { display: block; }
 .modal-btn.primary:hover { opacity: 0.9; }
 
 /* Accuracy modal */
+/* ── The star rating ── */
+/*
+   Two stars stacked per slot: a dim one that is always whole, and a lit one
+   over it clipped to however much of it was earned. Quarters are the step, so
+   a slot can be empty, a quarter, a half, three quarters or full. Glyphs
+   rather than SVG because a partial fill by width needs no ids, no defs and
+   no build step, and it scales with the font size on its own.
+*/
+.star-rating {
+  display: flex;
+  justify-content: center;
+  gap: 2px;
+  font-size: 34px;
+  line-height: 1;
+  margin: 4px 0 6px;
+}
+.star {
+  position: relative;
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+}
+.star i,
+.star b {
+  position: absolute;
+  inset: 0;
+  font-style: normal;
+  font-weight: normal;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.star i { color: var(--border); }
+.star b {
+  color: #f5b301;
+  text-shadow: 0 0 10px rgba(245, 179, 1, 0.35);
+}
+.star-count {
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0 0 14px;
+}
+.star-count b {
+  color: var(--text);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+   The percentage keeps its ring and still reaches a hundred, but it is no
+   longer the thing the eye lands on: half the size it was, thinner, and set in
+   the muted colour until the arc itself says how it went.
+*/
 .accuracy-score-display {
   position: relative;
-  width: 120px;
-  height: 120px;
-  margin: 0 auto 20px;
+  width: 72px;
+  height: 72px;
+  margin: 0 auto 18px;
 }
-.score-ring { width: 120px; height: 120px; transform: rotate(-90deg); }
-.score-bg { fill: none; stroke: var(--border); stroke-width: 8; }
+.score-ring { width: 72px; height: 72px; transform: rotate(-90deg); }
+.score-bg { fill: none; stroke: var(--border); stroke-width: 6; }
 .score-arc {
   fill: none;
   stroke: var(--green);
-  stroke-width: 8;
+  stroke-width: 6;
   stroke-linecap: round;
   stroke-dasharray: 0 314;
   transition: stroke-dasharray 0.8s ease, stroke 0.5s;
@@ -1218,9 +1271,9 @@ body.hands-shown #hand-canvas { display: block; }
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 28px;
-  font-weight: 800;
-  color: var(--text);
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--muted);
 }
 
 .accuracy-stats {

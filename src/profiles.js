@@ -134,8 +134,17 @@ function sanitiseBests(raw) {
   const out = {};
   for (const [key, value] of Object.entries(raw)) {
     if (!value || typeof value !== 'object' || !Number.isFinite(value.score)) continue;
+    // Field for field, and in the same order, as what `rememberBest` writes —
+    // so a record read back off disk is indistinguishable from the one that was
+    // just put there, down to the shape
     out[String(key).slice(0, 240)] = {
       score: int(value.score, 0, 100, 0),
+      // Null on a record written before the stars existed. Not guessed from
+      // the score, because the two do not determine each other — see
+      // `beats` below.
+      stars: Number.isFinite(value.stars)
+        ? Math.min(10, Math.max(0, Math.round(value.stars * 4) / 4))
+        : null,
       perfect: int(value.perfect, 0, 1e6, 0),
       good: int(value.good, 0, 1e6, 0),
       almost: int(value.almost, 0, 1e6, 0),
@@ -278,6 +287,29 @@ export function bestFor(key) {
   return current().bests?.[key] || null;
 }
 
+// Which of two runs is the better one.
+//
+// The stars decide, and the percentage only breaks their ties — because the two
+// can genuinely disagree, and the stars are what the screen leads with.
+//
+// They disagree because the percentage treats a note played inside fifty
+// milliseconds and one played inside a hundred and fifty as the same thing,
+// and the stars do not. So a run that is entirely "good" takes a hundred per
+// cent with seven and a half stars, while one that is mostly "perfect" with a
+// couple of misses takes eighty per cent with eight. Ranking those by
+// percentage put the looser run on top and then showed the player their star
+// count going down as they "improved", which is not a tuning problem: any
+// rating that separates perfect from good will invert against a score that
+// does not.
+//
+// A record written before the stars existed has none, and one cannot be
+// inferred from its score for exactly that reason. Those fall back to the
+// percentage rather than being written off.
+function beats(run, standing) {
+  if (run.stars == null || standing.stars == null) return run.score > standing.score;
+  return run.stars !== standing.stars ? run.stars > standing.stars : run.score > standing.score;
+}
+
 // Records the run when it beats what is there, and says whether it did. A run
 // that ties does not replace the one that stands — the earlier one got there
 // first, and its take is the one already familiar.
@@ -286,10 +318,11 @@ export function rememberBest(key, run) {
   const profile = current();
   if (!profile.bests) profile.bests = {};
   const standing = profile.bests[key];
-  if (standing && standing.score >= run.score) return false;
+  if (standing && !beats(run, standing)) return false;
 
   profile.bests[key] = {
     score: Math.round(run.score),
+    stars: Number.isFinite(run.stars) ? run.stars : null,
     perfect: run.perfect | 0,
     good: run.good | 0,
     almost: run.almost | 0,
