@@ -3544,19 +3544,25 @@ function showBestLine() {
 
   line.classList.remove('hidden');
   line.classList.toggle('fresh', lastWasBest);
+  // Led with in stars, because the stars are what decides which run is the
+  // better one and what the screen above says. The percentage rides along,
+  // where it can be seen to disagree without being mistaken for the thing
+  // being beaten.
+  const rating = (b) => b.stars == null ? `<b>${b.score}%</b>` : `<b>${starText(b.stars)}</b> stars`;
+
   if (lastAbandoned) {
     // Said rather than left to be noticed: a run that scored well on the part
     // that was played and then vanished without setting anything looks broken.
     line.innerHTML = best
-      ? `Stopped early, so this one is not kept · your best at ${bpm} BPM is <b>${best.score}%</b>`
+      ? `Stopped early, so this one is not kept · your best at ${bpm} BPM is ${rating(best)}`
       : 'Stopped before the end, so this one is not kept as a best';
   } else if (lastWasBest) {
     line.innerHTML = bestBefore
-      ? `New best at ${bpm} BPM — <b>${best.score}%</b>, past your <b>${bestBefore.score}%</b>`
-      : `Your first time through at ${bpm} BPM — <b>${best.score}%</b> to beat`;
+      ? `New best at ${bpm} BPM — ${rating(best)}, past your ${rating(bestBefore)}`
+      : `Your first time through at ${bpm} BPM — ${rating(best)} to beat`;
   } else {
-    line.innerHTML = `Your best at ${bpm} BPM is <b>${best.score}%</b>` +
-      `<span class="best-detail"> · ${best.perfect} perfect, ${best.missed} missed, ${best.extra} extra</span>`;
+    line.innerHTML = `Your best at ${bpm} BPM is ${rating(best)}` +
+      `<span class="best-detail"> · ${best.score}%, ${best.perfect} perfect, ${best.missed} missed</span>`;
   }
 
   // Only when it is a different run from the one already on the screen — after
