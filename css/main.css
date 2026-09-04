@@ -1394,6 +1394,27 @@ body.hands-shown #hand-canvas { display: block; }
   margin: 10px 0 -2px;
 }
 
+/* Beating your own best is the one thing on this screen worth saying out loud */
+.best-cheer {
+  text-align: center;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--green);
+  margin: 16px 0 0;
+}
+.best-cheer.hidden { display: none; }
+/* Restarted from the class each time, so a second best in a row lands again
+   instead of inheriting a finished animation */
+.best-cheer.pop { animation: cheer-pop 0.5s ease-out; }
+@keyframes cheer-pop {
+  0%   { transform: scale(0.85); opacity: 0; }
+  55%  { transform: scale(1.06); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .best-cheer.pop { animation: none; }
+}
+
 /* Your best at this passage, hand and speed */
 .best-line {
   font-size: 13px;
