@@ -28,6 +28,20 @@ export const STAR_COUNT = 10;
 const STAR_CREDIT = { perfect: 1, good: 0.75, almost: 0.4, miss: 0 };
 // Quarters. Finer would be a number nobody can read off a row of stars.
 const STAR_STEP = 0.25;
+// A quarter earned is a quarter played for: the rating falls to the step below
+// rather than to the nearest one.
+//
+// Rounding to the nearest quarter gave ten stars away. One loose note costs
+// 2.5/n of a star, so on a forty-note piece two of them come to an eighth —
+// less than half a step, rounded off, gone. A run of forty perfect notes and
+// two merely good ones came out at a full ten, which is precisely what the
+// stars were added to be unable to say. The longer the piece the worse it got,
+// and the whole point of them is that they hold on a long piece.
+//
+// Taking the step below instead makes ten stars mean one thing exactly: the
+// total is only ever ten when every note was perfect and nothing extra was
+// played, because nothing else can reach ten to begin with.
+const STAR_EPSILON = 1e-9;   // a total that is a quarter but for float noise is a quarter
 
 // A wrong note is not free. Credit alone only measures the notes that were
 // written, so a run peppered with extras could otherwise score as cleanly as
@@ -80,7 +94,7 @@ function starsFor(notes, extras) {
   const credit = notes.reduce((sum, n) => sum + (STAR_CREDIT[n.grade] ?? 0), 0);
   const earned = (credit / notes.length) * STAR_COUNT;
   const charged = earned - extraCost(extras, notes.length).penalty / (100 / STAR_COUNT);
-  return Math.max(0, Math.round(charged / STAR_STEP) * STAR_STEP);
+  return Math.max(0, Math.floor(charged / STAR_STEP + STAR_EPSILON) * STAR_STEP);
 }
 
 // How near an unplayed note a stray keypress has to be to have been played
