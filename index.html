@@ -313,6 +313,14 @@
           <option value="4">4-bar sections</option>
           <option value="8">8-bar sections</option>
         </select>
+        <!-- Step through the sections without scrubbing for them. Train and
+             Learn both work on the section the playhead is in, so moving the
+             playhead is how you choose which one — unless a loop is marked,
+             which is a narrower statement and still wins. -->
+        <button class="small-btn section-step" id="btn-prev-section"
+                title="Go to the previous section. Train and Learn work on the section the playhead is in.">&#9664; Sec</button>
+        <button class="small-btn section-step" id="btn-next-section"
+                title="Go to the next section. Train and Learn work on the section the playhead is in.">Sec &#9654;</button>
         <select id="learn-cluster">
           <option value="off">Fast learn</option>
           <option value="halfBeat">&frac12;-beat clusters</option>

@@ -138,6 +138,15 @@ export function repeatSection() {
   beginPreview();
 }
 
+// Back one. The walk has always been able to repeat a section or move on, but
+// not to go back to the one before — which is what you want the moment you
+// realise the trouble started earlier.
+export function previousSection() {
+  if (!sections.length) return;
+  index = Math.max(0, index - 1);
+  beginPreview();
+}
+
 export function advanceSection() {
   if (index >= sections.length - 1) {
     const total = sections.length;
