@@ -614,8 +614,45 @@
         <input type="file" id="profile-file" accept="application/json,.json" hidden>
       </div>
 
+      <h3 class="profile-heading">Professional mode</h3>
+      <p class="section-sub" id="profile-calibration-state">Not calibrated.</p>
+      <div class="profile-row">
+        <label class="profile-check">
+          <input type="checkbox" id="professional-enabled">
+          Grade how hard each note is struck, as well as when
+        </label>
+        <button class="modal-btn" id="btn-calibrate">Calibrate keyboard…</button>
+      </div>
+
       <div class="modal-actions">
         <button class="modal-btn primary" id="btn-close-profiles">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Where this player's soft, ordinary and loud sit on their own keyboard.
+       Two keybeds send very different numbers for the same gesture, so without
+       this professional mode grades the instrument as much as the playing. -->
+  <div class="modal-overlay hidden" id="calibrate-modal">
+    <div class="modal-box calibrate-box">
+      <h2>Calibrate your keyboard</h2>
+      <p class="section-sub">
+        Three short passes. Play anywhere on the keyboard — the pitches do not
+        matter, only how hard.
+      </p>
+
+      <p class="calibrate-ask" id="calibrate-ask"></p>
+      <div class="calibrate-meter" id="calibrate-meter"></div>
+      <p class="section-sub" id="calibrate-note"></p>
+
+      <p class="retry-hint">
+        This measures your keyboard’s velocity curve. Change the keyboard, or
+        change the curve in its own settings, and it needs taking again.
+      </p>
+
+      <div class="modal-actions">
+        <button class="modal-btn" id="btn-calibrate-redo">Start again</button>
+        <button class="modal-btn primary" id="btn-close-calibrate">Done</button>
       </div>
     </div>
   </div>

@@ -31,15 +31,34 @@ export const BANDS_VERSION = 1;
 const MIN_DISTINCT = 12;
 const MIN_SD = 6;
 
+const quantile = (sorted, p) => sorted[Math.max(0, Math.min(sorted.length - 1,
+  Math.round((sorted.length - 1) * p)))];
+
+// Where this piece's own soft, ordinary and loud sit. A performance has its own
+// idea of mezzo-forte — the reference recording's is 62, not the 64 or 80 that
+// a table of MIDI conventions would say — and it is the piece's idea that a
+// player is being asked to reproduce, so it is the piece that a calibrated
+// keyboard is mapped onto.
+export function anchorsOf(velocities) {
+  const sorted = [...velocities].sort((a, b) => a - b);
+  return {
+    soft: quantile(sorted, 0.10),
+    medium: quantile(sorted, 0.50),
+    loud: quantile(sorted, 0.90),
+  };
+}
+
 export function dynamicsIn(notes) {
   const v = notes.map(n => n.velocity ?? 90);
-  if (!v.length) return { ok: false, distinct: 0, sd: 0, mean: 0, reason: 'there are no notes' };
+  if (!v.length) {
+    return { ok: false, distinct: 0, sd: 0, mean: 0, anchors: null, reason: 'there are no notes' };
+  }
   const mean = v.reduce((a, b) => a + b, 0) / v.length;
   const sd = Math.sqrt(v.reduce((a, b) => a + (b - mean) ** 2, 0) / v.length);
   const distinct = new Set(v).size;
   const ok = distinct >= MIN_DISTINCT && sd >= MIN_SD;
   return {
-    ok, distinct, sd, mean,
+    ok, distinct, sd, mean, anchors: anchorsOf(v),
     reason: ok ? null
       : distinct < MIN_DISTINCT
         ? `this file only holds ${distinct} velocity value${distinct === 1 ? '' : 's'} — there is nothing to grade against`
@@ -102,6 +121,89 @@ export function bandWidths(target, { floor = DEFAULT_FLOOR, localSd = 0 } = {}) 
   };
 }
 
+// ── Calibration ──────────────────────────────────────────────────────────────
+//
+// Velocity is not a measurement of anything physical. It is whatever a keybed's
+// own curve makes of a gesture, and a weighted hammer action and a cheap synth
+// action hand back very different numbers for the same playing. Grading against
+// a recording made on somebody else's instrument, uncalibrated, grades the
+// instrument at least as much as the player.
+//
+// So the player is asked where their own soft, ordinary and loud are, once. The
+// piece is asked the same three questions — it answers them itself, in
+// `anchorsOf` — and the map takes one to the other. What is stored is only the
+// measurement of the player; which piece it is being applied to is decided
+// afresh every time, because the same player copying a whisper and a thunder
+// should not be asked to play them at the same volume.
+export const CALIBRATION_LEVELS = [
+  { key: 'soft', name: 'piano', ask: 'as softly as you would play a quiet passage' },
+  { key: 'medium', name: 'mezzo-forte', ask: 'your ordinary, comfortable playing' },
+  { key: 'loud', name: 'forte', ask: 'strong — but not hammering' },
+];
+
+// Enough that one wild strike cannot move the median, few enough that nobody
+// gives up in the middle
+export const CALIBRATION_STRIKES = 8;
+
+// What one level of the calibration came out at: where it sits, and how much it
+// wandered. The spread is the interesting half — it is this player's own
+// reproducibility on this keybed, and it is what stops the bands being narrower
+// than anything they could hit.
+export function summariseStrikes(velocities) {
+  if (!velocities.length) return null;
+  const sorted = [...velocities].sort((a, b) => a - b);
+  const velocity = quantile(sorted, 0.5);
+  const offsets = sorted.map(v => Math.abs(v - velocity)).sort((a, b) => a - b);
+  return { velocity, spread: quantile(offsets, 0.75) };
+}
+
+// A calibration whose levels are not in order is not a calibration: it says the
+// player's forte is softer than their piano, which means the three passes were
+// not what they were asked for. Better said out loud than quietly fitted.
+export function calibrationIsUsable(anchors) {
+  return Boolean(anchors)
+    && CALIBRATION_LEVELS.every(l => Number.isFinite(anchors[l.key]?.velocity))
+    && anchors.soft.velocity < anchors.medium.velocity
+    && anchors.medium.velocity < anchors.loud.velocity;
+}
+
+const lerp = (x, x0, y0, x1, y1) => y0 + ((x - x0) * (y1 - y0)) / (x1 - x0);
+
+// The player's scale onto the piece's. Straight lines between the three
+// anchors, and the nearest line carried on beyond the outer two, so a note
+// played harder than the calibration's forte still lands somewhere sensible
+// rather than flattening against it.
+export function velocityMap(anchors, piece) {
+  if (!calibrationIsUsable(anchors) || !piece) return (v) => v;
+  const from = {
+    soft: anchors.soft.velocity, medium: anchors.medium.velocity, loud: anchors.loud.velocity,
+  };
+  return (v) => {
+    const mapped = v <= from.medium
+      ? lerp(v, from.soft, piece.soft, from.medium, piece.medium)
+      : lerp(v, from.medium, piece.medium, from.loud, piece.loud);
+    return Math.max(1, Math.min(127, mapped));
+  };
+}
+
+// Under three, the band is narrower than the steps a keybed reports in. Over
+// about two dozen, nothing is being graded any more.
+const MIN_FLOOR = 3;
+const MAX_FLOOR = 24;
+
+// The narrowest band this player can fairly be asked to hit, in the piece's own
+// units. Their measured wobble at mezzo-forte, stretched by however much the
+// map stretches their playing — a keyboard that squeezes everything into thirty
+// velocity units turns a five-unit wobble into a larger one once it has been
+// opened out to fit a piece that uses sixty.
+export function calibratedFloor(anchors, piece) {
+  if (!calibrationIsUsable(anchors) || !piece) return DEFAULT_FLOOR;
+  const range = anchors.loud.velocity - anchors.soft.velocity;
+  const slope = range > 0 ? (piece.loud - piece.soft) / range : 1;
+  const wobble = (anchors.medium.spread ?? DEFAULT_FLOOR) * slope;
+  return Math.max(MIN_FLOOR, Math.min(MAX_FLOOR, wobble));
+}
+
 // ── The bands for a whole piece, worked out once ─────────────────────────────
 //
 // Over the whole composition, not over the section being trained. A band is a
@@ -140,24 +242,32 @@ let memo = null;
 
 // Start times are in it as well as velocities: a note dragged somewhere else
 // keeps its own band but changes whose neighbour it is, and the local spread
-// that widens the bands around it moves with it.
-const keyFor = (notes, floor) => {
+// that widens the bands around it moves with it. The calibration is in it
+// because every band in the piece rests on the floor it sets.
+const keyFor = (notes, calibration) => {
   let sum = 0;
   for (const n of notes) sum += (n.velocity ?? 90) + n.startTime;
-  return `${notes.length}:${sum}:${floor}`;
+  return `${notes.length}:${sum}:${calibration?.at ?? 'raw'}`;
 };
 
 // Everything professional mode needs to know about a piece, worked out upfront:
-// whether it is worth grading at all, and what each note's tolerance is.
-export function analyseDynamics(notes, { floorDelta = DEFAULT_FLOOR } = {}) {
-  const key = keyFor(notes, floorDelta);
+// whether it is worth grading at all, what each note's tolerance is, and how to
+// read this player's keyboard onto the scale the piece was written on.
+export function analyseDynamics(notes, { calibration = null } = {}) {
+  const key = keyFor(notes, calibration);
   if (memo && memo.key === key) return memo.value;
 
   const found = dynamicsIn(notes);
+  const anchors = calibration?.anchors ?? null;
+  const floorDelta = calibratedFloor(anchors, found.anchors);
   const value = {
     version: BANDS_VERSION,
-    floorDelta,
     ...found,
+    floorDelta,
+    calibrated: calibrationIsUsable(anchors),
+    // The identity when there is no calibration, so an uncalibrated run is
+    // graded on exactly the numbers the keyboard sent
+    map: velocityMap(anchors, found.anchors),
     // No point costing out bands for a file that will not be graded on them
     bands: found.ok ? computeBands(notes, floorDelta) : new Map(),
   };

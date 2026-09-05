@@ -1102,6 +1102,42 @@ select:focus { outline: 1px solid var(--accent); }
 .profile-open:hover { text-decoration: underline; }
 .profile-item.active .profile-item-name { color: var(--accent); font-weight: 700; }
 .profile-item-meta { font-size: 11px; color: var(--muted); }
+.profile-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.profile-check input { cursor: pointer; }
+
+/* ── Calibration ───────────────────────────────────────────────────────────
+   Three passes, and the one being asked for is the whole screen. */
+.calibrate-box { min-width: 380px; }
+.calibrate-ask {
+  font-size: 15px;
+  margin: 16px 0 10px;
+  line-height: 1.5;
+}
+.calibrate-ask strong { color: var(--accent); }
+/* One block per strike wanted: filled as they arrive, so the pass has a
+   visible end rather than a count to keep in your head */
+.calibrate-meter {
+  display: flex;
+  gap: 5px;
+  align-items: flex-end;
+  height: 54px;
+  margin-bottom: 10px;
+}
+.calibrate-strike {
+  flex: 1;
+  background: var(--border);
+  border-radius: 3px;
+  min-height: 4px;
+  transition: height 90ms ease-out, background 90ms ease-out;
+}
+.calibrate-strike.struck { background: var(--accent); }
+
 /* Every profile lives in a file, and the row says which one */
 .profile-item-file {
   font-size: 11px;
