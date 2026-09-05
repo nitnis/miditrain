@@ -1309,6 +1309,54 @@ const heard = await page.evaluate(async () => {
 });
 check('and the loudest note is heard well above the softest', heard >= 22, true);
 
+// Loudness is only half of what "harder" sounds like on a piano. The other half
+// is brightness, and the app had none of it: the same note at velocity 30 and
+// at 120 put its energy in exactly the same place.
+const timbre = await page.evaluate(async () => {
+  const { renderToPcm } = await import('/src/render-offline.js');
+  const { magnitudes } = await import('/src/fft.js');
+  // The spectral centroid: where the energy sits, in hertz. Loudness cancels
+  // out of it, which is the point — this asks about colour and not level.
+  //
+  // A one-pole filter was tried first and said the two were 4% apart, because
+  // at six decibels an octave the fundamental leaks into the "high" band and
+  // swamps what is actually being asked about.
+  const N = 2048;
+  const brightness = async (velocity) => {
+    const { pcm, sampleRate } = await renderToPcm(
+      [{ id: 'n', pitch: 60, velocity, startTime: 0, duration: 600 }]);
+    const mags = new Float64Array(N / 2 + 1);
+    magnitudes(pcm, Math.round(sampleRate * 0.15), N, mags,
+      new Float64Array(N), new Float64Array(N));
+    let num = 0, den = 0;
+    for (let k = 1; k < mags.length; k++) {
+      num += mags[k] * (k * sampleRate / N);
+      den += mags[k];
+    }
+    return den ? num / den : 0;
+  };
+  return { soft: Math.round(await brightness(30)), hard: Math.round(await brightness(120)) };
+});
+check('a note struck hard is brighter than the same note struck softly',
+  timbre.hard > timbre.soft * 1.25, true);
+
+// The envelope held flat: a note was within 1.3 dB of its own peak two and a
+// half seconds on, which is an organ rather than a piano — and it is what a
+// note held under the sustain pedal now does for as long as the pedal is down.
+const rings = await page.evaluate(async () => {
+  const { renderToPcm } = await import('/src/render-offline.js');
+  const { pcm, sampleRate } = await renderToPcm(
+    [{ id: 'n', pitch: 60, velocity: 100, startTime: 0, duration: 2500 }]);
+  const rms = (from, to) => {
+    let s = 0;
+    for (let i = Math.round(from * sampleRate); i < Math.round(to * sampleRate); i++) s += pcm[i] * pcm[i];
+    return Math.sqrt(s / ((to - from) * sampleRate));
+  };
+  return Math.round(20 * Math.log10(rms(2.0, 2.2) / rms(0.1, 0.3)));
+});
+check('and a note dies away rather than holding, the way a string does',
+  rings <= -10, true);
+
 await page.evaluate(() => window.__t.update('ui.professional', false));
 
 // ── calibration: whose keyboard is being graded ──────────────────────────────
