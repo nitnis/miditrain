@@ -90,13 +90,24 @@ await page.evaluate(async () => {
   // given by a person clicking. Faked here — and only that: the code that
   // decides when to write, what to call the file and what goes in it is the
   // real thing, and every write it makes lands in `T.writes`.
-  T.fakeFolder = () => {
+  // `granted` false stands for the ordinary state after a page load: the folder
+  // is still chosen, but the permission to write to it has been dropped.
+  // `offered` false stands for a picker the player dismissed.
+  T.fakeFolder = ({ chosen = true, granted = true, offered = true } = {}) => {
     T.writes = [];
-    window.showDirectoryPicker = async () => ({});
+    T.picked = 0;
+    let stored = chosen;
+    let allowed = granted;
+    window.showDirectoryPicker = async () => {
+      T.picked += 1;
+      if (!offered) throw new DOMException('dismissed', 'AbortError');
+      stored = true; allowed = true;
+      return handle;
+    };
     const handle = {
       name: 'Fake folder',
-      queryPermission: async () => 'granted',
-      requestPermission: async () => 'granted',
+      queryPermission: async () => (allowed ? 'granted' : 'prompt'),
+      requestPermission: async () => { allowed = true; return 'granted'; },
       getFileHandle: async (filename) => ({
         createWritable: async () => ({
           write: async (text) => T.writes.push({ filename, text }),
@@ -107,7 +118,11 @@ await page.evaluate(async () => {
     // A handle cannot survive being stored, so the store is what gets replaced
     const real = localforage.createInstance.bind(localforage);
     localforage.createInstance = (opts) => opts && opts.name === 'miditrain-folder'
-      ? { getItem: async () => handle, setItem: async () => {}, removeItem: async () => {} }
+      ? {
+          getItem: async () => (stored ? handle : null),
+          setItem: async () => { stored = true; },
+          removeItem: async () => { stored = false; },
+        }
       : real(opts);
   };
 
@@ -207,10 +222,24 @@ const abandon = (label, presses, stopAt) =>
 const setupLong = (count) => page.evaluate(n => window.__t.setupLong(n), count);
 const setupBars = (bars) => page.evaluate(n => window.__t.setupBars(n), bars);
 const writes = () => page.evaluate(() => window.__t.writes || []);
+const fakeFolder = (opts) => page.evaluate(o => window.__t.fakeFolder(o), opts || {});
+const picked = () => page.evaluate(() => window.__t.picked || 0);
+const makeProfile = async (name) => {
+  await page.click('#btn-profiles');
+  await page.fill('#profile-new-name', name);
+  await page.click('#btn-profile-create');
+  await page.waitForTimeout(400);
+  const made = await page.evaluate(async () =>
+    (await import('/src/profiles.js')).current().name);
+  await page.click('#btn-close-profiles');
+  return made;
+};
 // A run leaves its results screen up, and that screen covers the toolbar. Runs
 // press Play from inside the page and do not care; real clicks on real toolbar
 // buttons do, so anything driving the toolbar closes it first.
-const closeResults = () => page.click('#btn-close-accuracy');
+const closeResults = async () => {
+  if (await page.locator('#accuracy-modal').isVisible()) await page.click('#btn-close-accuracy');
+};
 const profile = () => page.evaluate(async () =>
   (await import('/src/profiles.js')).current());
 
@@ -555,11 +584,45 @@ await page.click('#btn-stop');
 await page.click('#btn-learn-mode');
 await page.waitForTimeout(400);
 
+// ── a profile is made in a folder, or not at all ─────────────────────────────
+//
+// Making a profile is the one moment with both a reason to ask for a folder and
+// a click to ask with, so it is where the folder gets settled. A profile is a
+// record of what somebody achieved, and building it somewhere the browser may
+// throw away is how it gets lost.
+await closeResults();
+await fakeFolder({ chosen: false, offered: false });
+check('with no folder yet, making a profile asks for one',
+  await (async () => { await makeProfile('Declined'); return picked(); })() >= 1, true);
+check('...and dismissing the picker creates nothing',
+  await page.evaluate(async () =>
+    (await import('/src/profiles.js')).current().name !== 'Declined'), true);
+
+await fakeFolder({ chosen: false, offered: true });
+check('choosing one lets the profile be made', await makeProfile('In a folder'), 'In a folder');
+check('...and it is written there straight away', (await writes()).length, 1);
+check('...under its own name',
+  (await writes())[0]?.filename ?? '(nothing was written)', 'In-a-folder.miditrain.json');
+
+// ── a folder chosen yesterday still needs permission today ───────────────────
+//
+// A browser drops it on every page load unless told to keep it, and there is no
+// gesture at the end of a run to ask with. The click that starts the run is
+// spent on it instead.
+await fakeFolder({ chosen: true, granted: false });
+await page.evaluate(() => { window.__t.state.ui.trainMode = false; });
+await section(1, 1);
+await setup();
+r = await run('a best, with the folder permission lapsed', CLEAN);
+await page.waitForTimeout(500);
+check('the run reclaims the permission and the best still reaches the folder',
+  (await writes()).length >= 1, true);
+
 // ── a best is written out the moment it is set ───────────────────────────────
 //
 // Not only when Save is pressed. Browser storage is evictable and does not
 // travel, and a best is the thing a player would most mind losing.
-await page.evaluate(() => window.__t.fakeFolder());
+await fakeFolder();
 // On a profile of its own, so the run below is a first best rather than a tie
 // with something an earlier check already set
 await page.evaluate(async () =>
