@@ -169,6 +169,34 @@ function sanitiseTake(raw) {
   return { range, notes, expected };
 }
 
+// What professional mode made of a run, kept with it.
+//
+// `bandsVersion` is the important field and the reason this is stored at all
+// rather than recomputed: the tolerances a run was judged by are part of what
+// its rating means, and a rating compared against one measured by different
+// rules is not a comparison. A block without one is from nowhere this app can
+// account for, and is dropped.
+function sanitiseLevel(raw) {
+  if (!raw || typeof raw !== 'object' || !Number.isFinite(raw.bandsVersion)) return null;
+  if (!Number.isFinite(raw.stars)) return null;
+  return {
+    bandsVersion: int(raw.bandsVersion, 0, 1e6, 0),
+    stars: Math.min(10, Math.max(0, Math.round(raw.stars * 4) / 4)),
+    perfect: int(raw.perfect, 0, 1e6, 0),
+    good: int(raw.good, 0, 1e6, 0),
+    almost: int(raw.almost, 0, 1e6, 0),
+    off: int(raw.off, 0, 1e6, 0),
+    graded: int(raw.graded, 0, 1e6, 0),
+    total: int(raw.total, 0, 1e6, 0),
+    meanAbsDelta: int(raw.meanAbsDelta, 0, 127, 0),
+    // Signed: which way they leaned, not only how far
+    bias: int(raw.bias, -127, 127, 0),
+    floorDelta: Number.isFinite(raw.floorDelta)
+      ? Math.min(64, Math.max(0, Math.round(raw.floorDelta * 10) / 10)) : 0,
+    calibrated: raw.calibrated === true,
+  };
+}
+
 function sanitiseBests(raw) {
   if (!raw || typeof raw !== 'object') return {};
   const out = {};
@@ -208,6 +236,7 @@ function sanitiseBests(raw) {
       tempo: int(value.tempo, 20, 300, 120),
       at: Number.isFinite(value.at) ? value.at : Date.now(),
       take: sanitiseTake(value.take),
+      level: sanitiseLevel(value.level),
     };
   }
   return capBests(out);
@@ -350,9 +379,20 @@ export function rememberSectionTempo(key, bpm) {
 // Speed is the tempo the notes were written at multiplied by the speed slider,
 // because that is the rate they actually arrived at. Two ways of reaching 90
 // BPM are the same 90 BPM to the fingers.
-export function trainingKey({ songName, bars, hand, bpm }) {
+// Professional runs are kept apart from ordinary ones rather than mixed in with
+// them. They are not harder attempts at the same thing — they are a different
+// thing being asked, and a run graded on dynamics has nothing to prove against
+// one that was not.
+//
+// The mode goes on the end, and only when there is one. A key written before
+// this existed ends in a tempo, which is a number and can never be read as a
+// mode, so every best already stored keeps working untouched.
+export const TRAINING_MODES = ['standard', 'pro'];
+
+export function trainingKey({ songName, bars, hand, bpm, mode = 'standard' }) {
   const where = bars ? `${bars.startBar}-${bars.endBar}` : 'all';
-  return `${songName || 'Untitled'}|${where}|${hand || 'both'}|${Math.round(bpm)}`;
+  const base = `${songName || 'Untitled'}|${where}|${hand || 'both'}|${Math.round(bpm)}`;
+  return mode === 'pro' ? `${base}|pro` : base;
 }
 
 // The key read back apart again, for listing what a profile has achieved.
@@ -363,12 +403,15 @@ export function trainingKey({ songName, bars, hand, bpm }) {
 // they are taken off the end.
 export function parseTrainingKey(key) {
   const parts = String(key).split('|');
+  // The mode comes off first, and only if the last field is one. Nothing older
+  // can be mistaken for it: a key without a mode ends in a tempo.
+  const mode = parts[parts.length - 1] === 'pro' ? parts.pop() : 'standard';
   if (parts.length < 4) return null;
   const bpm = Number(parts.pop());
   const hand = parts.pop();
   const bars = parts.pop();
   if (!Number.isFinite(bpm) || !parts.length) return null;
-  return { songName: parts.join('|'), bars, hand, bpm };
+  return { songName: parts.join('|'), bars, hand, bpm, mode };
 }
 
 export function bestFor(key) {
@@ -381,24 +424,30 @@ export function bestFor(key) {
 // against last time.
 const HAND_ORDER = { both: 0, left: 1, right: 2 };
 
+// The mode is the outermost branch, above the piece: what was being asked of
+// the player separates their achievements more than which piece they were
+// playing does. A mode with nothing under it is left out, so a profile that has
+// never trained on dynamics looks exactly as it always did.
 export function bestsTree(profile = current()) {
-  const songs = new Map();
+  const modes = new Map();
   for (const [key, run] of Object.entries(profile.bests || {})) {
     const at = parseTrainingKey(key);
     if (!at) continue;
+    const songs = modes.get(at.mode) || new Map();
     const hands = songs.get(at.songName) || new Map();
     const speeds = hands.get(at.hand) || new Map();
     const runs = speeds.get(at.bpm) || [];
-    runs.push({ key, bars: at.bars, ...run });
+    runs.push({ key, bars: at.bars, mode: at.mode, ...run });
     speeds.set(at.bpm, runs);
     hands.set(at.hand, speeds);
     songs.set(at.songName, hands);
+    modes.set(at.mode, songs);
   }
 
   const barsOrder = (a, b) =>
     (parseInt(a.bars, 10) || 0) - (parseInt(b.bars, 10) || 0) || a.bars.localeCompare(b.bars);
 
-  return [...songs.entries()]
+  const songsOf = (songs) => [...songs.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([songName, hands]) => ({
       songName,
@@ -411,6 +460,10 @@ export function bestsTree(profile = current()) {
             .map(([bpm, runs]) => ({ bpm, runs: runs.sort(barsOrder) })),
         })),
     }));
+
+  return TRAINING_MODES
+    .filter(mode => modes.has(mode))
+    .map(mode => ({ mode, songs: songsOf(modes.get(mode)) }));
 }
 
 // Which of two runs is the better one.
@@ -431,13 +484,39 @@ export function bestsTree(profile = current()) {
 // A record written before the stars existed has none, and one cannot be
 // inferred from its score for exactly that reason. Those fall back to the
 // percentage rather than being written off.
+// Two professional runs are only comparable on their dynamics if both were
+// judged by the same bands. When the rules change the version changes with
+// them, and a record set under the old ones keeps standing on the axis that did
+// not move rather than being beaten by arithmetic.
+function sameBands(run, standing) {
+  return Number.isFinite(run.level?.stars) && Number.isFinite(standing.level?.stars)
+    && run.level.bandsVersion === standing.level.bandsVersion;
+}
+
 function beats(run, standing) {
   // A record with no stars and no tallies to work them out from cannot be rated
   // at all. It yields to one that can be, as soon as it is matched, rather than
   // standing for ever on a percentage that has nothing above it to beat.
   if (standing.stars == null) return run.score >= standing.score;
   if (run.stars == null) return run.score > standing.score;
-  return run.stars !== standing.stars ? run.stars > standing.stars : run.score > standing.score;
+
+  // A professional run is rated on two things, and the notes come first: only
+  // among runs that played them equally well does the shaping decide.
+  //
+  // Adding the two ratings together was tried and is wrong, because the
+  // dynamics rating is taken over the notes that were actually struck. A run
+  // that hit three notes of forty and shaped those three beautifully rates ten
+  // on dynamics, and summing would let it beat a run that played the passage.
+  // Ranking the notes first cannot be gamed that way: playing fewer of them
+  // costs timing stars, and no amount of shaping buys them back.
+  //
+  // Ordinary runs have no level rating on either side, so this is the rule they
+  // have always had, unchanged.
+  if (run.stars !== standing.stars) return run.stars > standing.stars;
+  if (sameBands(run, standing) && run.level.stars !== standing.level.stars) {
+    return run.level.stars > standing.level.stars;
+  }
+  return run.score > standing.score;
 }
 
 // Records the run when it beats what is there, and says whether it did. A run
@@ -464,6 +543,9 @@ export function rememberBest(key, run) {
     at: Date.now(),
     // A run too long to keep still counts; it just cannot be played back
     take: run.take && run.take.notes.length <= MAX_TAKE_NOTES ? run.take : null,
+    // Null on an ordinary run, and the whole of what professional mode made of
+    // this one otherwise
+    level: sanitiseLevel(run.level),
   };
   profile.bests = capBests(profile.bests);
   profile.updatedAt = Date.now();

@@ -129,6 +129,21 @@ exercise is), and eighteen distinct ones. And the band arithmetic is checked
 against the recording it was fitted to — ±perfect at velocity 62 is 7.6, which
 was that performer's own median note-to-note consistency.
 
+### Ranking two ratings against each other
+
+Professional bests are kept under a key of their own and rated on two things,
+and the interesting check is the one that fails under the obvious rule. Adding
+the two ratings together was tried first: the dynamics rating is taken over the
+notes that were actually *struck*, so a run that hit three notes of forty and
+shaped those three beautifully rates ten on dynamics, and a sum would let it
+beat a run that played the passage. The notes come first instead, and only among
+runs that played them equally well does the shaping decide — which cannot be
+gamed that way, because playing fewer notes costs timing stars and no amount of
+shaping buys them back.
+
+The check for it plays a run two stars better on shaping and one worse in time,
+and asserts that it does *not* take the record.
+
 ### Calibration is checked by playing the piece correctly and badly at once
 
 The calibration screen listens to the same `midi:noteon` as everything else, so
