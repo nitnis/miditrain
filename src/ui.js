@@ -1471,6 +1471,9 @@ function bindSectionWalk() {
     document.getElementById('section-sub').textContent = s.last
       ? 'That was the last section.'
       : `Section ${s.index + 1} of ${s.total}. What next?`;
+    // On the first section there is nothing behind it, and going back to the
+    // one you are on is what "Learn it again" already is
+    document.getElementById('btn-section-prev').classList.toggle('hidden', s.index === 0);
     // Only the label — writing the button's whole content would take the key
     // hint out with it
     document.getElementById('section-next-label').textContent =
@@ -1486,6 +1489,7 @@ function bindSectionWalk() {
     update('ui.learnSectionBars', parseInt(e.target.value) || 0);
   document.getElementById('btn-section-again').onclick = () => repeatSection();
   document.getElementById('btn-section-next').onclick = () => advanceSection();
+  document.getElementById('btn-section-prev').onclick = () => previousSection();
   document.getElementById('btn-section-train').onclick = () => trainCurrentSection();
 }
 
@@ -2380,37 +2384,56 @@ function paintCounts(pairs, counts, seen) {
 // ── Retry tempo ──────────────────────────────────────────────────────────────
 // A passage that keeps going wrong is usually just too fast. The results screen
 // offers the same passage a notch slower (or faster) before you go again.
+//
+// The notch is ten beats a minute, not ten per cent. A percentage is a
+// different number of beats at every tempo — it was six at sixty and eighteen
+// at a hundred and eighty — so pressing the same button twice on two pieces did
+// two different things, and a player working a passage up in tens had to do the
+// arithmetic themselves. And the figure can be typed into, because after a few
+// attempts you often already know which tempo you want to try.
 
-const RETRY_TEMPO_STEP = 10; // percent
+const RETRY_TEMPO_STEP = 10; // BPM
 
-// Steps are counted off the tempo the run was played at, rather than compounded
-// on each other, so down-then-up lands back where it started
+// The tempo the run was played at, so the delta beside the figure can say how
+// far it has moved from what was just attempted
 let retryTempoBase = 120;
-let retryTempoSteps = 0;
 
-function nudgeRetryTempo(direction) {
+function setRetryTempo(bpm, { announce = true } = {}) {
   const before = state.composition.tempo;
-  const steps = retryTempoSteps + direction;
-  setTempo(Math.round(retryTempoBase * (1 + steps * RETRY_TEMPO_STEP / 100)));
-
-  if (state.composition.tempo === before) {
-    showToast(direction < 0 ? 'Already as slow as it goes' : 'Already as fast as it goes', 1400);
-    return;
-  }
-  retryTempoSteps = steps;
+  setTempo(bpm);
   updateRetryTempoLabel();
+  if (state.composition.tempo === before) return false;
   // Getting a section faster is progress worth keeping
   if (trainingSectionKey) rememberSectionTempo(trainingSectionKey, state.composition.tempo);
-  showToast(`Retry at ${state.composition.tempo} BPM`, 1200);
+  if (announce) showToast(`Retry at ${state.composition.tempo} BPM`, 1200);
+  return true;
+}
+
+function nudgeRetryTempo(direction) {
+  const moved = setRetryTempo(state.composition.tempo + direction * RETRY_TEMPO_STEP);
+  if (!moved) {
+    showToast(direction < 0 ? 'Already as slow as it goes' : 'Already as fast as it goes', 1400);
+  }
+}
+
+// Typed in directly. An empty or unreadable field is somebody mid-edit rather
+// than a request for a tempo of nothing, so it puts back what is actually set.
+function commitRetryTempo(raw) {
+  const wanted = parseInt(raw, 10);
+  if (!Number.isFinite(wanted)) { updateRetryTempoLabel(); return; }
+  setRetryTempo(wanted);
 }
 
 function updateRetryTempoLabel() {
   const el = document.getElementById('retry-tempo-value');
   if (!el) return;
-  const percent = retryTempoSteps * RETRY_TEMPO_STEP;
-  el.textContent = percent
-    ? `${state.composition.tempo} BPM (${percent > 0 ? '+' : ''}${percent}%)`
-    : `${state.composition.tempo} BPM`;
+  const bpm = state.composition.tempo;
+  // Not while it is being typed into, or the cursor jumps to the end of a
+  // half-finished number
+  if (document.activeElement !== el) el.value = bpm;
+  const delta = bpm - retryTempoBase;
+  document.getElementById('retry-tempo-delta').textContent =
+    delta ? `${delta > 0 ? '+' : '\u2212'}${Math.abs(delta)}` : '';
 }
 
 // ── Live gauge ───────────────────────────────────────────────────────────────
@@ -2925,6 +2948,14 @@ function bindModalControls() {
   document.getElementById('btn-train-again').onclick = retryTraining;
   document.getElementById('btn-retry-slower').onclick = () => nudgeRetryTempo(-1);
   document.getElementById('btn-retry-faster').onclick = () => nudgeRetryTempo(1);
+  const retryInput = document.getElementById('retry-tempo-value');
+  retryInput.onchange = (e) => commitRetryTempo(e.target.value);
+  // Enter commits and gets out of the way, so the next thing pressed is Space
+  // for another attempt rather than a keystroke into a field
+  retryInput.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); retryInput.blur(); } };
+
+  document.getElementById('btn-results-prev').onclick = () => trainAdjacentSection(-1);
+  document.getElementById('btn-results-next').onclick = () => trainAdjacentSection(1);
   document.getElementById('btn-close-midi-info').onclick = () => {
     document.getElementById('midi-info-modal').classList.add('hidden');
   };
@@ -3905,6 +3936,36 @@ function cheerFor(best, previous) {
   return 'Better than last time — a new personal best 🎉';
 }
 
+// Having just finished a section, the next thing is usually the one beside it.
+// Trained rather than merely moved to, because the screen this is on is what a
+// finished run leaves behind and starting the next one is what it is for.
+function trainAdjacentSection(delta) {
+  const sections = sectionList();
+  const here = lastTrainingBars;
+  let at = sections.findIndex(s => here && s.startBar === here.startBar && s.endBar === here.endBar);
+  if (at < 0) {
+    // The last run was not one of these sections — the whole piece, a marked
+    // loop, or a rough patch picked out of the results. Step from wherever the
+    // playhead ended up instead.
+    const { tempo, timeSignature } = state.composition;
+    const bar = barAtMs(state.transport.currentTime, tempo, timeSignature);
+    for (let i = 0; i < sections.length; i++) if (sections[i].startBar <= bar) at = i;
+  }
+  const to = Math.min(sections.length - 1, Math.max(0, at + delta));
+  if (!sections.length || to === at) {
+    showToast(delta < 0 ? 'Already at the first section' : 'Already at the last section', 1600);
+    return;
+  }
+  startTrainingSession(sections[to]);
+}
+
+// Only worth offering where there is more than one section to be at
+function syncResultsSectionButtons() {
+  const many = sectionList().length > 1;
+  document.getElementById('btn-results-prev').classList.toggle('hidden', !many);
+  document.getElementById('btn-results-next').classList.toggle('hidden', !many);
+}
+
 function showBestLine() {
   const line = document.getElementById('best-line');
   const cheer = document.getElementById('best-cheer');
@@ -3989,7 +4050,6 @@ function showAccuracyResults(results) {
   showGauge(false);
   // Each results screen re-bases the retry steps on the tempo just played
   retryTempoBase = state.composition.tempo;
-  retryTempoSteps = 0;
   updateRetryTempoLabel();
   document.getElementById('score-pct').textContent = score;
   document.getElementById('stat-perfect').textContent = perfect;
@@ -4014,6 +4074,7 @@ function showAccuracyResults(results) {
   }
 
   showBestLine();
+  syncResultsSectionButtons();
 
   // Offer the roughest couple of bars, when there is one worth repeating
   const worst = getWorstSection(state.composition);
