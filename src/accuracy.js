@@ -139,6 +139,8 @@ let sessionBeatMs = 500; // the beat this run was played at
 // number in the results is computed differently from before it existed.
 let sessionBands = null;
 let sessionFloor = DEFAULT_FLOOR;
+let sessionMap = null;      // this keyboard's velocities, read onto the piece's scale
+let sessionCalibrated = false;
 // After this, the passage is over and keypresses stop being anybody's business
 let sessionEndMs = Infinity;
 
@@ -188,21 +190,17 @@ function professionalWanted() {
   return state.ui.professional === true;
 }
 
-// The narrowest band anyone is asked to hit. A guess until the player has been
-// measured against their own keyboard, which is what calibration is for — it
-// replaces this with their own reproducibility, and that is the only thing that
-// will ever come through here.
-function levelFloor() {
-  return DEFAULT_FLOOR;
-}
-
 export function professionalActive() {
   return sessionBands !== null;
 }
 
 // The quantize setting is for notation — how the score is written and how big a
 // step-record step is. It has no business deciding when a note is due.
-export function startAccuracy(composition, range = null) {
+// The calibration comes in from the caller rather than being fetched, because
+// it belongs to a profile and this file has no business knowing what a profile
+// is — the store already reads the star rules from here, and pointing the two
+// at each other to save an argument would be a poor trade.
+export function startAccuracy(composition, range = null, { calibration = null } = {}) {
   const { tempo } = composition;
   const beatMs = (60 / tempo) * 1000;
 
@@ -213,10 +211,12 @@ export function startAccuracy(composition, range = null) {
   // bands, so asking for professional mode on a flat MIDI export quietly grades
   // the run the ordinary way rather than inventing a target.
   const dynamics = professionalWanted()
-    ? analyseDynamics(composition.notes, { floorDelta: levelFloor() })
+    ? analyseDynamics(composition.notes, { calibration })
     : null;
   sessionBands = dynamics?.ok ? dynamics.bands : null;
   sessionFloor = dynamics?.floorDelta ?? DEFAULT_FLOOR;
+  sessionMap = dynamics?.map ?? null;
+  sessionCalibrated = dynamics?.calibrated ?? false;
 
   // Practising one hand grades only that hand. The other one still sounds
   // through playback, which is the point — you play your part against it.
@@ -299,7 +299,9 @@ function checkHit(pitch, time, playedNote) {
     // was struck at the right moment cannot depend on how hard it was struck
     const band = sessionBands?.get(best.id);
     if (band) {
-      best.levelDelta = playedNote.velocity - band.target;
+      // What the key sent, read onto the scale the piece was written on. With
+      // no calibration this is the identity and the two are the same number.
+      best.levelDelta = sessionMap(playedNote.velocity) - band.target;
       best.levelGrade = levelGradeFor(best.levelDelta, band);
     }
     emit('accuracy:note', {
@@ -465,7 +467,10 @@ function levelResults() {
 
   return {
     bandsVersion: BANDS_VERSION,
-    floorDelta: sessionFloor,
+    floorDelta: Math.round(sessionFloor * 10) / 10,
+    // Whether this rating was measured against the player's own keyboard or
+    // against the assumption that theirs is the one the piece was played on
+    calibrated: sessionCalibrated,
     perfect, good, almost, off,
     graded: struck.length,
     total: expectedNotes.length,

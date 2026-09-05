@@ -129,6 +129,22 @@ exercise is), and eighteen distinct ones. And the band arithmetic is checked
 against the recording it was fitted to — ±perfect at velocity 62 is 7.6, which
 was that performer's own median note-to-note consistency.
 
+### Calibration is checked by playing the piece correctly and badly at once
+
+The calibration screen listens to the same `midi:noteon` as everything else, so
+a pass is eight of those — the real capture, the real validation, the real
+profile store.
+
+What it is *worth* is harder to assert than that it happened, and the check that
+does it is the only one in this file that plays a piece deliberately in someone
+else's units. A keyboard whose whole range is twenty velocity units plays a
+piece written across fifty: the presses are computed by running the map
+backwards, so they are what a player meaning to play it correctly would actually
+send. Uncalibrated, the app reads their forte as somebody else's mezzo and marks
+them down. Calibrated, the identical presses are ten level stars. Both runs still
+score a hundred per cent and ten timing stars, which is the same invariant as
+above holding with a second moving part added.
+
 ## `tracks.mjs` — multi-track MIDI
 
 Walks a three-part file, built in the script rather than kept as a fixture,

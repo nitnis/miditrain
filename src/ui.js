@@ -35,7 +35,11 @@ import {
   learningPosition, canUseFolder, chooseFolder, folderHandle, storedFolder, scanFolder,
   writeToFolder, readFromFolder, removeFromFolder,
   fileNameFor, bundleToJSON, bundleFromJSON,
+  calibrationOf, setCalibration, calibrationMatchesInput,
 } from './profiles.js';
+import {
+  CALIBRATION_LEVELS, CALIBRATION_STRIKES, summariseStrikes, calibrationIsUsable,
+} from './dynamics.js';
 import { collectBundle, applyBundle } from './session.js';
 import { initHistory, resetHistory, undo, redo } from './history.js';
 import {
@@ -1171,6 +1175,13 @@ function bindProfiles() {
   document.getElementById('btn-close-bests').onclick = () =>
     document.getElementById('bests-modal').classList.add('hidden');
 
+  const pro = document.getElementById('professional-enabled');
+  pro.checked = state.ui.professional === true;
+  pro.onchange = (e) => update('ui.professional', e.target.checked);
+  document.getElementById('btn-calibrate').onclick = openCalibration;
+  document.getElementById('btn-close-calibrate').onclick = closeCalibration;
+  document.getElementById('btn-calibrate-redo').onclick = () => { calStage = 0; calTaken = {}; startCalibrationStage(); };
+
   // Making a profile is where the folder gets settled, because it is the one
   // moment that has both a reason to ask and a click to ask with. A profile is
   // a record of what somebody has achieved; it should not be built somewhere a
@@ -1285,6 +1296,137 @@ function renderProfileSelect() {
   }
 }
 
+// ── Calibration ──────────────────────────────────────────────────────────────
+//
+// Three passes of eight strikes: soft, ordinary, loud. What comes out is where
+// this player's dynamics sit on this keyboard, which is what lets a run be
+// graded against a recording made on somebody else's.
+//
+// The capture listens to the same `midi:noteon` everything else does, so the
+// notes sound as they are played and there is nothing to learn about how to do
+// it. Nothing is written down until all three passes are in and they came out
+// in order.
+let calStage = 0;
+let calStrikes = [];
+let calTaken = {};
+let calStopListening = null;
+
+function openCalibration() {
+  calStage = 0;
+  calTaken = {};
+  startCalibrationStage();
+  document.getElementById('calibrate-modal').classList.remove('hidden');
+}
+
+function closeCalibration() {
+  calStopListening?.();
+  calStopListening = null;
+  document.getElementById('calibrate-modal').classList.add('hidden');
+  renderCalibrationState();
+}
+
+function startCalibrationStage() {
+  calStrikes = [];
+  const level = CALIBRATION_LEVELS[calStage];
+  document.getElementById('calibrate-ask').innerHTML =
+    `Play <strong>${CALIBRATION_STRIKES} notes</strong> at <strong>${level.name}</strong> — ${level.ask}.`;
+  drawCalibrationMeter();
+  setCalibrationNote(state.midi.connected
+    ? `Pass ${calStage + 1} of ${CALIBRATION_LEVELS.length}.`
+    : 'No MIDI keyboard is connected — there is nothing to measure.');
+
+  calStopListening?.();
+  calStopListening = on('midi:noteon', ({ velocity }) => {
+    if (calStrikes.length >= CALIBRATION_STRIKES) return;
+    calStrikes.push(velocity ?? 90);
+    drawCalibrationMeter();
+    if (calStrikes.length >= CALIBRATION_STRIKES) finishCalibrationStage();
+  });
+}
+
+function finishCalibrationStage() {
+  const level = CALIBRATION_LEVELS[calStage];
+  calTaken[level.key] = summariseStrikes(calStrikes);
+  calStopListening?.();
+  calStopListening = null;
+
+  if (calStage + 1 < CALIBRATION_LEVELS.length) {
+    calStage += 1;
+    setCalibrationNote(`${level.name} came out at ${calTaken[level.key].velocity}. Next one…`);
+    setTimeout(startCalibrationStage, 900);
+    return;
+  }
+
+  // The one thing that can go wrong is worth naming rather than fitting a curve
+  // through: three passes that did not come out in order mean the passes were
+  // not what was asked for, and a calibration built on them would be worse than
+  // none at all.
+  if (!calibrationIsUsable(calTaken)) {
+    setCalibrationNote(
+      `Those came out at ${CALIBRATION_LEVELS.map(l => `${l.name} ${calTaken[l.key].velocity}`).join(', ')}` +
+      ' — which is not louder each time, so nothing was saved. Start again and lean into the last pass.');
+    return;
+  }
+
+  const live = (state.midi.inputs || []).find(i => i.state === 'connected' && i.enabled);
+  setCalibration({
+    at: Date.now(),
+    inputId: live?.id ?? null,
+    inputName: live?.name ?? null,
+    anchors: calTaken,
+  });
+  keepProfileOnDisk('Calibration');
+  // The last thing asked for is over, so it stops being what the screen says
+  document.getElementById('calibrate-ask').innerHTML =
+    `<strong>Measured.</strong> Runs in professional mode are now graded against this keyboard.`;
+  setCalibrationNote(CALIBRATION_LEVELS.map(l => `${l.name} ${calTaken[l.key].velocity}`).join(' · '));
+  showToast('Keyboard calibrated', 2400);
+  renderCalibrationState();
+}
+
+function drawCalibrationMeter() {
+  const meter = document.getElementById('calibrate-meter');
+  meter.innerHTML = '';
+  for (let i = 0; i < CALIBRATION_STRIKES; i++) {
+    const bar = document.createElement('div');
+    bar.className = `calibrate-strike${i < calStrikes.length ? ' struck' : ''}`;
+    // The height is the strike itself, so a pass that wandered looks like one
+    bar.style.height = i < calStrikes.length ? `${8 + (calStrikes[i] / 127) * 46}px` : '4px';
+    meter.appendChild(bar);
+  }
+}
+
+const setCalibrationNote = (text) => { document.getElementById('calibrate-note').textContent = text; };
+
+function renderCalibrationState() {
+  const el = document.getElementById('profile-calibration-state');
+  const cal = calibrationOf();
+  if (!cal) {
+    el.textContent = 'Not calibrated — dynamics are graded as though this keyboard were the one the piece was played on.';
+    return;
+  }
+  const when = new Date(cal.at).toLocaleDateString();
+  const where = cal.inputName ? ` on ${cal.inputName}` : '';
+  const levels = CALIBRATION_LEVELS.map(l => `${l.name} ${cal.anchors[l.key].velocity}`).join(', ');
+  const drifted = calibrationMatchesInput(state.midi.inputs, cal)
+    ? ''
+    : ' · a different keyboard is connected now, so this wants taking again';
+  el.textContent = `Calibrated ${when}${where}: ${levels}.${drifted}`;
+}
+
+// Said once a load, at the moment it matters: the run about to start is going to
+// be graded on dynamics measured somewhere else.
+let toldAboutCalibration = false;
+
+function noteCalibrationDrift() {
+  if (toldAboutCalibration || !state.ui.professional) return;
+  const cal = calibrationOf();
+  if (!cal) return;
+  if (calibrationMatchesInput(state.midi.inputs, cal)) return;
+  toldAboutCalibration = true;
+  showToast(`This is not the keyboard "${cal.inputName || 'your calibration'}" was measured on — calibrate again under Profiles…`, 5000);
+}
+
 // A rename takes the file with it, because the folder is meant to read like the
 // list of profiles rather than like a history of what they used to be called.
 //
@@ -1390,6 +1532,8 @@ function renderProfiles() {
     list.appendChild(row);
   }
   renderFolderState();
+  renderCalibrationState();
+  document.getElementById('professional-enabled').checked = state.ui.professional === true;
 }
 
 // Making a profile insists on a folder and writes the file at once, but the
@@ -2289,9 +2433,10 @@ function startTrainingSession(bars = null) {
   // Spend this click on the folder permission a page load dropped, so the best
   // this run might produce has somewhere to go
   armFolder();
+  noteCalibrationDrift();
 
   withCountIn(() => {
-    startAccuracy(state.composition, range);
+    startAccuracy(state.composition, range, { calibration: calibrationOf() });
     if (range) playRange(range.startMs, range.endMs, range.tailMs);
     else play();
   });
