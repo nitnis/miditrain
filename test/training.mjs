@@ -499,8 +499,12 @@ r = await run('twenty notes, every one dead on', beats20);
 check('a long run played perfectly is still ten stars', [r.perfect, r.stars], [20, 10]);
 
 r = await run('twenty notes, one of them 100 ms late', late(7));
-check('one loose note in twenty still scores a hundred', [r.score, r.good], [100, 1]);
-check('...and is no longer rounded away into ten stars', r.stars, 9.75);
+// How many of the twenty came out merely "good" is not the claim and does not
+// hold still — one press landing a frame late makes a second one. The claim is
+// that a hundred per cent with any loose note in it is not ten stars.
+check('one loose note in twenty still scores a hundred', [r.score, r.missed], [100, 0]);
+check('...with at least the one that was played late', r.good >= 1, true);
+check('...and is no longer rounded away into ten stars', r.stars < 10, true);
 
 // ── stepping from one section to the next ────────────────────────────────────
 //
@@ -744,6 +748,104 @@ check('...and plays it', await page.evaluate(() => window.__played), 1);
 await page.waitForTimeout(300);
 check('...without dragging an older run\u2019s results back up when it ends',
   await page.locator('#accuracy-modal').isVisible(), false);
+await page.evaluate(async () => (await import('/src/transport.js')).stop());
+await page.waitForTimeout(300);
+
+// ── the retry tempo, in beats rather than per cent ───────────────────────────
+//
+// A percentage step is a different number of beats at every tempo — six at
+// sixty, eighteen at a hundred and eighty — so the same button did not mean the
+// same thing twice. Ten BPM does.
+await closeResults();
+await section(0, 0);
+await setupBars(8);
+await page.click('#btn-to-start');
+await page.selectOption('#learn-sections', '2');
+await page.waitForTimeout(200);
+r = await run('a run, to open the results screen', []);
+await page.waitForTimeout(400);
+
+const retry = async () => ({
+  tempo: await page.evaluate(async () => (await import('/src/state.js')).state.composition.tempo),
+  field: await page.inputValue('#retry-tempo-value'),
+  delta: await page.locator('#retry-tempo-delta').textContent(),
+});
+check('the results screen opens at the tempo just played',
+  await retry(), { tempo: 120, field: '120', delta: '' });
+
+await page.click('#btn-retry-slower');
+await page.waitForTimeout(150);
+check('slower is ten beats, not ten per cent', await retry(), { tempo: 110, field: '110', delta: '\u221210' });
+await page.click('#btn-retry-slower');
+await page.waitForTimeout(150);
+check('...and the next ten is another ten', await retry(), { tempo: 100, field: '100', delta: '\u221220' });
+await page.click('#btn-retry-faster');
+await page.waitForTimeout(150);
+check('...so down and up lands where it started', await retry(), { tempo: 110, field: '110', delta: '\u221210' });
+
+await page.fill('#retry-tempo-value', '76');
+await page.press('#retry-tempo-value', 'Enter');
+await page.waitForTimeout(250);
+check('a tempo can be typed straight in', await retry(), { tempo: 76, field: '76', delta: '\u221244' });
+
+await page.fill('#retry-tempo-value', '999');
+await page.press('#retry-tempo-value', 'Enter');
+await page.waitForTimeout(250);
+check('...within what a tempo can be', (await retry()).tempo, 300);
+
+await page.fill('#retry-tempo-value', '');
+await page.press('#retry-tempo-value', 'Enter');
+await page.waitForTimeout(250);
+check('an emptied field is somebody mid-edit, not a tempo of nothing',
+  (await retry()).field, '300');
+await page.fill('#retry-tempo-value', '120');
+await page.press('#retry-tempo-value', 'Enter');
+await page.waitForTimeout(250);
+
+// ── and the next section, from the screen the last one ended on ──────────────
+check('the results screen offers the sections either side',
+  [await page.locator('#btn-results-prev').isVisible(),
+   await page.locator('#btn-results-next').isVisible()], [true, true]);
+
+await page.click('#btn-results-next');
+await page.waitForTimeout(900);
+// The range the run is grading against, not the playhead — which is moving,
+// and which section is being trained is the actual question
+check('...and stepping trains the one beside it', await page.evaluate(async () => {
+  const { getSessionRange } = await import('/src/accuracy.js');
+  const range = getSessionRange();
+  return range && [range.startMs, range.endMs];
+}), [4000, 8000]);
+await page.evaluate(async () => (await import('/src/transport.js')).stop());
+await page.waitForTimeout(300);
+
+await closeResults();
+await page.selectOption('#learn-sections', '0');
+await page.waitForTimeout(200);
+r = await run('a run with the piece as one section', []);
+await page.waitForTimeout(400);
+check('with one section there is nothing either side to offer',
+  [await page.locator('#btn-results-prev').isVisible(),
+   await page.locator('#btn-results-next').isVisible()], [false, false]);
+
+// ── going back a section from the learn walk's own screen ────────────────────
+await closeResults();
+await page.evaluate(async () => {
+  const { emit } = await import('/src/state.js');
+  emit('sections:done', { startBar: 1, endBar: 2, index: 0, total: 4, last: false });
+});
+await page.waitForTimeout(250);
+check('the first section has nothing behind it to go back to',
+  await page.locator('#btn-section-prev').isVisible(), false);
+await page.evaluate(async () => {
+  const { emit } = await import('/src/state.js');
+  emit('sections:done', { startBar: 3, endBar: 4, index: 1, total: 4, last: false });
+});
+await page.waitForTimeout(250);
+check('...and every one after it does',
+  await page.locator('#btn-section-prev').isVisible(), true);
+await page.click('#btn-section-again');
+await page.waitForTimeout(400);
 await page.evaluate(async () => (await import('/src/transport.js')).stop());
 await page.waitForTimeout(300);
 

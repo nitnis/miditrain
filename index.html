@@ -548,17 +548,28 @@
       <!-- Your best at this passage, in this hand, at this speed. Hidden
            entirely on the first attempt: there is nothing to say yet. -->
       <p class="best-line hidden" id="best-line"></p>
+      <!-- Ten beats a minute, not ten per cent. A percentage step is a
+           different number of beats at every tempo, so the same button did not
+           mean the same thing twice; and the figure is typed into directly,
+           because sometimes you already know what you want to try. -->
       <div class="retry-tempo">
         <span class="retry-tempo-label">Retry at</span>
-        <button class="retry-tempo-btn" id="btn-retry-slower">−10%</button>
-        <span class="retry-tempo-value" id="retry-tempo-value">120 BPM</span>
-        <button class="retry-tempo-btn" id="btn-retry-faster">+10%</button>
+        <button class="retry-tempo-btn" id="btn-retry-slower" title="Ten BPM slower">&minus;10</button>
+        <input class="retry-tempo-input" type="number" id="retry-tempo-value"
+               min="20" max="300" step="1" aria-label="Retry tempo in BPM">
+        <span class="retry-tempo-unit">BPM</span>
+        <span class="retry-tempo-delta" id="retry-tempo-delta"></span>
+        <button class="retry-tempo-btn" id="btn-retry-faster" title="Ten BPM faster">+10</button>
       </div>
       <p class="retry-hint" id="retry-hint">Press <kbd class="kbd-hint">Space</kbd> to try again</p>
       <div class="modal-actions">
         <button class="modal-btn" id="btn-replay-take" title="Play back what you just played, against the notes as written">Replay my take</button>
         <button class="modal-btn hidden" id="btn-replay-best" title="Play back your best run of this passage, at this hand setting and this speed">Replay my best</button>
         <button class="modal-btn" id="btn-train-section" hidden>Practise bars 1–2</button>
+        <!-- Having just finished one, the next thing is usually the one beside
+             it. Hidden when the piece is a single section. -->
+        <button class="modal-btn hidden" id="btn-results-prev">&#9664; Section</button>
+        <button class="modal-btn hidden" id="btn-results-next">Section &#9654;</button>
         <button class="modal-btn" id="btn-train-again">Try Again</button>
         <button class="modal-btn primary" id="btn-close-accuracy">Done</button>
       </div>
@@ -737,6 +748,7 @@
       <div class="modal-actions section-actions">
         <button class="modal-btn primary" id="btn-section-again">Learn it again <kbd class="kbd-hint">Space</kbd></button>
         <button class="modal-btn" id="btn-section-train">Train this section <kbd class="kbd-hint">T</kbd></button>
+        <button class="modal-btn" id="btn-section-prev">&#9664; Previous section</button>
         <button class="modal-btn" id="btn-section-next"><span id="section-next-label">Next section</span> <kbd class="kbd-hint">N</kbd></button>
       </div>
       <p class="retry-hint"><kbd class="kbd-hint">Esc</kbd> to stop here</p>
