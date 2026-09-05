@@ -8,6 +8,7 @@
 //
 // It is also most of an audio export: a buffer plus a wav header is a file.
 import { makeVoice, playNoteAt } from './audio.js';
+import { sustainSpans, soundingEnd } from './pedal.js';
 
 // Transcription works at 22.05 kHz, and rendering straight to that rate saves
 // resampling a buffer twice the size for no gain: Nyquist at 11 kHz clears the
@@ -18,17 +19,30 @@ export const RENDER_RATE = 22050;
 // mid-fade, which would read as a click to anything listening.
 const TAIL_S = 0.6;
 
-export function compositionDurationMs(notes) {
+// How long the sound lasts, which is not the same as how long the keys were
+// held: under the pedal a note goes on after its key comes up, and a buffer cut
+// to the key releases would chop the ring off.
+export function compositionDurationMs(notes, pedal = null) {
+  const spans = pedal?.length ? sustainSpans(pedal) : [];
   let end = 0;
-  for (const n of notes) end = Math.max(end, n.startTime + n.duration);
+  for (const n of notes) {
+    const keyUp = n.startTime + n.duration;
+    end = Math.max(end, spans.length ? soundingEnd(spans, keyUp) : keyUp);
+  }
   return end;
 }
 
 // `notes` in the app's own shape: startTime and duration in ms, pitch in MIDI.
-export async function renderToBuffer(notes, { sampleRate = RENDER_RATE } = {}) {
+//
+// `pedal` is optional and defaults to none, so a caller that has never heard of
+// it renders exactly what it always did. It is here at all because the speakers
+// and this share one voice builder on purpose — two sound paths that can drift
+// apart is the thing this file exists to avoid.
+export async function renderToBuffer(notes, { sampleRate = RENDER_RATE, pedal = null } = {}) {
   if (!notes || !notes.length) throw new Error('Nothing to render');
 
-  const seconds = compositionDurationMs(notes) / 1000 + TAIL_S;
+  const spans = pedal?.length ? sustainSpans(pedal) : [];
+  const seconds = compositionDurationMs(notes, pedal) / 1000 + TAIL_S;
   const frames = Math.ceil(seconds * sampleRate);
   const OfflineCtx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
   const ctx = new OfflineCtx(1, frames, sampleRate);
@@ -43,7 +57,9 @@ export async function renderToBuffer(notes, { sampleRate = RENDER_RATE } = {}) {
   for (const note of notes) {
     const when = note.startTime / 1000;
     const voice = makeVoice(ctx, bus, note.pitch, note.velocity ?? 90, when);
-    playNoteAt(voice, when, note.duration / 1000);
+    const keyUp = note.startTime + note.duration;
+    const stops = spans.length ? soundingEnd(spans, keyUp) : keyUp;
+    playNoteAt(voice, when, (stops - note.startTime) / 1000);
   }
 
   return ctx.startRendering();

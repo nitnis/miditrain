@@ -145,11 +145,23 @@ them down. Calibrated, the identical presses are ten level stars. Both runs stil
 score a hundred per cent and ten timing stars, which is the same invariant as
 above holding with a second moving part added.
 
-## `tracks.mjs` — multi-track MIDI
+## `tracks.mjs` — multi-track MIDI, and the pedals
 
 Walks a three-part file, built in the script rather than kept as a fixture,
 through the reader, the real import path, the writer, playback, both drawings,
 the score, the hand inference, the practice modes and both save paths.
+
+The file also carries a fourth track of nothing but pedals, which is how a real
+performance often arrives — and which has to survive without becoming a part
+anybody plays. Its presses are placed against the notes deliberately: the damper
+is up when some notes are released and down when others are, so "held until the
+pedal comes up" and "not stretched to meet the next press" are both real cases
+rather than the same case twice.
+
+There is also a twenty-thousand-note export in here that asserts almost nothing
+about its output. `push(...bytes)` passes every element as an argument, and a
+piece this size overflowed the stack before a byte reached the disk — so what it
+checks is that a file comes out at all.
 
 ## `roundtrip.mjs` — transcription against a real recording
 

@@ -40,6 +40,7 @@ import {
 import {
   CALIBRATION_LEVELS, CALIBRATION_STRIKES, summariseStrikes, calibrationIsUsable,
 } from './dynamics.js';
+import { normalizePedal, hasPedal } from './pedal.js';
 import { collectBundle, applyBundle } from './session.js';
 import { initHistory, resetHistory, undo, redo } from './history.js';
 import {
@@ -828,6 +829,7 @@ function writeExercise() {
   }
   state.composition.notes = exercise.notes;
   state.composition.tracks = [];   // a generated exercise is one part
+  state.composition.pedal = [];    // and nobody's feet were in it
   state.composition.name = exercise.title;
   syncTracksButton();
   // A generated exercise starts at the top, and the last thing loop-marked was
@@ -3051,7 +3053,10 @@ function bindCompositionControls() {
       // Worth saying, because the control for it only just appeared in the
       // header and nothing else on screen shows the piece came in parts
       const parts = hasTracks() ? ` · ${trackList().length} tracks — see Tracks…` : '';
-      showToast(`Imported "${imported.name}" — ${n} note${n === 1 ? '' : 's'}${parts}${detail}${gridNote(regrid)}`,
+      // Also worth saying: pedalling changes what the piece sounds like, and
+      // this app spent a long time reading it and throwing it away
+      const feet = hasPedal(state.composition.pedal) ? ' · pedalling kept' : '';
+      showToast(`Imported "${imported.name}" — ${n} note${n === 1 ? '' : 's'}${parts}${feet}${detail}${gridNote(regrid)}`,
         imported.warnings?.length || parts ? 5000 : 2500);
     } catch (err) {
       showToast(`Import failed: ${err.message}`, 4000);
@@ -3113,6 +3118,9 @@ function loadComposition(song) {
   // `tracks` at all, and without this the previous piece's parts would still be
   // sitting there deciding what sounds.
   state.composition.tracks = normalizeTracks(song.tracks, song.notes);
+  // For the same reason: a piece nobody pedalled has no `pedal` at all, and
+  // without this it would be played through the last piece's feet
+  state.composition.pedal = normalizePedal(song.pedal);
   syncTracksButton();
   document.getElementById('composition-name').textContent = song.name || 'Untitled';
   // The slider measures distance from where the piece arrived, so a new piece

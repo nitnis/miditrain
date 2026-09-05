@@ -382,6 +382,9 @@ export function clearAllNotes() {
   // The parts went with the notes. Left behind they would be a list of parts
   // that no longer have any, still deciding what sounds.
   state.composition.tracks = [];
+  // And so did the pedalling. Left behind, the next piece loaded would be
+  // played through the last one's feet.
+  state.composition.pedal = [];
   update('transport.currentTime', 0);
   emit('transport:noteschanged', []);
   emit('tracks:changed', []);
