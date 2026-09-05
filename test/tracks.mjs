@@ -57,10 +57,36 @@ function threePartMidi() {
     return out;
   });
 
+  // A track of nothing but pedals, which is how a real performance often
+  // arrives. It has no notes, so it is not a part anybody plays and should not
+  // appear in the track list — and its contents must survive anyway.
+  //
+  // Notes are 500 ms apart and each lasts 479 ms, so the presses below land
+  // deliberately: the damper is up when notes 0, 1, 3 and 4 are released, and
+  // down again by the time 2 and 5 are.
+  const PEDAL = [
+    [240, 64, 127],   // 250 ms: down
+    [700, 64, 90],    // 729 ms: still down, at a different value
+    [240, 67, 64],    // the soft pedal, which is carried and not yet acted on
+    [1200, 64, 0],    // 1250 ms: up
+    [1440, 64, 100],  // 1500 ms: down again
+    [2400, 64, 0],    // 2500 ms: up
+    [2400, 67, 0],
+  ].sort((a, b) => a[0] - b[0]);
+
+  const pedalTrack = [...varLen(0), ...meta(0x03, text('Pedals'))];
+  let pedalTick = 0;
+  for (const [tick, cc, value] of PEDAL) {
+    pedalTrack.push(...varLen(tick - pedalTick), 0xb0, cc, value);
+    pedalTick = tick;
+  }
+  pedalTrack.push(...varLen(0), ...meta(0x2f, []));
+
   return [
-    ...chunk('MThd', [0, 1, 0, parts.length + 1, (TPB >> 8) & 0xff, TPB & 0xff]),
+    ...chunk('MThd', [0, 1, 0, parts.length + 2, (TPB >> 8) & 0xff, TPB & 0xff]),
     ...chunk('MTrk', conductor),
     ...parts.flatMap(p => chunk('MTrk', p)),
+    ...chunk('MTrk', pedalTrack),
   ];
 }
 
@@ -189,12 +215,81 @@ check('a note with no part is audible', await page.evaluate(async () => {
   return isAudible({ id: 'x', pitch: 64, startTime: 0, duration: 200 });
 }), true);
 
+// ── the pedals ──
+//
+// The app read these bytes and threw them away, at three separate points: the
+// reader discarded every controller, nothing listened to the live pedal, and
+// the writer emitted notes only. On a real performance that is a great deal to
+// lose — and it was heard, because a piece whose damper is up for most of its
+// length was being played detached.
+const feet = await page.evaluate(async (bytes) => {
+  const mf = await import('/src/midi-file.js');
+  const { sustainSpans, soundingEnd, pedalAt } = await import('/src/pedal.js');
+  const st = await import('/src/storage.js');
+  const song = mf.midiToComposition(new Uint8Array(bytes).buffer);
+  const spans = sustainSpans(song.pedal);
+
+  // The same file out and back in again
+  const bytesOut = mf.compositionToMidi(song);
+  const back = mf.midiToComposition(bytesOut.buffer.slice(bytesOut.byteOffset, bytesOut.byteOffset + bytesOut.byteLength));
+  // ...and through the app's own JSON, which is the other way it is kept
+  const stored = st.compositionFromJSON(st.compositionToJSON(song));
+
+  const endOf = (i) => {
+    const n = song.notes.filter(x => x.trackId === 1).sort((a, b) => a.startTime - b.startTime)[i];
+    return Math.round(soundingEnd(spans, n.startTime + n.duration));
+  };
+  return {
+    events: song.pedal.map(e => [Math.round(e.time), e.pedal, e.value]),
+    parts: song.tracks.map(t => t.name),
+    spans: spans.map(s => [Math.round(s.from), Math.round(s.to)]),
+    // note 0 is released at 479 ms with the damper up, note 2 at 1479 with it down
+    heldUnderPedal: endOf(0),
+    releasedBetweenPresses: endOf(2),
+    halfway: pedalAt(song.pedal, 1000, 'sustain'),
+    exported: back.pedal.map(e => [Math.round(e.time), e.pedal, e.value]),
+    storedAgain: stored.pedal.length,
+  };
+}, threePartMidi());
+
+check('the pedals come through the reader', feet.events,
+  [[250, 'sustain', 127], [250, 'soft', 64], [729, 'sustain', 90],
+   [1250, 'sustain', 0], [1500, 'sustain', 100], [2500, 'sustain', 0], [2500, 'soft', 0]]);
+check('...including a value that is neither up nor down', feet.halfway, 90);
+check('a track of nothing but pedals is not a part anybody plays', feet.parts,
+  ['Piano right', 'Piano left', 'Strings']);
+check('the damper-raised stretches read off them', feet.spans, [[250, 1250], [1500, 2500]]);
+check('a note released under the pedal sounds until the pedal comes up',
+  feet.heldUnderPedal, 1250);
+check('...and one released between presses is not stretched to meet the next',
+  feet.releasedBetweenPresses, 1479);
+check('the writer puts them back, unchanged', feet.exported, feet.events);
+check('and the app’s own JSON keeps them too', feet.storedAgain, feet.events.length);
+
+// A big piece used to throw "Maximum call stack size exceeded" before a byte
+// reached the disk, because every track byte was passed to push as an argument
+check('a piece too big to spread still exports', await page.evaluate(async () => {
+  const { compositionToMidi } = await import('/src/midi-file.js');
+  const notes = [];
+  for (let i = 0; i < 20000; i++) {
+    notes.push({ id: `n${i}`, pitch: 60 + (i % 24), velocity: 90, startTime: i * 100, duration: 90 });
+  }
+  const out = compositionToMidi({
+    name: 'Long', tempo: 120, timeSignature: { numerator: 4, denominator: 4 },
+    keySignature: 'C', notes, tracks: [], pedal: [],
+  });
+  return out.length > 100000;
+}), true);
+
 // ── clearing the piece clears the parts, and the button goes with them ──
 await page.click('#btn-clear');
 await page.waitForTimeout(600);
 check('Clear All takes the parts too', await page.evaluate(async () =>
   (await import('/src/state.js')).state.composition.tracks.length), 0);
 check('...and the button goes', await page.locator('#btn-tracks').isVisible(), false);
+// Left behind, the next piece loaded would be played through the last one's feet
+check('...and the pedalling with them', await page.evaluate(async () =>
+  (await import('/src/state.js')).state.composition.pedal.length), 0);
 
 await browser.close();
 

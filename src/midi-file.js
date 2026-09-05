@@ -8,10 +8,12 @@
 // `tracks` list alongside the notes, each note tagged with the track it came
 // from, and writing puts the parts back into their own chunks. See tracks.js.
 import { normalizeTracks } from './tracks.js';
+import { PEDAL_FROM_CC, CC_FOR_PEDAL, normalizePedal } from './pedal.js';
 
 const TICKS_PER_BEAT = 480;
 const NOTE_ON = 0x90;
 const NOTE_OFF = 0x80;
+const CONTROL = 0xb0;
 const META = 0xff;
 const SYSEX = 0xf0;
 
@@ -48,6 +50,17 @@ function textBytes(str) {
   return [...new TextEncoder().encode(str)];
 }
 
+// `target.push(...source)` passes every element as an argument, and a big piece
+// exceeds what a call can take: the Schubert recording this was built against
+// is 16,662 notes and about two million bytes of track, and exporting it threw
+// "Maximum call stack size exceeded" before a byte reached the disk. Only the
+// spread is the problem — array-literal spread iterates and is fine — so this
+// is the one place that has to append rather than spread.
+function append(target, source) {
+  for (let i = 0; i < source.length; i++) target.push(source[i]);
+  return target;
+}
+
 function chunk(id, body) {
   const len = body.length;
   return [
@@ -61,8 +74,13 @@ function metaEvent(type, data) {
   return [META, type, ...varLen(data.length), ...data];
 }
 
-// One MTrk from one list of notes, with its name if it has one
-function noteTrack(notes, toTicks, name) {
+// One MTrk from one list of notes, with its name if it has one — and, on the
+// first part only, the pedals.
+//
+// The pedals go on one track because there is only one set of them. Writing
+// them into every part would have both hands raising the same damper, which is
+// harmless to hear and wrong to read.
+function noteTrack(notes, toTicks, name, pedal = []) {
   // One event per note edge. Note-offs sort before note-ons at the same tick,
   // or a note repeated on the beat would be switched off the instant it began.
   const events = [];
@@ -71,6 +89,11 @@ function noteTrack(notes, toTicks, name) {
     const end = Math.max(start + 1, toTicks(note.startTime + note.duration));
     events.push({ tick: start, order: 1, bytes: [NOTE_ON, note.pitch, Math.max(1, Math.min(127, note.velocity ?? 90))] });
     events.push({ tick: end, order: 0, bytes: [NOTE_OFF, note.pitch, 64] });
+  }
+  // A pedal lifted at the same tick as a note begins sorts before it, so the
+  // note is not caught by a damper that was on its way up anyway
+  for (const e of pedal) {
+    events.push({ tick: toTicks(e.time), order: 0, bytes: [CONTROL, CC_FOR_PEDAL[e.pedal], e.value] });
   }
   events.sort((a, b) => a.tick - b.tick || a.order - b.order);
 
@@ -139,7 +162,10 @@ export function compositionToMidi(composition) {
   ]);
 
   const bytes = [...header, ...chunk('MTrk', conductor)];
-  for (const part of parts) bytes.push(...chunk('MTrk', noteTrack(part.notes, toTicks, part.name)));
+  parts.forEach((part, i) => {
+    append(bytes, chunk('MTrk', noteTrack(part.notes, toTicks, part.name,
+      i === 0 ? (composition.pedal || []) : [])));
+  });
   return new Uint8Array(bytes);
 }
 
@@ -226,6 +252,12 @@ function readTrack(reader, length) {
       events.push({ tick, channel, pitch, velocity, on });
     } else if (command === 0xc0 || command === 0xd0) {
       reader.byte();
+    } else if (command === CONTROL) {
+      const controller = reader.byte();
+      const value = reader.byte();
+      // The three pedals are kept; every other controller is somebody's mixer
+      // automation and none of this app's business
+      if (PEDAL_FROM_CC[controller]) events.push({ tick, channel, controller, value });
     } else if (command >= 0xa0 && command <= 0xe0) {
       reader.bytesN(2);
     } else {
@@ -262,7 +294,7 @@ export function midiToComposition(buffer) {
     // Both hands are usually written on the same channel, and their ranges
     // overlap, so a note has to be matched to its note-off within its own track
     for (const event of trackEvents) event.track = i;
-    events.push(...trackEvents);
+    append(events, trackEvents);
     // A conductor track carries the tempo and the key and no notes at all, and
     // is not a part anybody plays. Listing it would put a row in the track
     // control that switches nothing off.
@@ -354,6 +386,17 @@ export function midiToComposition(buffer) {
   if (!notes.length) throw new Error('No playable notes in this MIDI file');
   notes.sort((a, b) => a.startTime - b.startTime);
 
+  // The pedals, on the same clock as the notes. Merged across tracks and left
+  // in the order they were written: which track a foot was recorded on is not a
+  // musical fact, and both hands' parts share one set of pedals anyway.
+  const pedal = normalizePedal(events
+    .filter(e => e.controller !== undefined)
+    .map(e => ({
+      time: e.tick * msPerTick,
+      pedal: PEDAL_FROM_CC[e.controller],
+      value: e.value,
+    })));
+
   const warnings = [];
   if (tempoChanges > 1) warnings.push(`${tempoChanges} tempo changes — kept the first (${tempo} BPM)`);
   if (dropped) warnings.push(`${dropped} percussion note${dropped === 1 ? '' : 's'} skipped`);
@@ -366,6 +409,7 @@ export function midiToComposition(buffer) {
     timeSignature,
     keySignature,
     notes,
+    pedal,
     tracks: normalizeTracks(tracks, notes),
     warnings,
   };

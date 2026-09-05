@@ -13,6 +13,9 @@ const _state = {
     // a single part — a recording, a generated exercise, a format-0 file — and
     // a note with no `trackId` belongs to none of them. See tracks.js.
     tracks: [], // { id, name, enabled, color, hand }[]
+    // What the feet were doing: sustain, sostenuto and soft, on the same clock
+    // as the notes. Empty for anything that arrived without them. See pedal.js.
+    pedal: [], // { time, pedal, value }[]
   },
   transport: {
     mode: 'stopped', // 'stopped' | 'playing' | 'recording' | 'step-recording' | 'count-in' | 'learning'

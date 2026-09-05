@@ -1,5 +1,6 @@
 // IndexedDB persistence via localforage
 import { normalizeTracks } from './tracks.js';
+import { normalizePedal } from './pedal.js';
 
 let store;
 let workingStore;
@@ -52,7 +53,7 @@ const FILE_FORMAT = 'miditrain.composition';
 const FILE_VERSION = 1;
 
 export function compositionToJSON(composition) {
-  const { name, tempo, timeSignature, keySignature, notes, tracks } = composition;
+  const { name, tempo, timeSignature, keySignature, notes, tracks, pedal } = composition;
   return JSON.stringify({
     format: FILE_FORMAT,
     version: FILE_VERSION,
@@ -67,6 +68,9 @@ export function compositionToJSON(composition) {
       // for. Left out, reopening a saved arrangement would put every part back
       // on and hand the colours back to the app.
       ...(tracks?.length ? { tracks: tracks.map(t => ({ ...t })) } : {}),
+      // What the feet were doing. Left out when there is none, which is most
+      // pieces, so nothing that never had a pedal grows an empty list.
+      ...(pedal?.length ? { pedal: pedal.map(e => ({ time: e.time, pedal: e.pedal, value: e.value })) } : {}),
       notes: notes.map(n => ({
         id: n.id,
         pitch: n.pitch,
@@ -170,6 +174,7 @@ export function compositionFromJSON(text) {
     },
     keySignature: typeof src.keySignature === 'string' ? src.keySignature : 'C',
     notes,
+    pedal: normalizePedal(src.pedal),
     tracks: normalizeTracks(src.tracks, notes),
   };
 }
