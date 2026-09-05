@@ -432,6 +432,12 @@ select:focus { outline: 1px solid var(--accent); }
 .small-btn:hover { background: var(--border); }
 .small-btn.danger { border-color: var(--red); color: var(--red); }
 .small-btn.danger:hover { background: var(--red); color: white; }
+/* Stepping through sections means nothing while the piece is one section, so
+   the buttons dim rather than disappearing — the row keeps its shape and the
+   tooltip still says what they are for. */
+.small-btn:disabled { opacity: 0.4; cursor: default; }
+.small-btn:disabled:hover { background: var(--surface); }
+.section-step { min-width: 58px; }
 
 .kbd-hint {
   margin-left: 4px;

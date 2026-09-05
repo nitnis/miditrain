@@ -70,6 +70,62 @@ await page.evaluate(async () => {
     return results;
   };
 
+  // A piece of `bars` bars, three notes each on beats two, three and four, so
+  // no section ever starts with a note on its own downbeat.
+  T.setupBars = async (bars) => {
+    const notes = [];
+    for (let bar = 0; bar < bars; bar++) {
+      for (let beat = 1; beat <= 3; beat++) {
+        notes.push({ id: crypto.randomUUID(), pitch: 60 + (bar * 3 + beat) % 14,
+                     velocity: 90, startTime: bar * 2000 + beat * 500, duration: 400 });
+      }
+    }
+    state.composition.notes = notes;
+    state.composition.tracks = [];
+    emit('transport:noteschanged', notes);
+    return notes.map(n => [n.startTime, n.pitch]);
+  };
+
+  // The folder the app writes a profile to is a browser handle it can only be
+  // given by a person clicking. Faked here — and only that: the code that
+  // decides when to write, what to call the file and what goes in it is the
+  // real thing, and every write it makes lands in `T.writes`.
+  // `granted` false stands for the ordinary state after a page load: the folder
+  // is still chosen, but the permission to write to it has been dropped.
+  // `offered` false stands for a picker the player dismissed.
+  T.fakeFolder = ({ chosen = true, granted = true, offered = true } = {}) => {
+    T.writes = [];
+    T.picked = 0;
+    let stored = chosen;
+    let allowed = granted;
+    window.showDirectoryPicker = async () => {
+      T.picked += 1;
+      if (!offered) throw new DOMException('dismissed', 'AbortError');
+      stored = true; allowed = true;
+      return handle;
+    };
+    const handle = {
+      name: 'Fake folder',
+      queryPermission: async () => (allowed ? 'granted' : 'prompt'),
+      requestPermission: async () => { allowed = true; return 'granted'; },
+      getFileHandle: async (filename) => ({
+        createWritable: async () => ({
+          write: async (text) => T.writes.push({ filename, text }),
+          close: async () => {},
+        }),
+      }),
+    };
+    // A handle cannot survive being stored, so the store is what gets replaced
+    const real = localforage.createInstance.bind(localforage);
+    localforage.createInstance = (opts) => opts && opts.name === 'miditrain-folder'
+      ? {
+          getItem: async () => (stored ? handle : null),
+          setItem: async () => { stored = true; },
+          removeItem: async () => { stored = false; },
+        }
+      : real(opts);
+  };
+
   // A long passage, for the things that only go wrong on one.
   //
   // Twenty notes 300 ms apart, every one a different pitch so a press can only
@@ -164,6 +220,26 @@ const run = (label, presses) =>
 const abandon = (label, presses, stopAt) =>
   page.evaluate(([l, p, s]) => window.__t.abandon(l, p, s), [label, presses, stopAt]);
 const setupLong = (count) => page.evaluate(n => window.__t.setupLong(n), count);
+const setupBars = (bars) => page.evaluate(n => window.__t.setupBars(n), bars);
+const writes = () => page.evaluate(() => window.__t.writes || []);
+const fakeFolder = (opts) => page.evaluate(o => window.__t.fakeFolder(o), opts || {});
+const picked = () => page.evaluate(() => window.__t.picked || 0);
+const makeProfile = async (name) => {
+  await page.click('#btn-profiles');
+  await page.fill('#profile-new-name', name);
+  await page.click('#btn-profile-create');
+  await page.waitForTimeout(400);
+  const made = await page.evaluate(async () =>
+    (await import('/src/profiles.js')).current().name);
+  await page.click('#btn-close-profiles');
+  return made;
+};
+// A run leaves its results screen up, and that screen covers the toolbar. Runs
+// press Play from inside the page and do not care; real clicks on real toolbar
+// buttons do, so anything driving the toolbar closes it first.
+const closeResults = async () => {
+  if (await page.locator('#accuracy-modal').isVisible()) await page.click('#btn-close-accuracy');
+};
 const profile = () => page.evaluate(async () =>
   (await import('/src/profiles.js')).current());
 
@@ -425,6 +501,150 @@ check('a long run played perfectly is still ten stars', [r.perfect, r.stars], [2
 r = await run('twenty notes, one of them 100 ms late', late(7));
 check('one loose note in twenty still scores a hundred', [r.score, r.good], [100, 1]);
 check('...and is no longer rounded away into ten stars', r.stars, 9.75);
+
+// ── stepping from one section to the next ────────────────────────────────────
+//
+// Train and Learn work on the section the playhead is in, so choosing one meant
+// scrubbing until the playhead landed in it. These move a whole section at a
+// time, and what matters is not that the playhead moved but that training
+// afterwards trains the section it moved to.
+await closeResults();
+await section(0, 0);                       // no marked loop: the playhead decides
+const eight = await setupBars(8);
+await page.click('#btn-to-start');         // the run before left the playhead mid-piece
+const disabled = () => page.evaluate(() => [
+  document.getElementById('btn-prev-section').disabled,
+  document.getElementById('btn-next-section').disabled,
+]);
+const playheadBar = () => page.evaluate(async () => {
+  const { state } = await import('/src/state.js');
+  const { barAtMs } = await import('/src/quantizer.js');
+  return barAtMs(state.transport.currentTime, state.composition.tempo, state.composition.timeSignature);
+});
+
+await page.selectOption('#learn-sections', '0');
+await page.waitForTimeout(200);
+check('with the whole piece as one section there is nothing to step', await disabled(), [true, true]);
+
+await page.selectOption('#learn-sections', '2');
+await page.waitForTimeout(200);
+check('...and two-bar sections give it something to do', await disabled(), [false, false]);
+
+await page.click('#btn-next-section');
+await page.waitForTimeout(200);
+check('next moves the playhead a whole section', await playheadBar(), 3);
+await page.click('#btn-next-section');
+await page.waitForTimeout(200);
+check('...and again', await playheadBar(), 5);
+await page.click('#btn-prev-section');
+await page.waitForTimeout(200);
+check('previous brings it back', await playheadBar(), 3);
+check('...saying which section it landed on',
+  (await page.locator('.toast').first().textContent()).includes('bars 3–4'), true);
+
+await page.click('#btn-prev-section');
+await page.waitForTimeout(200);
+check('the first section is as far back as it goes', await playheadBar(), 1);
+await page.click('#btn-prev-section');
+await page.waitForTimeout(200);
+check('...and it says so rather than moving',
+  (await page.locator('.toast').first().textContent()).includes('first section'), true);
+
+// The point of the buttons: training after stepping trains what was stepped to
+await page.click('#btn-next-section');
+await page.waitForTimeout(200);
+const inSection2 = eight.filter(([at]) => at >= 4000 && at < 8000);
+r = await run('bars 3-4, reached with the section buttons', inSection2);
+check('training after stepping trains that section', r.total, inSection2.length);
+p = await profile();
+check('...and the best is filed under those bars',
+  Object.keys(p.bests).some(k => k.includes('|3-4|both|')), true);
+
+// While a section walk is running, the buttons belong to the walk: it owns the
+// transport, and moving the playhead underneath it would be talking past it.
+await closeResults();
+await page.evaluate(async () => {
+  const { on } = await import('/src/state.js');
+  window.__seen = [];
+  on('sections:preview', (s) => window.__seen.push(`${s.startBar}-${s.endBar}`));
+});
+await page.click('#btn-to-start');
+await page.click('#btn-learn-mode');
+await page.click('#btn-play');
+await page.waitForTimeout(700);
+check('a section walk is running',
+  await page.evaluate(async () => (await import('/src/section-learn.js')).isWalking()), true);
+await page.click('#btn-next-section');
+await page.waitForTimeout(600);
+await page.click('#btn-prev-section');
+await page.waitForTimeout(600);
+check('the buttons step the walk itself',
+  await page.evaluate(() => window.__seen), ['1-2', '3-4', '1-2']);
+await page.click('#btn-stop');
+await page.click('#btn-learn-mode');
+await page.waitForTimeout(400);
+
+// ── a profile is made in a folder, or not at all ─────────────────────────────
+//
+// Making a profile is the one moment with both a reason to ask for a folder and
+// a click to ask with, so it is where the folder gets settled. A profile is a
+// record of what somebody achieved, and building it somewhere the browser may
+// throw away is how it gets lost.
+await closeResults();
+await fakeFolder({ chosen: false, offered: false });
+check('with no folder yet, making a profile asks for one',
+  await (async () => { await makeProfile('Declined'); return picked(); })() >= 1, true);
+check('...and dismissing the picker creates nothing',
+  await page.evaluate(async () =>
+    (await import('/src/profiles.js')).current().name !== 'Declined'), true);
+
+await fakeFolder({ chosen: false, offered: true });
+check('choosing one lets the profile be made', await makeProfile('In a folder'), 'In a folder');
+check('...and it is written there straight away', (await writes()).length, 1);
+check('...under its own name',
+  (await writes())[0]?.filename ?? '(nothing was written)', 'In-a-folder.miditrain.json');
+
+// ── a folder chosen yesterday still needs permission today ───────────────────
+//
+// A browser drops it on every page load unless told to keep it, and there is no
+// gesture at the end of a run to ask with. The click that starts the run is
+// spent on it instead.
+await fakeFolder({ chosen: true, granted: false });
+await page.evaluate(() => { window.__t.state.ui.trainMode = false; });
+await section(1, 1);
+await setup();
+r = await run('a best, with the folder permission lapsed', CLEAN);
+await page.waitForTimeout(500);
+check('the run reclaims the permission and the best still reaches the folder',
+  (await writes()).length >= 1, true);
+
+// ── a best is written out the moment it is set ───────────────────────────────
+//
+// Not only when Save is pressed. Browser storage is evictable and does not
+// travel, and a best is the thing a player would most mind losing.
+await fakeFolder();
+// On a profile of its own, so the run below is a first best rather than a tie
+// with something an earlier check already set
+await page.evaluate(async () =>
+  (await import('/src/profiles.js')).createProfile('Disk under test'));
+await section(1, 1);
+await setup();
+r = await run('a best, with a profile folder configured', CLEAN);
+await page.waitForTimeout(400);
+const written = await writes();
+check('setting a best writes the profile out', written.length, 1);
+check('...to the profile file',
+  written.at(-1)?.filename.endsWith('.miditrain.json') ?? written, true);
+check('...carrying the best that was just set', await page.evaluate(async (text) => {
+  const { bundleFromJSON } = await import('/src/profiles.js');
+  const bests = bundleFromJSON(text).profile.bests;
+  return bests[Object.keys(bests).find(k => k.includes('|1-1|both|'))].stars;
+}, written.at(-1)?.text ?? '{}'), r.stars);
+
+const writesBefore = (await writes()).length;
+r = await run('a run that beats nothing', [[500, 62]]);
+await page.waitForTimeout(400);
+check('a run that is not a best writes nothing', (await writes()).length, writesBefore);
 
 // ── it survives a reload ─────────────────────────────────────────────────────
 // The log lives on the page, and the reload below is about to take it with
