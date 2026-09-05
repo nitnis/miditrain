@@ -646,6 +646,107 @@ r = await run('a run that beats nothing', [[500, 62]]);
 await page.waitForTimeout(400);
 check('a run that is not a best writes nothing', (await writes()).length, writesBefore);
 
+// ── browsing what a profile has done ─────────────────────────────────────────
+//
+// Pressing a profile opens every best it holds, grouped by the three things
+// that make two runs comparable in the first place: the piece, the hand, the
+// speed. Any of them can be loaded back, which puts all three where they were
+// and plays the run over the notes.
+await closeResults();
+await page.evaluate(async () => {
+  const { state, update, emit } = await import('/src/state.js');
+  const { saveComposition } = await import('/src/storage.js');
+  const { createProfile, rememberBest, trainingKey } = await import('/src/profiles.js');
+  const notes = [];
+  for (let bar = 0; bar < 8; bar++) {
+    for (let beat = 1; beat <= 3; beat++) {
+      notes.push({ id: crypto.randomUUID(), pitch: 60 + (bar * 3 + beat) % 14,
+                   velocity: 90, startTime: bar * 2000 + beat * 500, duration: 400 });
+    }
+  }
+  state.composition.notes = notes;
+  update('composition.tempo', 120);
+  update('composition.name', 'Study in C');
+  document.getElementById('composition-name').textContent = 'Study in C';
+  emit('transport:noteschanged', notes);
+  await saveComposition({ ...state.composition });
+
+  createProfile('Browsing under test');
+  const take = { range: null, expected: [], notes: [{ pitch: 62, velocity: 90,
+                 startTime: 4500, duration: 200, matched: true, stray: false, after: false }] };
+  const put = (song, bars, hand, bpm, stars, score) => rememberBest(
+    trainingKey({ songName: song, bars, hand, bpm }),
+    { score, stars, perfect: 6, good: 0, almost: 0, missed: 0, extra: 0,
+      total: 6, avgLatencyMs: 20, tempo: 120, take });
+  put('Study in C', { startBar: 3, endBar: 4 }, 'both', 150, 8.5, 92);
+  put('Study in C', { startBar: 1, endBar: 2 }, 'both', 120, 10, 100);
+  put('Study in C', { startBar: 3, endBar: 4 }, 'both', 120, 9.25, 100);
+  put('Study in C', { startBar: 3, endBar: 4 }, 'right', 120, 9.75, 100);
+  // A bar in the name, because a key is four fields joined by one and a song is
+  // entitled to contain the separator
+  put('Prelude | No. 2', { startBar: 1, endBar: 4 }, 'left', 60, 6, 74);
+});
+
+await page.click('#btn-profiles');
+await page.waitForTimeout(300);
+await page.locator('.profile-item.active .profile-open').click();
+await page.waitForTimeout(400);
+check('pressing a profile opens what it has done',
+  await page.locator('#bests-modal').isVisible(), true);
+
+await page.evaluate(() => document.querySelectorAll('#bests-tree details').forEach(d => { d.open = true; }));
+await page.waitForTimeout(200);
+const shape = () => page.evaluate(() => [...document.querySelectorAll('.bests-song')].map(song => ({
+  song: song.querySelector('summary').firstChild.textContent,
+  hands: [...song.querySelectorAll('.bests-hand')].map(h => ({
+    hand: h.querySelector('summary').textContent,
+    speeds: [...h.querySelectorAll('.bests-speed')].map(sp => ({
+      bpm: sp.querySelector('summary').textContent,
+      runs: [...sp.querySelectorAll('.bests-bars')].map(el => el.textContent),
+    })),
+  })),
+})));
+check('the tree is piece, then hand, then speed — each in order', await shape(), [
+  { song: 'Prelude | No. 2', hands: [
+    { hand: 'Left hand', speeds: [{ bpm: '60 BPM', runs: ['bars 1–4'] }] }] },
+  { song: 'Study in C', hands: [
+    { hand: 'Both hands', speeds: [
+      { bpm: '120 BPM', runs: ['bars 1–2', 'bars 3–4'] },
+      { bpm: '150 BPM', runs: ['bars 3–4'] }] },
+    { hand: 'Right hand', speeds: [{ bpm: '120 BPM', runs: ['bars 3–4'] }] }] },
+]);
+check('...with a song name that contains the key separator kept whole',
+  (await shape())[0].song, 'Prelude | No. 2');
+
+// Load the 150 BPM run: a different speed from the piece as it stands.
+// Counted rather than caught in the act — the replay is a second long, and
+// whether it is still running when the check looks is a matter of luck.
+await page.evaluate(async () => {
+  const { on } = await import('/src/state.js');
+  window.__played = 0;
+  on('transport:play', () => { window.__played += 1; });
+});
+await page.locator('.bests-speed').filter({ hasText: '150 BPM' })
+  .locator('.bests-run button').click();
+await page.waitForTimeout(1000);
+check('loading a run puts the piece, hand, speed and bars back', await page.evaluate(async () => {
+  const { state } = await import('/src/state.js');
+  return {
+    song: state.composition.name, tempo: state.composition.tempo,
+    speed: state.transport.speed, hand: state.ui.practiceHand,
+    training: state.ui.trainMode,
+    loop: [state.transport.loopEnabled, state.transport.loopStartBar, state.transport.loopEndBar],
+  };
+}), { song: 'Study in C', tempo: 120, speed: 1.25, hand: 'both', training: true,
+      loop: [true, 3, 4] });
+check('...and plays it', await page.evaluate(() => window.__played), 1);
+// A replay started from here has no results screen behind it to go back to
+await page.waitForTimeout(300);
+check('...without dragging an older run\u2019s results back up when it ends',
+  await page.locator('#accuracy-modal').isVisible(), false);
+await page.evaluate(async () => (await import('/src/transport.js')).stop());
+await page.waitForTimeout(300);
+
 // ── it survives a reload ─────────────────────────────────────────────────────
 // The log lives on the page, and the reload below is about to take it with
 // everything else, so it comes off here rather than at the end
