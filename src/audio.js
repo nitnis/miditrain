@@ -143,6 +143,55 @@ function peakFor(velocity) {
   return PEAK_PPP + (PEAK_FF - PEAK_PPP) * Math.pow(v, PEAK_GAMMA);
 }
 
+// How many harmonics get through, as a multiple of the note's own frequency.
+// Solved so that velocity 90 lands on 6, which is what every note used to get.
+const OPEN_PPP = 2.5;
+const OPEN_FF = 7.44;
+
+function opennessFor(velocity) {
+  const v = Math.min(127, Math.max(1, velocity)) / 127;
+  return OPEN_PPP + (OPEN_FF - OPEN_PPP) * v;
+}
+
+// ...and how much there is for it to let through.
+//
+// Opening the filter with velocity was tried on its own and measured almost
+// nothing: 357 Hz of brightness at velocity 30 against 416 at 120, where the
+// two had been identical. The reason is the oscillator, not the filter. A
+// triangle's harmonics fall away as one over n squared — its third partial is
+// already at a ninth and its fifth at a twenty-fifth — so there is next to
+// nothing up there for a wider filter to admit. It cannot brighten what is not
+// there.
+//
+// So a second, much richer oscillator is mixed in, and how much of it there is
+// depends on how hard the note was struck. Squared, so the soft end of the
+// keyboard is very nearly the pure triangle this app has always sounded like
+// and the harmonics arrive where a real string would give them: at the top.
+const BRIGHT_MIX_FF = 0.4;
+
+function brightMixFor(velocity) {
+  const v = Math.min(127, Math.max(1, velocity)) / 127;
+  return BRIGHT_MIX_FF * v * v;
+}
+
+// How long a string goes on ringing.
+//
+// The envelope held flat: a note was within 1.3 dB of its own peak two and a
+// half seconds after it began, which is an organ. A piano loses its energy from
+// the moment it is struck, and loses it faster the higher the note — bass
+// strings are heavy and ring for many seconds, treble strings are short and
+// stiff and are gone in well under one.
+//
+// It matters more than it did, because a note under the sustain pedal now goes
+// on sounding until the pedal comes up. Holding it at full volume for the four
+// seconds a pedal can be down is not what a damper does.
+const DECAY_TAU_C4 = 1.1;         // seconds, at middle C
+const DECAY_OCTAVES = 24;         // ...doubling every two octaves down
+
+function decayTauFor(pitch) {
+  return DECAY_TAU_C4 * Math.pow(2, (60 - pitch) / DECAY_OCTAVES);
+}
+
 // Oscillator → lowpass → envelope gain → wherever it is going.
 //
 // Takes its context rather than reaching for the live one, so the same note can
@@ -152,6 +201,8 @@ function peakFor(velocity) {
 // thing to drift.
 export function makeVoice(c, dest, pitch, velocity, when) {
   const osc = c.createOscillator();
+  const bright = c.createOscillator();
+  const brightGain = c.createGain();
   const filter = c.createBiquadFilter();
   const gain = c.createGain();
   const freq = midiToFreq(pitch);
@@ -159,37 +210,89 @@ export function makeVoice(c, dest, pitch, velocity, when) {
   osc.type = 'triangle';
   osc.frequency.value = freq;
 
+  // The harmonics a hard strike brings with it. A sawtooth falls away as one
+  // over n rather than one over n squared, so it has the upper partials the
+  // triangle has not — and its level, not the filter, is what carries how hard
+  // the note was hit.
+  bright.type = 'sawtooth';
+  bright.frequency.value = freq;
+  brightGain.gain.value = brightMixFor(velocity);
+
   // Roll the upper harmonics off relative to the note, so high notes stay
-  // bright and low ones don't buzz
+  // bright and low ones don't buzz — and open the filter with how hard the note
+  // was struck, because that is the other half of what "harder" sounds like.
+  //
+  // This was a fixed multiple of the pitch, so a note played at 30 and the same
+  // note played at 120 came out with their energy in exactly the same place:
+  // 401 Hz for both, measured. On a real instrument a hard strike throws far
+  // more into the upper partials, and it is at least as much of the cue as the
+  // extra volume is. Professional mode asks a player to reproduce dynamics; it
+  // was rendering them with one of their two natural signals missing.
+  //
+  // Six is what the multiple always was, and it is still exactly six at the
+  // default velocity of 90 — so the app sounds as it did, and only the spread
+  // around it is new.
   filter.type = 'lowpass';
-  filter.frequency.value = Math.min(6000, Math.max(900, freq * 6));
+  filter.frequency.value = Math.min(6000, Math.max(600, freq * opennessFor(velocity)));
   filter.Q.value = 0.7;
 
   osc.connect(filter);
+  bright.connect(brightGain);
+  brightGain.connect(filter);
   filter.connect(gain);
   gain.connect(dest);
 
   osc.start(when);
-  return { osc, gain, filter, peak: peakFor(velocity) };
+  bright.start(when);
+  return {
+    osc, bright, brightGain, gain, filter,
+    peak: peakFor(velocity), tau: decayTauFor(pitch),
+  };
 }
 
 function createVoice(pitch, velocity, when) {
   const voice = makeVoice(getAudioContext(), getNoteBus(), pitch, velocity, when);
   voice.osc.addEventListener('ended', () => {
-    try { voice.osc.disconnect(); voice.filter.disconnect(); voice.gain.disconnect(); } catch (_) {}
+    try {
+      voice.osc.disconnect(); voice.bright.disconnect(); voice.brightGain.disconnect();
+      voice.filter.disconnect(); voice.gain.disconnect();
+    } catch (_) {}
     scheduledVoices.delete(voice);
   });
   return voice;
 }
 
+// The strike, and then the string losing its energy for as long as it sounds.
+//
+// Hands back what it planned, because a note whose end is known in advance —
+// everything the app itself plays — has to pick the release up from wherever
+// the decay had got to by then, and only the caller knows when that is.
 export function applyAttack(voice, when) {
   const g = voice.gain.gain;
   const sustain = Math.max(voice.peak * SUSTAIN_RATIO, MIN_GAIN);
+  const from = when + ATTACK_S + DECAY_S;
   g.cancelScheduledValues(when);
   g.setValueAtTime(MIN_GAIN, when);
   g.exponentialRampToValueAtTime(voice.peak, when + ATTACK_S);
-  g.exponentialRampToValueAtTime(sustain, when + ATTACK_S + DECAY_S);
-  return sustain;
+  g.exponentialRampToValueAtTime(sustain, from);
+  // Approaches silence rather than reaching it, which is what a string does and
+  // what `setTargetAtTime` is for. A key still held goes on decaying under the
+  // finger; the value is live, so releasing it still picks up from here.
+  g.setTargetAtTime(MIN_GAIN, from, voice.tau);
+  return { sustain, from, tau: voice.tau };
+}
+
+// A voice is two oscillators now, and both of them have to be stopped or the
+// bright one goes on running with nothing to switch it off
+function stopVoice(voice, at) {
+  voice.osc.stop(at);
+  voice.bright.stop(at);
+}
+
+// Where that decay has got to at a given moment
+function decayedTo({ sustain, from, tau }, at) {
+  if (at <= from) return sustain;
+  return Math.max(MIN_GAIN, MIN_GAIN + (sustain - MIN_GAIN) * Math.exp(-(at - from) / tau));
 }
 
 // Release a voice that is sounding now — safe to read the live gain value
@@ -202,7 +305,7 @@ function releaseNow(voice, fade = RELEASE_S) {
     g.cancelScheduledValues(t);
     g.setValueAtTime(current, t);
     g.exponentialRampToValueAtTime(MIN_GAIN, t + fade);
-    voice.osc.stop(t + fade + 0.05);
+    stopVoice(voice, t + fade + 0.05);
   } catch (_) {}
 }
 
@@ -323,15 +426,16 @@ function pump() {
 // Exported for the offline renderer, which needs exactly this and on its own
 // context — so what a transcription test listens to is what the speakers play.
 export function playNoteAt(voice, when, durSec) {
-  const sustain = applyAttack(voice, when);
+  const plan = applyAttack(voice, when);
   const g = voice.gain.gain;
 
-  // Hold at the sustain level until the note ends, then release. Without this
-  // anchor the release would ramp from the end of the decay instead.
+  // Pick the release up from wherever the string had got to, then damp it.
+  // Without this anchor the release would ramp from the wrong level and step
+  // the waveform, which is what clicked at every note edge.
   const releaseAt = when + Math.max(durSec, ATTACK_S + DECAY_S);
-  g.setValueAtTime(sustain, releaseAt);
+  g.setValueAtTime(decayedTo(plan, releaseAt), releaseAt);
   g.exponentialRampToValueAtTime(MIN_GAIN, releaseAt + RELEASE_S);
-  voice.osc.stop(releaseAt + RELEASE_S + 0.05);
+  stopVoice(voice, releaseAt + RELEASE_S + 0.05);
   return releaseAt + RELEASE_S + 0.05;
 }
 
