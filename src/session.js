@@ -31,6 +31,7 @@ const stringList = (v) =>
 const SETTINGS = {
   'ui.view': oneOf('sheet', 'piano-roll'),
   'ui.trainMode': bool,
+  'ui.professional': bool,
   'ui.learnMode': bool,
   'ui.metronomeEnabled': bool,
   'ui.metronomeSubdivision': oneOf(1, 2, 3, 4),

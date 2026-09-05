@@ -35,6 +35,9 @@ const _state = {
   ui: {
     view: 'sheet',          // 'sheet' | 'piano-roll' | 'split'
     trainMode: false,
+    // Grade how hard each note was struck as well as when. Off by default and
+    // ignored entirely on a file whose velocities carry nothing to grade.
+    professional: false,
     learnMode: false,       // wait at each note until it is played
     learnSectionBars: 0,    // 0 = learn the whole piece, otherwise section size
     learnCluster: 'off',    // how much is learned at once: 'off' is the fast learn
