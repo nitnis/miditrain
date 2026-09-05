@@ -32,7 +32,7 @@ import {
   listProfiles, current as currentProfile, switchProfile, createProfile, deleteProfile,
   adoptProfile, sectionKey, sectionTempo, rememberSectionTempo, setLearningPosition,
   trainingKey, bestFor, rememberBest,
-  learningPosition, canUseFolder, chooseFolder, folderHandle, scanFolder, writeToFolder,
+  learningPosition, canUseFolder, chooseFolder, folderHandle, storedFolder, scanFolder, writeToFolder,
   fileNameFor, bundleToJSON, bundleFromJSON,
 } from './profiles.js';
 import { collectBundle, applyBundle } from './session.js';
@@ -75,6 +75,7 @@ export function initUI() {
   bindPracticeGenerator();
   bindTracks();
   syncTracksButton();
+  refreshFolderChosen();
   initHistory();
 
   // The piano roll canvas is sized from its viewport, so re-render whenever
@@ -974,12 +975,34 @@ function bindProfiles() {
   document.getElementById('btn-profiles').onclick = () => { renderProfiles(); modal.classList.remove('hidden'); };
   document.getElementById('btn-close-profiles').onclick = () => modal.classList.add('hidden');
 
-  document.getElementById('btn-profile-create').onclick = () => {
+  // Making a profile is where the folder gets settled, because it is the one
+  // moment that has both a reason to ask and a click to ask with. A profile is
+  // a record of what somebody has achieved; it should not be built somewhere a
+  // browser is entitled to throw away.
+  //
+  // The picker is opened before anything is awaited. A browser only lets a page
+  // open one while the click that caused it is still fresh, and every `await`
+  // in between is a chance for that to lapse — which is why whether a folder
+  // exists is tracked as we go rather than looked up here.
+  document.getElementById('btn-profile-create').onclick = async () => {
     const input = document.getElementById('profile-new-name');
+    if (canUseFolder() && !folderChosen) {
+      try {
+        await chooseFolder();
+        folderChosen = true;
+        await renderFolderState();
+      } catch {
+        showToast('A profile is kept in a folder on disk · nothing was created', 4000);
+        return;
+      }
+    }
     createProfile(input.value);
     input.value = '';
     renderProfiles();
     showToast(`Now practising as ${currentProfile().name}`);
+    // Written out at once, so the folder holds the profile from the moment it
+    // exists rather than from the first thing that happens to it
+    keepProfileOnDisk();
   };
 
   document.getElementById('btn-profile-folder').onclick = async () => {
@@ -989,8 +1012,10 @@ function bindProfiles() {
     }
     try {
       await chooseFolder();
+      folderChosen = true;
       await renderFolderState();
       showToast('Profile folder set');
+      keepProfileOnDisk();
     } catch { /* the picker was dismissed */ }
   };
 
@@ -1111,8 +1136,16 @@ async function renderFolderState() {
     return;
   }
   const handle = await folderHandle();
-  el.textContent = handle
-    ? `Using "${handle.name}". Save writes this profile there.`
+  if (handle) {
+    el.textContent = `Using "${handle.name}". Bests are written there as they are set.`;
+    return;
+  }
+  // A folder that is chosen but not yet permitted for this page load is not the
+  // same as no folder at all, and saying so is the difference between a click
+  // that fixes it and a search for a setting that is already set.
+  const stored = await storedFolder();
+  el.textContent = stored
+    ? `Using "${stored.name}", which needs permission again this visit — Choose folder… or Save will restore it.`
     : 'No folder chosen. Save downloads a profile file instead.';
 }
 
@@ -1859,33 +1892,71 @@ function recordBest(results) {
   if (lastWasBest) keepBestOnDisk();
 }
 
-// A best is written out the moment it is set, rather than waiting for Save.
+// ── Keeping a profile on disk ────────────────────────────────────────────────
 //
-// It is the thing a player would most mind losing, and until now the only copy
-// lived in browser storage — which a browser is entitled to evict, and which
-// does not survive clearing site data or moving to another machine. Pressing
-// Save was the only thing that ever put it on disk.
+// A best is written out the moment it is set, rather than waiting for Save. It
+// is the thing a player would most mind losing, and browser storage is
+// evictable, does not survive clearing site data, and does not travel between
+// machines.
 //
-// The folder can only be asked for with a gesture behind it, and finishing a
-// run is not one, so this writes only where the player has already chosen a
-// folder and granted it. Where they have not, the best is still kept in the
-// browser and they are told once what would make it durable.
+// Two things stand between wanting to write and being able to. A folder can
+// only be *chosen* with a click behind it, which is why making a profile
+// insists on one. And the permission to write to a chosen folder is dropped on
+// every page load unless the player told the browser to keep it — so a folder
+// settled yesterday still needs a click today before anything can go into it.
+// `armFolder` spends the click that starts a training run on exactly that, once
+// per load, so the permission is live by the time the run produces a best.
+
+// Whether a folder has ever been chosen. Tracked rather than looked up, because
+// the answer is needed inside a click handler before it can afford to await.
+let folderChosen = false;
+let folderArmed = false;
 let toldAboutFolder = false;
-async function keepBestOnDisk() {
+
+async function refreshFolderChosen() {
+  folderChosen = Boolean(await storedFolder());
+}
+
+// Called from the click that starts a run: asks for the permission that a page
+// load dropped, while there is still a gesture to ask with. Silent when there
+// is no folder, and tried once per load so a refusal is not asked again.
+function armFolder() {
+  if (folderArmed || !folderChosen || !canUseFolder()) return;
+  folderArmed = true;
+  folderHandle({ prompt: true }).catch(() => { /* declined; the toast will say so */ });
+}
+
+function warnAboutFolderOnce(text) {
+  if (toldAboutFolder) return;
+  toldAboutFolder = true;
+  showToast(text, 5000);
+}
+
+async function keepProfileOnDisk(what = 'Profile') {
   try {
-    if (!canUseFolder()) return;
+    if (!canUseFolder()) {
+      warnAboutFolderOnce(`${what} kept in this browser · it cannot be given a folder to write to`);
+      return false;
+    }
     const handle = await folderHandle();
     if (!handle) {
-      if (toldAboutFolder) return;
-      toldAboutFolder = true;
-      showToast('New best kept in this browser · choose a profile folder under Profiles… to keep it on disk too', 5000);
-      return;
+      // "No folder" and "a folder we may not touch yet" are different problems
+      // with different remedies, and telling somebody to choose a folder they
+      // already chose is the more annoying of the two answers.
+      warnAboutFolderOnce(await storedFolder()
+        ? `${what} kept in this browser · the profile folder needs permission again, which pressing Save will restore`
+        : `${what} kept in this browser · choose a profile folder under Profiles… to keep it on disk too`);
+      return false;
     }
     await writeToFolder(handle, fileNameFor(currentProfile()), bundleToJSON(collectBundle()));
+    return true;
   } catch (err) {
-    showToast(`New best kept, but the folder refused it: ${err.message}`, 4000);
+    showToast(`${what} kept, but the folder refused it: ${err.message}`, 4000);
+    return false;
   }
 }
+
+const keepBestOnDisk = () => keepProfileOnDisk('New best');
 
 // The section size divides a piece for training the same way it divides one for
 // learning — it is one setting, and the two disagreeing about what a section is
@@ -1935,6 +2006,9 @@ function startTrainingSession(bars = null) {
 
   trainingRunKey = keyForRun(lastTrainingBars);
   trainingRunTempo = state.composition.tempo;
+  // Spend this click on the folder permission a page load dropped, so the best
+  // this run might produce has somewhere to go
+  armFolder();
 
   withCountIn(() => {
     startAccuracy(state.composition, range);

@@ -60,6 +60,15 @@ the folder tests fake it — and only it. What decides when to write, what the
 file is called and what goes into it is the real code; every write it makes
 lands in an array the test reads back.
 
+`fakeFolder` models the three states that actually matter, because each has a
+different remedy and the app used to give the same answer to all of them:
+
+| | |
+|---|---|
+| `chosen: false` | no folder has ever been picked |
+| `granted: false` | one has, but this page load may not write to it yet — the ordinary state after a refresh |
+| `offered: false` | the picker was opened and dismissed |
+
 ### Some things only go wrong on a long passage
 
 Most of the runs here are a three-note bar, which is quick and enough for

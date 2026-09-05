@@ -386,6 +386,22 @@ export async function chooseFolder() {
   return handle;
 }
 
+// The folder as chosen, without asking whether it can still be written to.
+//
+// Those are two different questions and the answers come apart: a folder chosen
+// last week is still chosen after a refresh, but the permission to write to it
+// usually is not — the browser drops that on every page load unless the player
+// answered its prompt with "allow on every visit". Code that only asks
+// `folderHandle()` cannot tell "no folder" from "a folder we may not touch yet",
+// and told the player to go and choose one they had already chosen.
+export async function storedFolder() {
+  try {
+    return (await handleStore().getItem(HANDLE_KEY)) || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function folderHandle({ prompt = false } = {}) {
   let handle;
   try {
