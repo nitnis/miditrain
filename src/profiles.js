@@ -9,6 +9,7 @@
 // the app looks first, because a folder needs permission the app may not have.
 import { emit } from './state.js';
 import { starsFromCounts } from './accuracy.js';
+import { CALIBRATION_LEVELS, calibrationIsUsable } from './dynamics.js';
 
 const STORE_KEY = 'miditrain.profiles';
 const HANDLE_DB = 'miditrain-folder';
@@ -49,6 +50,10 @@ function blank(name) {
     // name every time, so that renaming can move the file rather than orphan
     // it, and so two profiles whose names look alike cannot end up sharing one.
     filename: null,
+    // Where this player's soft, ordinary and loud sit on their own keyboard.
+    // Belongs to the person, not to the app, which is why it lives here and
+    // travels with the profile file.
+    calibration: null,
   };
 }
 
@@ -87,6 +92,33 @@ function sanitise(raw) {
     filename: typeof raw.filename === 'string' && raw.filename.endsWith(FILE_SUFFIX)
       ? raw.filename.slice(0, 120)
       : null,
+    calibration: sanitiseCalibration(raw.calibration),
+  };
+}
+
+// A calibration decides how hard a player is judged to have struck every note,
+// so a hand-edited or damaged one is dropped rather than half-trusted. Anything
+// that does not describe three levels in order is not a calibration at all —
+// see `calibrationIsUsable`, which is the same rule the capture screen applies
+// before it will store one.
+function sanitiseCalibration(raw) {
+  if (!raw || typeof raw !== 'object' || !raw.anchors || typeof raw.anchors !== 'object') return null;
+  const anchors = {};
+  for (const { key } of CALIBRATION_LEVELS) {
+    const level = raw.anchors[key];
+    if (!level || typeof level !== 'object' || !Number.isFinite(level.velocity)) return null;
+    anchors[key] = {
+      velocity: int(level.velocity, 1, 127, 64),
+      spread: int(level.spread, 0, 64, 6),
+    };
+  }
+  if (!calibrationIsUsable(anchors)) return null;
+  return {
+    at: Number.isFinite(raw.at) ? raw.at : Date.now(),
+    // Which controller it was measured on, so a different one can be noticed
+    inputId: typeof raw.inputId === 'string' ? raw.inputId.slice(0, 200) : null,
+    inputName: typeof raw.inputName === 'string' ? raw.inputName.slice(0, 120) : null,
+    anchors,
   };
 }
 
@@ -437,6 +469,37 @@ export function rememberBest(key, run) {
   profile.updatedAt = Date.now();
   persist();
   return true;
+}
+
+// ── Calibration ──────────────────────────────────────────────────────────────
+// Measured once per player per keyboard, and read at the start of every run
+// that is being graded on dynamics.
+
+export function calibrationOf(profile = current()) {
+  return profile?.calibration ?? null;
+}
+
+export function setCalibration(calibration) {
+  const profile = current();
+  profile.calibration = calibration ? sanitiseCalibration(calibration) : null;
+  profile.updatedAt = Date.now();
+  persist();
+  return profile.calibration;
+}
+
+// Whether the keyboard being played now is the one the calibration was taken
+// on. A different controller has a different curve, and a calibration is a
+// measurement of a curve — so this is worth saying out loud.
+//
+// Only a *changed* device can be noticed. The same keyboard with its velocity
+// curve switched over in its own settings sends different numbers for the same
+// gesture and looks identical from here, which is why the capture screen says
+// so in as many words rather than relying on this.
+export function calibrationMatchesInput(inputs, calibration = calibrationOf()) {
+  if (!calibration?.inputId) return true;   // nothing recorded to disagree with
+  const live = (inputs || []).filter(i => i.state === 'connected' && i.enabled);
+  if (!live.length) return true;            // nothing plugged in to disagree either
+  return live.some(i => i.id === calibration.inputId);
 }
 
 export function setLearningPosition(position) {

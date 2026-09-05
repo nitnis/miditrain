@@ -87,6 +87,20 @@ await page.evaluate(async () => {
     return notes.map(n => [n.startTime, n.pitch]);
   };
 
+  // A controller, for the one thing about calibration that can be noticed
+  // automatically: that the keyboard being played is not the one it was
+  // measured on.
+  T.fakeInput = (id, name) => {
+    update('midi.inputs', id ? [{ id, name, state: 'connected', enabled: true }] : []);
+    update('midi.connected', Boolean(id));
+  };
+
+  // One pass of the calibration. The screen listens to the same `midi:noteon`
+  // everything else does, so this is a person playing eight notes.
+  T.strikes = (velocities) => {
+    for (const v of velocities) emit('midi:noteon', { pitch: 60, velocity: v });
+  };
+
   // Give the piece a dynamic shape without giving it different notes. Whether
   // professional mode will grade a file at all is decided from its velocities
   // alone, so the three cases it has to tell apart — a flat export, two levels,
@@ -1075,7 +1089,154 @@ const tiers = await page.evaluate(async () => {
 check('and the tiers read off it in order',
   tiers, ['perfect', 'perfect', 'good', 'good', 'almost', 'off']);
 
+// ── calibration: whose keyboard is being graded ──────────────────────────────
+//
+// Velocity is not a measurement of anything physical — it is whatever a keybed
+// makes of a gesture. Grading a player against a recording made on somebody
+// else's instrument, without asking about theirs, grades the instrument.
+//
+// So the player is asked where their soft, ordinary and loud are, once; the
+// piece answers the same three questions itself; and the map takes one to the
+// other.
+await page.evaluate(() => document.getElementById('btn-stop').click());
+await closeResults();
+
+const calibration = () => page.evaluate(async () =>
+  (await import('/src/profiles.js')).calibrationOf());
+const calibrate = async (passes) => {
+  for (const pass of passes) {
+    await page.evaluate(v => window.__t.strikes(v), pass);
+    await page.waitForTimeout(1100);   // the screen waits 900 ms between passes
+  }
+};
+const calNote = () => page.textContent('#calibrate-note');
+const pass = (v) => Array(8).fill(v);
+
+await page.click('#btn-profiles');
+await page.evaluate(() => window.__t.fakeInput('kbd-studio', 'Studio 88'));
+await page.click('#btn-calibrate');
+
+// A keyboard that squeezes everything into twenty velocity units, which is
+// exactly the case calibration exists for
+await calibrate([pass(40), pass(50), pass(60)]);
+const cal = await calibration();
+check('three passes make a calibration',
+  cal && [cal.anchors.soft.velocity, cal.anchors.medium.velocity, cal.anchors.loud.velocity],
+  [40, 50, 60]);
+check('...recorded against the keyboard it was taken on', cal?.inputName, 'Studio 88');
+check('...with how much the player wandered, which is what sets their floor',
+  cal?.anchors.medium.spread, 0);
+
+// Three passes that did not come out in order were not the three passes that
+// were asked for, and a curve fitted through them would be worse than none
+await page.click('#btn-calibrate-redo');
+await calibrate([pass(90), pass(60), pass(30)]);
+check('passes that are not louder each time are refused',
+  (await calibration())?.anchors.soft.velocity, 40);
+check('...and the screen says what went wrong',
+  (await calNote()).includes('not louder each time'), true);
+await page.click('#btn-close-calibrate');
+
+check('the profile screen says when it was taken and on what',
+  (await page.textContent('#profile-calibration-state')).includes('Studio 88'), true);
+
+// Only a *changed* device can be noticed — the same keyboard with its curve
+// switched over in its own settings looks identical from here, which is why the
+// screen says so in words as well
+await page.evaluate(() => window.__t.fakeInput('kbd-other', 'Some other keyboard'));
+await page.evaluate(() => window.__t.emit('profiles:changed', {}));
+await page.click('#btn-close-profiles');
+await page.click('#btn-profiles');
+check('a different keyboard is noticed and said out loud',
+  (await page.textContent('#profile-calibration-state')).includes('wants taking again'), true);
+await page.evaluate(() => window.__t.fakeInput('kbd-studio', 'Studio 88'));
+await page.click('#btn-close-profiles');
+
+// ── and what it is worth ─────────────────────────────────────────────────────
+//
+// The same player, playing the piece correctly on their own compressed
+// keyboard. Uncalibrated the app reads their forte as somebody else's mezzo and
+// marks them down for it; calibrated, it reads what they meant.
+await setup();
+const shapedGrid = await setupBars(6);
+await revelocity(SHAPED);
+await section(1, 2);
+
+const asPlayedOn = await page.evaluate(async ([anchors, upTo]) => {
+  const { anchorsOf } = await import('/src/dynamics.js');
+  const { state } = await import('/src/state.js');
+  const piece = anchorsOf(state.composition.notes.map(n => n.velocity));
+  // The map runs the player's scale onto the piece's; this runs it back, so the
+  // presses below are what somebody meaning to play the piece would actually
+  // send from that keyboard
+  const back = (t) => (t <= piece.medium
+    ? anchors.soft + (t - piece.soft) * (anchors.medium - anchors.soft) / (piece.medium - piece.soft)
+    : anchors.medium + (t - piece.medium) * (anchors.loud - anchors.medium) / (piece.loud - piece.medium));
+  return state.composition.notes
+    .filter(n => n.startTime < upTo)
+    .map(n => [n.startTime, n.pitch, Math.round(back(n.velocity))]);
+}, [{ soft: 40, medium: 50, loud: 60 }, 4000]);
+
+await setPro(true);
+const uncalibrated = await page.evaluate(async () => {
+  const { setCalibration } = await import('/src/profiles.js');
+  const kept = (await import('/src/profiles.js')).calibrationOf();
+  setCalibration(null);
+  return kept;
+});
+const raw = await run('the piece played right, on a keyboard nobody asked about', asPlayedOn);
+check('uncalibrated, playing it right on a narrow keyboard is marked down',
+  raw.level.stars < 10, true);
+check('...and the rating says it was not measured against this keyboard',
+  raw.level.calibrated, false);
+
+await page.evaluate(async (c) => {
+  (await import('/src/profiles.js')).setCalibration(c);
+}, uncalibrated);
+const tuned = await run('the same playing, once the keyboard has been measured', asPlayedOn);
+check('calibrated, the same playing is what was written', tuned.level.stars, 10);
+check('...and it says so', tuned.level.calibrated, true);
+check('...while neither run moved a single standard number',
+  [raw.score, tuned.score, raw.stars, tuned.stars], [100, 100, 10, 10]);
+
+// The floor is the player's own wobble, carried onto the piece's scale: a
+// keyboard using twenty units where the piece uses fifty stretches a wobble
+// along with everything else.
+const floors = await page.evaluate(async () => {
+  const { calibratedFloor } = await import('/src/dynamics.js');
+  const piece = { soft: 46, medium: 76, loud: 95 };
+  const at = (spread) => calibratedFloor({
+    soft: { velocity: 40, spread: 1 },
+    medium: { velocity: 50, spread },
+    loud: { velocity: 60, spread: 1 },
+  }, piece);
+  return { steady: at(0), ordinary: at(4), wobbly: at(20) };
+});
+check('a player who never wavers is held to the tightest band there is',
+  floors.steady, 3);
+check('...an ordinary wobble is opened out by however much the keyboard is',
+  Math.round(floors.ordinary * 10) / 10, 9.8);
+check('...and nobody is graded on a band wider than two dozen', floors.wobbly, 24);
+
+// A damaged or hand-edited calibration decides how hard every note is judged to
+// have been struck, so it is dropped rather than half-trusted
+const junk = await page.evaluate(async () => {
+  const { setCalibration, calibrationOf } = await import('/src/profiles.js');
+  const good = calibrationOf();
+  const tried = [
+    { at: 1, anchors: { soft: { velocity: 70 }, medium: { velocity: 50 }, loud: { velocity: 90 } } },
+    { at: 1, anchors: { soft: { velocity: 40 }, medium: { velocity: 50 } } },
+    { at: 1, anchors: null },
+  ].map(c => setCalibration(c));
+  setCalibration(good);
+  return tried;
+});
+check('a calibration whose levels are out of order is not one', junk, [null, null, null]);
+
 await setPro(false);
+await page.evaluate(async () => {
+  (await import('/src/profiles.js')).setCalibration(null);
+});
 await page.evaluate(() => document.getElementById('btn-stop').click());
 await closeResults();
 
