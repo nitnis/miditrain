@@ -30,9 +30,10 @@ import { SWING_AMOUNTS } from './quantizer.js';
 import { looksLikeAudio, transcribeAudioFile } from './audio-import.js';
 import {
   listProfiles, current as currentProfile, switchProfile, createProfile, deleteProfile,
-  adoptProfile, sectionKey, sectionTempo, rememberSectionTempo, setLearningPosition,
+  renameProfile, adoptProfile, sectionKey, sectionTempo, rememberSectionTempo, setLearningPosition,
   trainingKey, parseTrainingKey, bestFor, rememberBest, bestsTree,
-  learningPosition, canUseFolder, chooseFolder, folderHandle, storedFolder, scanFolder, writeToFolder,
+  learningPosition, canUseFolder, chooseFolder, folderHandle, storedFolder, scanFolder,
+  writeToFolder, readFromFolder, removeFromFolder,
   fileNameFor, bundleToJSON, bundleFromJSON,
 } from './profiles.js';
 import { collectBundle, applyBundle } from './session.js';
@@ -1161,7 +1162,11 @@ function bindProfiles() {
   const select = document.getElementById('profile-select');
 
   select.onchange = (e) => { switchProfile(e.target.value); showProfileWelcome(); };
-  document.getElementById('btn-profiles').onclick = () => { renderProfiles(); modal.classList.remove('hidden'); };
+  document.getElementById('btn-profiles').onclick = () => {
+    renderProfiles();
+    backfillCurrentFile();
+    modal.classList.remove('hidden');
+  };
   document.getElementById('btn-close-profiles').onclick = () => modal.classList.add('hidden');
   document.getElementById('btn-close-bests').onclick = () =>
     document.getElementById('bests-modal').classList.add('hidden');
@@ -1280,6 +1285,52 @@ function renderProfileSelect() {
   }
 }
 
+// A rename takes the file with it, because the folder is meant to read like the
+// list of profiles rather than like a history of what they used to be called.
+//
+// What is written under the new name is what was under the old one — that file
+// holds the profile's settings and song as well, and those did not change — with
+// only the renamed profile put back over the top. It cannot be rebuilt from what
+// is on screen: that belongs to whoever is currently practising, who may not be
+// the person being renamed.
+async function renameFromDialog(profile) {
+  const wanted = prompt(`Rename "${profile.name}" to:`, profile.name);
+  if (wanted === null) return;
+  const moved = renameProfile(profile.id, wanted);
+  if (!moved) { showToast('A profile needs a name', 2200); return; }
+  renderProfiles();
+
+  if (moved.from === moved.to) return;
+  const handle = await folderHandle();
+  if (!handle) {
+    showToast(`Renamed · its file becomes ${moved.to} the next time one is written`, 3200);
+    return;
+  }
+  try {
+    const carried = await readFromFolder(handle, moved.from);
+    await writeToFolder(handle, moved.to, bundleToJSON({
+      profile: moved.profile,
+      settings: carried?.settings,
+      composition: carried?.composition,
+    }));
+    await removeFromFolder(handle, moved.from);
+    showToast(`Renamed · now kept in ${moved.to}`, 2600);
+  } catch (err) {
+    showToast(`Renamed, but the folder refused the move: ${err.message}`, 4000);
+  }
+}
+
+// Deleting takes the file too. Leaving it is not merely untidy: the next scan of
+// the folder reads every file in it, and the deleted profile would walk back in.
+async function deleteFromDialog(profile) {
+  if (!confirm(`Delete "${profile.name}"? Its best runs go with it, here and in the profile folder.`)) return;
+  const filename = deleteProfile(profile.id);
+  if (!filename) return;
+  renderProfiles();
+  const handle = await folderHandle();
+  if (handle) await removeFromFolder(handle, filename);
+}
+
 function renderProfiles() {
   const list = document.getElementById('profile-list');
   const active = currentProfile();
@@ -1306,7 +1357,14 @@ function renderProfiles() {
     const at = profile.id === active.id ? learningPosition() : null;
     meta.textContent = at ? `section ${at.sectionIndex + 1} of "${at.songName}"` : '';
 
-    row.append(name, meta);
+    // Which file this profile lives in. Worth saying out loud: it is the thing
+    // a player would go looking for in the folder, and seeing it here is how
+    // two profiles with similar names are told apart.
+    const file = document.createElement('span');
+    file.className = 'profile-item-file';
+    file.textContent = profile.filename;
+
+    row.append(name, meta, file);
 
     if (profile.id !== active.id) {
       const use = document.createElement('button');
@@ -1316,16 +1374,35 @@ function renderProfiles() {
       row.appendChild(use);
     }
 
+    const rename = document.createElement('button');
+    rename.className = 'modal-btn';
+    rename.textContent = 'Rename';
+    rename.onclick = () => renameFromDialog(profile);
+    row.appendChild(rename);
+
     const remove = document.createElement('button');
     remove.className = 'modal-btn';
     remove.textContent = 'Delete';
     remove.disabled = listProfiles().length <= 1;
-    remove.onclick = () => { if (deleteProfile(profile.id)) renderProfiles(); };
+    remove.onclick = () => deleteFromDialog(profile);
     row.appendChild(remove);
 
     list.appendChild(row);
   }
   renderFolderState();
+}
+
+// Making a profile insists on a folder and writes the file at once, but the
+// "Default" profile is made by the app before anybody has been asked anything,
+// and profiles that predate all of this have never been written out either.
+// Opening the dialog is the moment to notice — it is where a folder is most
+// likely to already be granted, and it is the screen that promises every
+// profile a file.
+async function backfillCurrentFile() {
+  const handle = await folderHandle();
+  if (!handle) return;
+  if (await readFromFolder(handle, fileNameFor(currentProfile()))) return;
+  keepProfileOnDisk();
 }
 
 async function renderFolderState() {
