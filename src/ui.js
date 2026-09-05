@@ -31,7 +31,7 @@ import { looksLikeAudio, transcribeAudioFile } from './audio-import.js';
 import {
   listProfiles, current as currentProfile, switchProfile, createProfile, deleteProfile,
   adoptProfile, sectionKey, sectionTempo, rememberSectionTempo, setLearningPosition,
-  trainingKey, bestFor, rememberBest,
+  trainingKey, parseTrainingKey, bestFor, rememberBest, bestsTree,
   learningPosition, canUseFolder, chooseFolder, folderHandle, storedFolder, scanFolder, writeToFolder,
   fileNameFor, bundleToJSON, bundleFromJSON,
 } from './profiles.js';
@@ -356,6 +356,15 @@ function setSwingAmount(amount) {
   syncSwingAmount();
   scheduleSheetRender();
   showToast(`${SWING_AMOUNTS[amount].name} swing — ${SWING_AMOUNTS[amount].ratio}`, 1100);
+}
+
+// The slider and its label read off the state rather than off the last thing
+// that moved them, so anything that sets the speed — the slider, or a best being
+// loaded back at the speed it was set — leaves the two agreeing.
+function syncSpeedControls() {
+  const pct = Math.round((state.transport.speed || 1) * 100);
+  document.getElementById('speed-slider').value = pct;
+  document.getElementById('speed-value').textContent = `${pct}%`;
 }
 
 function setTempo(v) {
@@ -965,6 +974,186 @@ function bindTracks() {
   on('tracks:changed', syncTracksButton);
 }
 
+// ── What a profile has to show for itself ────────────────────────────────────
+//
+// Every best it holds, as a tree: the piece, then which hand it was practised
+// with, then how fast. Those three are what make two runs comparable in the
+// first place, so they are also what the list is grouped by — and the shape of
+// the tree is the shape of the thing being worked at, one piece opening into
+// the hands it was taken with and the speeds it reached.
+//
+// Any of them can be loaded back, which puts the piece, the tempo, the hand and
+// the bars where they were and plays the run through the falling notes.
+
+const HAND_NAMES = { both: 'Both hands', left: 'Left hand', right: 'Right hand' };
+
+function whenText(at) {
+  const days = Math.floor((Date.now() - at) / 86400000);
+  if (days <= 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 30) return `${days} days ago`;
+  return new Date(at).toLocaleDateString();
+}
+
+function renderBestsTree(profile) {
+  const host = document.getElementById('bests-tree');
+  const tree = bestsTree(profile);
+  host.innerHTML = '';
+
+  const total = tree.reduce((n, s) => n + s.hands.reduce(
+    (m, h) => m + h.speeds.reduce((k, v) => k + v.runs.length, 0), 0), 0);
+  document.getElementById('bests-title').textContent = `${profile.name} · best runs`;
+  document.getElementById('bests-sub').textContent = total
+    ? 'Open a piece to see what it has been played at. Load puts the piece, the hand, the speed and the bars back where they were, and plays the run.'
+    : '';
+
+  if (!total) {
+    host.innerHTML = '<div class="bests-empty">No best runs yet. Train a passage through to the end and the first one is set.</div>';
+    return;
+  }
+
+  const detail = (cls, label, count) => {
+    const el = document.createElement('details');
+    el.className = cls;
+    const head = document.createElement('summary');
+    head.textContent = label;
+    if (count !== undefined) {
+      const n = document.createElement('span');
+      n.className = 'bests-count';
+      n.textContent = count === 1 ? '1 run' : `${count} runs`;
+      head.appendChild(n);
+    }
+    el.appendChild(head);
+    return el;
+  };
+
+  for (const song of tree) {
+    const runsHere = song.hands.reduce(
+      (m, h) => m + h.speeds.reduce((k, v) => k + v.runs.length, 0), 0);
+    const songEl = detail('bests-song', song.songName, runsHere);
+    // One piece opens by itself, because opening it is then the only thing
+    // there is to do
+    songEl.open = tree.length === 1;
+
+    for (const hand of song.hands) {
+      const handEl = detail('bests-hand', HAND_NAMES[hand.hand] || hand.hand);
+      for (const speed of hand.speeds) {
+        const speedEl = detail('bests-speed', `${speed.bpm} BPM`);
+        for (const run of speed.runs) {
+          speedEl.appendChild(bestRow(run));
+        }
+        handEl.appendChild(speedEl);
+      }
+      songEl.appendChild(handEl);
+    }
+    host.appendChild(songEl);
+  }
+}
+
+function bestRow(run) {
+  const row = document.createElement('div');
+  row.className = 'bests-run';
+
+  const bars = document.createElement('span');
+  bars.className = 'bests-bars';
+  bars.textContent = run.bars === 'all' ? 'whole piece' : `bars ${run.bars.replace('-', '–')}`;
+
+  const stars = document.createElement('span');
+  stars.className = 'bests-stars';
+  stars.textContent = run.stars == null ? '—' : `★ ${starText(run.stars)}`;
+
+  const score = document.createElement('span');
+  score.className = 'bests-score';
+  score.textContent = `${run.score}%`;
+
+  const when = document.createElement('span');
+  when.className = 'bests-when';
+  when.textContent = whenText(run.at);
+
+  const load = document.createElement('button');
+  load.className = 'small-btn';
+  load.textContent = 'Load';
+  // A run recorded on a piece too long to keep kept its score and lost its
+  // replay, and there is then nothing to put back
+  load.disabled = !run.take;
+  load.title = run.take
+    ? 'Put the piece, hand, speed and bars back where they were, and play this run'
+    : 'This run was too long to keep a recording of';
+  load.onclick = () => loadBestRun(run.key);
+
+  row.append(bars, stars, score, when, load);
+  return row;
+}
+
+function openBests(profile) {
+  renderBestsTree(profile);
+  document.getElementById('bests-modal').classList.remove('hidden');
+}
+
+// Put everything back where it was for this run, then play it.
+//
+// The piece is named rather than referenced — a best outlives whatever was
+// loaded when it was set — so the first thing is to find it. If it is not the
+// piece on screen and not one the browser is holding, nothing else here can
+// mean anything, and saying so beats replaying a run against the wrong music.
+async function loadBestRun(key) {
+  const best = bestFor(key);
+  const at = parseTrainingKey(key);
+  if (!best || !at) return;
+
+  if ((state.composition.name || 'Untitled') !== at.songName) {
+    const songs = await listCompositions();
+    const match = songs.find(s => (s.name || 'Untitled') === at.songName);
+    if (!match) {
+      showToast(`"${at.songName}" is not saved in this browser — open it first, then load this run`, 5000);
+      return;
+    }
+    loadComposition(match);
+  }
+
+  document.getElementById('bests-modal').classList.add('hidden');
+  document.getElementById('profiles-modal').classList.add('hidden');
+
+  // The speed in the key is the tempo the notes were written at times whatever
+  // the slider was doing, so putting it back takes both
+  setTempo(best.tempo);
+  const speed = Math.min(2, Math.max(0.25, at.bpm / best.tempo));
+  update('transport.speed', speed);
+  syncSpeedControls();
+
+  update('ui.practiceHand', at.hand);
+  document.getElementById('practice-hand').value = at.hand;
+
+  const bars = at.bars === 'all' ? null : {
+    startBar: parseInt(at.bars.split('-')[0], 10),
+    endBar: parseInt(at.bars.split('-')[1], 10),
+  };
+  update('transport.loopEnabled', Boolean(bars));
+  document.getElementById('loop-enabled').checked = Boolean(bars);
+  if (bars) {
+    update('transport.loopStartBar', bars.startBar);
+    update('transport.loopEndBar', bars.endBar);
+    document.getElementById('loop-start').value = bars.startBar;
+    document.getElementById('loop-end').value = bars.endBar;
+    refreshLoopMarker();
+  }
+
+  // Whatever was on the results screen described some other run, and this
+  // replay has nothing to go back to — so it does not reappear when the
+  // playback ends the way it does when the replay was started from it
+  lastResults = null;
+
+  // Armed for another attempt at the same thing, with the run itself playing
+  // over the notes so it can be watched before it is beaten
+  setPracticeMode('train');
+  trainingRunKey = key;
+  trainingRunTempo = best.tempo;
+  seekTo(bars ? rangeForBars(bars).startMs : 0);
+  showToast(`Loaded your best of ${at.songName} · ${at.hand === 'both' ? 'both hands' : `${at.hand} hand`} at ${at.bpm} BPM`, 3200);
+  replayTake(scaleTake(best.take, best.tempo, state.composition.tempo),
+             `your best (${starText(best.stars ?? 0)} stars)`);
+}
+
 // ── Profiles ─────────────────────────────────────────────────────────────────
 
 function bindProfiles() {
@@ -974,6 +1163,8 @@ function bindProfiles() {
   select.onchange = (e) => { switchProfile(e.target.value); showProfileWelcome(); };
   document.getElementById('btn-profiles').onclick = () => { renderProfiles(); modal.classList.remove('hidden'); };
   document.getElementById('btn-close-profiles').onclick = () => modal.classList.add('hidden');
+  document.getElementById('btn-close-bests').onclick = () =>
+    document.getElementById('bests-modal').classList.add('hidden');
 
   // Making a profile is where the folder gets settled, because it is the one
   // moment that has both a reason to ask and a click to ask with. A profile is
@@ -1098,9 +1289,17 @@ function renderProfiles() {
     const row = document.createElement('div');
     row.className = `profile-item${profile.id === active.id ? ' active' : ''}`;
 
-    const name = document.createElement('span');
-    name.className = 'profile-item-name';
+    // Pressing the profile is how you get at what it has done. Switching to it
+    // first, because a best belongs to whoever set it and loading one back is
+    // an invitation to go and beat it.
+    const name = document.createElement('button');
+    name.className = 'profile-item-name profile-open';
     name.textContent = profile.name;
+    name.title = 'Browse this profile\u2019s best runs';
+    name.onclick = () => {
+      if (profile.id !== active.id) { switchProfile(profile.id); renderProfiles(); }
+      openBests(currentProfile());
+    };
 
     const meta = document.createElement('span');
     meta.className = 'profile-item-meta';
@@ -2297,12 +2496,9 @@ function bindToolbar() {
   document.getElementById('btn-hand-overlay').onclick = toggleHandOverlay;
   document.getElementById('btn-learn-mode').onclick = toggleLearnMode;
 
-  const speedSlider = document.getElementById('speed-slider');
-  const speedValue = document.getElementById('speed-value');
-  speedSlider.oninput = (e) => {
-    const pct = parseInt(e.target.value);
-    update('transport.speed', pct / 100);
-    speedValue.textContent = `${pct}%`;
+  document.getElementById('speed-slider').oninput = (e) => {
+    update('transport.speed', parseInt(e.target.value) / 100);
+    syncSpeedControls();
   };
 
   document.getElementById('btn-train-mode').onclick = toggleTrainMode;

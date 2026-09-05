@@ -293,8 +293,62 @@ export function trainingKey({ songName, bars, hand, bpm }) {
   return `${songName || 'Untitled'}|${where}|${hand || 'both'}|${Math.round(bpm)}`;
 }
 
+// The key read back apart again, for listing what a profile has achieved.
+//
+// Split from the right. A song may have a bar in its name — "Prelude | No. 2"
+// is a filename somebody will type sooner or later — and only the last three
+// fields are known to be free of one, so the song is whatever is left after
+// they are taken off the end.
+export function parseTrainingKey(key) {
+  const parts = String(key).split('|');
+  if (parts.length < 4) return null;
+  const bpm = Number(parts.pop());
+  const hand = parts.pop();
+  const bars = parts.pop();
+  if (!Number.isFinite(bpm) || !parts.length) return null;
+  return { songName: parts.join('|'), bars, hand, bpm };
+}
+
 export function bestFor(key) {
   return current().bests?.[key] || null;
+}
+
+// Everything a profile has to show for itself, as a tree: the piece, then which
+// hand it was practised with, then how fast. Sorted at every level, because a
+// list of achievements that reorders itself between visits is hard to read
+// against last time.
+const HAND_ORDER = { both: 0, left: 1, right: 2 };
+
+export function bestsTree(profile = current()) {
+  const songs = new Map();
+  for (const [key, run] of Object.entries(profile.bests || {})) {
+    const at = parseTrainingKey(key);
+    if (!at) continue;
+    const hands = songs.get(at.songName) || new Map();
+    const speeds = hands.get(at.hand) || new Map();
+    const runs = speeds.get(at.bpm) || [];
+    runs.push({ key, bars: at.bars, ...run });
+    speeds.set(at.bpm, runs);
+    hands.set(at.hand, speeds);
+    songs.set(at.songName, hands);
+  }
+
+  const barsOrder = (a, b) =>
+    (parseInt(a.bars, 10) || 0) - (parseInt(b.bars, 10) || 0) || a.bars.localeCompare(b.bars);
+
+  return [...songs.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([songName, hands]) => ({
+      songName,
+      hands: [...hands.entries()]
+        .sort(([a], [b]) => (HAND_ORDER[a] ?? 9) - (HAND_ORDER[b] ?? 9))
+        .map(([hand, speeds]) => ({
+          hand,
+          speeds: [...speeds.entries()]
+            .sort(([a], [b]) => a - b)
+            .map(([bpm, runs]) => ({ bpm, runs: runs.sort(barsOrder) })),
+        })),
+    }));
 }
 
 // Which of two runs is the better one.
