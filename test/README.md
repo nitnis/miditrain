@@ -69,6 +69,13 @@ different remedy and the app used to give the same answer to all of them:
 | `granted: false` | one has, but this page load may not write to it yet — the ordinary state after a refresh |
 | `offered: false` | the picker was opened and dismissed |
 
+### Catching something in the act is a race
+
+A replay of a short run lasts about a second, and whether the transport is
+still in `playing` when a check looks at it depends on how the machine felt.
+Where what matters is that something *started*, count its event from before the
+click rather than reading the state afterwards.
+
 ### Some things only go wrong on a long passage
 
 Most of the runs here are a three-note bar, which is quick and enough for
