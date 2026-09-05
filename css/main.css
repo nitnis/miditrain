@@ -963,6 +963,51 @@ select:focus { outline: 1px solid var(--accent); }
   .track-count { min-width: 0; }
 }
 
+/* ── Best runs ── */
+.bests-box { max-width: 640px; width: 94vw; text-align: left; }
+.bests-tree {
+  margin: 12px 0 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  max-height: 52vh;
+  overflow: auto;
+  padding: 4px 0;
+}
+/* Native disclosure, so the tree opens and closes and takes the keyboard
+   without any of it being written here */
+.bests-tree details > summary {
+  cursor: pointer;
+  padding: 5px 10px;
+  font-size: 13px;
+  list-style: none;
+}
+.bests-tree details > summary::-webkit-details-marker { display: none; }
+.bests-tree details > summary::before {
+  content: '▸';
+  display: inline-block;
+  width: 1em;
+  color: var(--muted);
+  transition: transform 0.12s;
+}
+.bests-tree details[open] > summary::before { transform: rotate(90deg); }
+.bests-tree details > summary:hover { background: var(--surface); }
+.bests-song > summary { font-weight: 700; }
+.bests-hand, .bests-speed { margin-left: 14px; }
+.bests-count { color: var(--muted); font-weight: 400; font-size: 11px; margin-left: 6px; }
+.bests-run {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 10px 5px 38px;
+  font-size: 12px;
+}
+.bests-run:hover { background: var(--surface); }
+.bests-bars { min-width: 74px; color: var(--muted); }
+.bests-stars { color: #f5b301; font-weight: 700; min-width: 58px; font-variant-numeric: tabular-nums; }
+.bests-score { min-width: 42px; font-variant-numeric: tabular-nums; }
+.bests-when { flex: 1; color: var(--muted); font-size: 11px; }
+.bests-empty { padding: 14px; color: var(--muted); font-size: 13px; text-align: center; }
+
 /* ── Scale and arpeggio generator ── */
 .practice-box {
   max-width: 620px;
@@ -1043,6 +1088,18 @@ select:focus { outline: 1px solid var(--accent); }
 .profile-item:last-child { border-bottom: none; }
 .profile-item.active { background: rgba(91, 192, 235, 0.1); }
 .profile-item-name { flex: 1; font-size: 13px; }
+/* The name is a button now — pressing it opens what the profile has done — but
+   it should still read as the row's title rather than as a control */
+.profile-open {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.profile-open:hover { text-decoration: underline; }
 .profile-item.active .profile-item-name { color: var(--accent); font-weight: 700; }
 .profile-item-meta { font-size: 11px; color: var(--muted); }
 .profile-row {
