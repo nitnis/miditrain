@@ -1037,6 +1037,17 @@ const right = await run('every note on time and at what was written',
 check('playing what was written is ten level stars', right.level.stars, 10);
 check('...off the same six notes the timing was graded on', right.level.graded, right.level.total);
 check('...with no lean either way', right.level.bias, 0);
+// The results screen draws every note's deviation, so "three were well off" has
+// somewhere to point at
+check('...and the results screen draws where every note landed',
+  await page.locator('#level-strip').isVisible(), true);
+check('...over a strip that is actually drawn on', await page.evaluate(() => {
+  const c = document.getElementById('level-strip');
+  const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+  let painted = 0;
+  for (let i = 3; i < d.length; i += 4) if (d[i] > 0) painted += 1;
+  return painted > 200;
+}), true);
 
 const heavy = await run('every note on time, all of them leaned on',
   inSection.map(([at, pitch], i) => [at, pitch, Math.min(127, SHAPED[i] + 28)]));
@@ -1051,6 +1062,8 @@ await revelocity([90]);
 const flat = await run('professional mode on, but the file is flat', onTime);
 check('professional mode on a file with no dynamics grades it the ordinary way',
   [flat.level, flat.score], [null, 100]);
+check('...and the results screen has no deviations to draw',
+  await page.locator('#level-strip').isVisible(), false);
 await revelocity(SHAPED);
 
 // ── the band itself ──────────────────────────────────────────────────────────
@@ -1230,6 +1243,73 @@ check('...and loading an ordinary one disarms it again',
   await page.evaluate(() => window.__t.state.ui.professional), false);
 await page.evaluate(() => document.getElementById('btn-stop').click());
 await closeResults();
+
+// ── seeing what is being asked for ───────────────────────────────────────────
+//
+// Professional mode graded a target nobody could see, and the app played every
+// dynamic marking at very nearly the same volume — so the distinctions it asked
+// a player to reproduce were neither visible nor audible.
+await closeResults();
+
+// How wide a note is actually drawn, read off the canvas rather than off the
+// formula that decides it. One note at a time, so the span found in the row can
+// only be that note.
+const drawnWidth = async (velocity, professional) => page.evaluate(async ([v, pro, shaped]) => {
+  const { state, update, emit } = await import('/src/state.js');
+  const { drawFallingNotes } = await import('/src/pianoroll.js');
+  update('ui.professional', pro);
+  // The piece needs dynamics of its own before it has a scale to draw against,
+  // so the rest of it is out beyond the window, doing nothing but existing
+  const notes = shaped.map((vel, i) => ({
+    id: `bg${i}`, pitch: 40 + i, velocity: vel, startTime: 60000 + i * 500, duration: 200,
+  }));
+  notes.push({ id: 'x', pitch: 60, velocity: v, startTime: 1000, duration: 400 });
+  state.composition.notes = notes;
+  state.composition.tracks = [];
+  emit('transport:noteschanged', notes);
+  drawFallingNotes(notes, state.composition, 1000, null, false);
+
+  const canvas = document.getElementById('falling-canvas');
+  const ctx = canvas.getContext('2d');
+  // Just above the hit line: the note has only just begun to fall, so this is
+  // the one row it certainly covers
+  const row = ctx.getImageData(0, canvas.height - 10, canvas.width, 1).data;
+  let lit = 0;
+  for (let i = 0; i < row.length; i += 4) {
+    // The background is a dark gradient; the note is not
+    if (row[i] + row[i + 1] + row[i + 2] > 190) lit += 1;
+  }
+  return lit;
+}, [velocity, professional, SHAPED]);
+
+const plainWidth = await drawnWidth(100, false);
+check('a note is drawn the same width whatever it is written at, ordinarily',
+  await drawnWidth(20, false), plainWidth);
+const softDrawn = await drawnWidth(20, true);
+const loudDrawn = await drawnWidth(120, true);
+check('in professional mode a soft note is drawn narrower than a loud one',
+  softDrawn < loudDrawn, true);
+check('...and the loud one is about the width it always was',
+  Math.abs(loudDrawn - plainWidth) <= 2, true);
+check('...and the soft one is a sliver rather than nothing', softDrawn >= 2, true);
+
+// The app played eleven decibels from its softest note to its loudest, where a
+// piano plays nearer forty. Measured through the renderer, which is the same
+// voice the speakers get.
+const heard = await page.evaluate(async () => {
+  const { renderToPcm } = await import('/src/render-offline.js');
+  const rms = (x) => Math.sqrt(x.reduce((a, v) => a + v * v, 0) / x.length);
+  const at = async (velocity) => {
+    const { pcm } = await renderToPcm(
+      [{ id: 'n', pitch: 60, velocity, startTime: 0, duration: 800 }]);
+    return rms(pcm);
+  };
+  const [soft, loud] = [await at(15), await at(120)];
+  return Math.round(20 * Math.log10(loud / soft));
+});
+check('and the loudest note is heard well above the softest', heard >= 22, true);
+
+await page.evaluate(() => window.__t.update('ui.professional', false));
 
 // ── calibration: whose keyboard is being graded ──────────────────────────────
 //

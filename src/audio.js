@@ -115,9 +115,32 @@ function midiToFreq(pitch) {
   return 440 * Math.pow(2, (pitch - 69) / 12);
 }
 
+// How loud a note is, for how hard it was struck.
+//
+// This was a straight line from 0.04 to 0.15, which is eleven decibels from the
+// softest note this app can make to the loudest. A piano is nearer forty. The
+// practical effect was that the app played every dynamic marking at very nearly
+// the same volume — a pianissimo and a fortissimo were a fifth of a doubling
+// apart — and professional mode then asked the player to reproduce distinctions
+// they could not hear coming back.
+//
+// Loudness goes roughly as the square of velocity on a real instrument, so the
+// curve is a power law rather than a line. The exponent is a little under two
+// because this is a triangle wave through a lowpass and not a string: pushed
+// all the way, the bottom of the range goes inaudible rather than quiet.
+//
+// The numbers are chosen to leave the app's own loudness where it was. A note
+// at the default velocity of 90 — which is every generated exercise and every
+// note that never had one — comes out within a decibel and a half of where it
+// always did, and the top is up by less than two. What changes is the shape
+// between them: thirty-one decibels of range instead of eleven.
+const PEAK_FF = 0.18;
+const PEAK_PPP = 0.005;
+const PEAK_GAMMA = 1.8;
+
 function peakFor(velocity) {
   const v = Math.min(127, Math.max(1, velocity)) / 127;
-  return 0.04 + v * 0.11;
+  return PEAK_PPP + (PEAK_FF - PEAK_PPP) * Math.pow(v, PEAK_GAMMA);
 }
 
 // Oscillator → lowpass → envelope gain → wherever it is going.

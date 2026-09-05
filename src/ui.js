@@ -12,7 +12,7 @@ import {
 import { saveComposition, listCompositions, deleteComposition, compositionToJSON, compositionFromJSON } from './storage.js';
 import { compositionToMidi, midiToComposition } from './midi-file.js';
 import {
-  startAccuracy, stopAccuracy, getWorstSection, getTake, STAR_COUNT,
+  startAccuracy, stopAccuracy, getWorstSection, getTake, getAccuracyResults, STAR_COUNT,
   professionalWouldGrade,
 } from './accuracy.js';
 import { startMetronome, stopMetronome } from './metronome.js';
@@ -4334,8 +4334,14 @@ function showStars(value) {
 // individually wrong.
 function showLevelLine(level) {
   const line = document.getElementById('level-line');
-  line.classList.toggle('hidden', !level || !level.graded);
-  if (!level || !level.graded) return;
+  const nothing = !level || !level.graded;
+  line.classList.toggle('hidden', nothing);
+  // The strip goes with it. Left alone it kept the last run that had one, under
+  // a results screen saying nothing about dynamics at all.
+  if (nothing) {
+    document.getElementById('level-strip').classList.add('hidden');
+    return;
+  }
 
   document.getElementById('level-stars').textContent = `♪ ${starText(level.stars)} / ${STAR_COUNT}`;
 
@@ -4350,6 +4356,66 @@ function showLevelLine(level) {
   // and a rating of whatever keyboard they happen to be sitting at
   if (!level.calibrated) parts.push('not calibrated to this keyboard');
   document.getElementById('level-detail').textContent = parts.join(' · ');
+  drawLevelStrip(level);
+}
+
+// Note by note, in the order they were written: a bar up for harder than the
+// piece asked, down for softer, and its height is how far. The tally above says
+// how many were loose; this says whether they were loose in the same direction,
+// which is a different fault with a different remedy — a lean is one habit, and
+// scatter either side of the line is a lack of control.
+//
+// The band is drawn behind them, so "inside the tolerance" is a place on the
+// picture rather than a number to hold in your head.
+const STRIP_GRADE_COLORS = {
+  perfect: '#2ecc71', good: '#7cc576', almost: '#f1c40f', off: '#e74c3c',
+};
+
+function drawLevelStrip(level) {
+  const canvas = document.getElementById('level-strip');
+  const notes = getAccuracyResults().filter(n => n.levelGrade);
+  canvas.classList.toggle('hidden', notes.length < 2);
+  if (notes.length < 2) return;
+
+  const ctx = canvas.getContext('2d');
+  const { width: w, height: h } = canvas;
+  const mid = h / 2;
+  ctx.clearRect(0, 0, w, h);
+
+  // The scale: far enough out to hold the worst note, and never so tight that a
+  // run played well draws as though it were all over the place
+  const worst = Math.max(level.floorDelta * 3, ...notes.map(n => Math.abs(n.levelDelta)));
+  const perUnit = (mid - 6) / worst;
+
+  // The band a note has to land inside to count as on the mark, drawn behind
+  // everything with its edges picked out — so "inside the tolerance" is a place
+  // on the picture rather than a number to be held in mind while reading it
+  const band = level.floorDelta * perUnit;
+  ctx.fillStyle = 'rgba(46, 204, 113, 0.16)';
+  ctx.fillRect(0, mid - band, w, band * 2);
+  ctx.strokeStyle = 'rgba(46, 204, 113, 0.45)';
+  ctx.lineWidth = 1;
+  for (const edge of [mid - band, mid + band]) {
+    ctx.beginPath();
+    ctx.moveTo(0, Math.round(edge) + 0.5);
+    ctx.lineTo(w, Math.round(edge) + 0.5);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+  ctx.beginPath();
+  ctx.moveTo(0, mid + 0.5);
+  ctx.lineTo(w, mid + 0.5);
+  ctx.stroke();
+
+  const slot = w / notes.length;
+  const barW = Math.max(1, Math.min(10, slot - 1));
+  notes.forEach((n, i) => {
+    const x = i * slot + (slot - barW) / 2;
+    const tall = Math.max(1.5, Math.abs(n.levelDelta) * perUnit);
+    ctx.fillStyle = STRIP_GRADE_COLORS[n.levelGrade] || '#7878a8';
+    // Up for harder than was asked, down for softer
+    ctx.fillRect(x, n.levelDelta >= 0 ? mid - tall : mid, barW, tall);
+  });
 }
 
 function showAccuracyResults(results) {
