@@ -266,6 +266,114 @@ check('...and one released between presses is not stretched to meet the next',
 check('the writer puts them back, unchanged', feet.exported, feet.events);
 check('and the app’s own JSON keeps them too', feet.storedAgain, feet.events.length);
 
+// ── and the pedals, shown ──
+//
+// Pedalling has to be seen coming in the way notes do — a foot that goes down
+// once the chord has already sounded is late — so it is washed over the window
+// that is still ahead, and a gauge at the hit line says how far down it is now.
+//
+// Read off the canvas rather than off the code that decides it: the wash is a
+// few per cent of alpha and the only version of "is it visible" worth asking is
+// whether the pixels changed.
+const drawn = await page.evaluate(async (bytes) => {
+  const mf = await import('/src/midi-file.js');
+  const { state, update, emit } = await import('/src/state.js');
+  const { drawFallingNotes } = await import('/src/pianoroll.js');
+  const song = mf.midiToComposition(new Uint8Array(bytes).buffer);
+  state.composition.notes = song.notes;
+  state.composition.tracks = [];
+  update('composition.tempo', song.tempo);
+  emit('transport:noteschanged', song.notes);
+
+  const canvas = document.getElementById('falling-canvas');
+  const ctx = canvas.getContext('2d');
+  const shot = (pedal, at) => {
+    state.composition.pedal = pedal;
+    drawFallingNotes(song.notes, state.composition, at, null, false);
+    const d = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    let sum = 0;
+    for (let i = 0; i < d.length; i += 4) sum += d[i] + d[i + 1] + d[i + 2];
+    return sum;
+  };
+  // The gauge corner on its own, so the wash and the gauge are told apart
+  const corner = (pedal, at) => {
+    state.composition.pedal = pedal;
+    drawFallingNotes(song.notes, state.composition, at, null, false);
+    const w = Math.min(70, canvas.width), h = Math.min(60, canvas.height);
+    const d = ctx.getImageData(canvas.width - w, canvas.height - h, w, h).data;
+    let sum = 0;
+    for (let i = 0; i < d.length; i += 4) sum += d[i] + d[i + 1] + d[i + 2];
+    return sum;
+  };
+
+  // 500 ms is inside the first press, 1300 ms is after it came up
+  return {
+    none: shot([], 500),
+    held: shot(song.pedal, 500),
+    up: shot(song.pedal, 1300),
+    cornerNone: corner([], 500),
+    cornerHeld: corner(song.pedal, 500),
+    height: canvas.height,
+  };
+}, threePartMidi());
+
+check('a piece with pedalling is washed over where the damper is up',
+  drawn.held > drawn.none, true);
+check('...and a moment with the pedal up is not', drawn.up < drawn.held, true);
+check('the gauge lights in the corner it owns', drawn.cornerHeld > drawn.cornerNone, true);
+check('a piece with no pedalling is drawn exactly as it always was',
+  drawn.none, await page.evaluate(async (bytes) => {
+    const mf = await import('/src/midi-file.js');
+    const { state } = await import('/src/state.js');
+    const { drawFallingNotes } = await import('/src/pianoroll.js');
+    const song = mf.midiToComposition(new Uint8Array(bytes).buffer);
+    state.composition.pedal = [];
+    drawFallingNotes(song.notes, state.composition, 500, null, false);
+    const c = document.getElementById('falling-canvas');
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let sum = 0;
+    for (let i = 0; i < d.length; i += 4) sum += d[i] + d[i + 1] + d[i + 2];
+    return sum;
+  }, threePartMidi()));
+
+// A window too short for the gauge gets no gauge rather than one running off
+// the bottom of it
+check('a window with no room for the gauge simply has none', await page.evaluate(async () => {
+  const { state } = await import('/src/state.js');
+  const { drawFallingNotes } = await import('/src/pianoroll.js');
+  const c = document.getElementById('falling-canvas');
+  const was = c.height;
+  let threw = false;
+  try {
+    c.height = 40;
+    drawFallingNotes(state.composition.notes, state.composition, 500, null, false);
+  } catch { threw = true; } finally { c.height = was; }
+  return threw;
+}), false);
+
+// The two lookups the drawing leans on, which both search rather than scan
+check('the pedal is read at a moment, from the last thing said before it',
+  await page.evaluate(async () => {
+    const { pedalAt, pedalSlice } = await import('/src/pedal.js');
+    const events = [
+      { time: 100, pedal: 'sustain', value: 127 },
+      { time: 200, pedal: 'soft', value: 64 },
+      { time: 400, pedal: 'sustain', value: 40 },
+      { time: 900, pedal: 'sustain', value: 0 },
+    ];
+    return {
+      before: pedalAt(events, 50),
+      held: pedalAt(events, 150),
+      half: pedalAt(events, 500),
+      after: pedalAt(events, 2000),
+      soft: pedalAt(events, 500, 'soft'),
+      // A window opening mid-press has to be handed the event that started it,
+      // or a pedal held across the whole of it would draw as up
+      opensMidPress: pedalSlice(events, 500, 800).map(e => e.time),
+    };
+  }),
+  { before: 0, held: 127, half: 40, after: 0, soft: 64, opensMidPress: [400] });
+
 // A big piece used to throw "Maximum call stack size exceeded" before a byte
 // reached the disk, because every track byte was passed to push as an argument
 check('a piece too big to spread still exports', await page.evaluate(async () => {

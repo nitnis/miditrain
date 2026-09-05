@@ -87,13 +87,54 @@ export function hasPedal(events, pedal = null) {
 
 // What a pedal is at, at a moment. The last thing said about it before then,
 // and zero if nothing has been said yet.
+//
+// Found rather than scanned to, because the gauge asks this of every frame and
+// walking a real performance's thousands of events from the beginning each time
+// gets slower the further into the piece you are.
 export function pedalAt(events, timeMs, pedal = 'sustain') {
-  let value = 0;
-  for (const e of events) {
-    if (e.time > timeMs) break;
-    if (e.pedal === pedal) value = e.value;
+  if (!events?.length) return 0;
+  let lo = 0;
+  let hi = events.length - 1;
+  let at = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (events[mid].time <= timeMs) { at = mid; lo = mid + 1; } else hi = mid - 1;
   }
-  return value;
+  for (let i = at; i >= 0; i--) {
+    if (events[i].pedal === pedal) return events[i].value;
+  }
+  return 0;
+}
+
+// ── What the drawing needs ───────────────────────────────────────────────────
+//
+// The stretch of one pedal's events that a window of time covers, and the one
+// before it — without that first one the window would start at nothing, and a
+// pedal held down across the whole of it would draw as up.
+//
+// A binary search rather than a filter because this runs on every frame of the
+// falling notes and a real performance holds thousands of events.
+export function pedalSlice(events, fromMs, toMs, pedal = 'sustain') {
+  const out = [];
+  if (!events?.length) return out;
+
+  let lo = 0;
+  let hi = events.length - 1;
+  let at = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (events[mid].time <= fromMs) { at = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  // Back up to the last event of this pedal at or before the window opens
+  let before = null;
+  for (let i = at; i >= 0; i--) {
+    if (events[i].pedal === pedal) { before = events[i]; break; }
+  }
+  if (before) out.push(before);
+  for (let i = at; i < events.length && events[i].time < toMs; i++) {
+    if (events[i].pedal === pedal && events[i] !== before) out.push(events[i]);
+  }
+  return out;
 }
 
 // ── What playback needs ──────────────────────────────────────────────────────

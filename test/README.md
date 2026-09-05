@@ -198,6 +198,14 @@ is up when some notes are released and down when others are, so "held until the
 pedal comes up" and "not stretched to meet the next press" are both real cases
 rather than the same case twice.
 
+Showing the pedals is checked the same way the falling notes' dynamics are: by
+drawing a frame and reading the pixels back. The wash is a few per cent of alpha
+over a dark ground, and whether that is visible is not a question the constants
+can answer — so the whole canvas is summed with the pedal and without it, and
+the gauge corner is summed on its own so the two are told apart. There is also a
+check that a window too short to hold the gauge simply has none, because the
+falling window is whatever height the layout leaves it.
+
 There is also a twenty-thousand-note export in here that asserts almost nothing
 about its output. `push(...bytes)` passes every element as an argument, and a
 piece this size overflowed the stack before a byte reached the disk — so what it
