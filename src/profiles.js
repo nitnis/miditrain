@@ -45,6 +45,10 @@ function blank(name) {
     // The best run of each passage, at each hand setting and each speed —
     // see "What counts as the same thing" below
     bests: {},
+    // The file this profile lives in. Recorded rather than worked out from the
+    // name every time, so that renaming can move the file rather than orphan
+    // it, and so two profiles whose names look alike cannot end up sharing one.
+    filename: null,
   };
 }
 
@@ -80,6 +84,9 @@ function sanitise(raw) {
     learning,
     sectionTempos: tempos,
     bests: sanitiseBests(raw.bests),
+    filename: typeof raw.filename === 'string' && raw.filename.endsWith(FILE_SUFFIX)
+      ? raw.filename.slice(0, 120)
+      : null,
   };
 }
 
@@ -195,6 +202,7 @@ export function loadProfiles() {
   if (!profiles.length) profiles = [blank('Default')];
 
   currentId = profiles.some(p => p.id === saved?.current) ? saved.current : profiles[0].id;
+  if (settleFileNames()) persist();
   return current();
 }
 
@@ -206,7 +214,7 @@ function persist() {
 }
 
 export function listProfiles() {
-  return profiles.map(p => ({ id: p.id, name: p.name, updatedAt: p.updatedAt }));
+  return profiles.map(p => ({ id: p.id, name: p.name, updatedAt: p.updatedAt, filename: fileNameFor(p) }));
 }
 
 export function current() {
@@ -222,33 +230,55 @@ export function switchProfile(id) {
 
 export function createProfile(name) {
   const profile = blank((name || '').trim() || `Profile ${profiles.length + 1}`);
+  profile.filename = claimFileName(profile);
   profiles.push(profile);
   currentId = profile.id;
   persist();
   return profile;
 }
 
+// Renaming moves the file too, so the folder keeps reading like the list of
+// profiles rather than like a history of what they used to be called. The old
+// and new names are handed back because only the caller has the folder — and
+// only it can delete the file the profile has just stopped living in.
 export function renameProfile(id, name) {
   const profile = profiles.find(p => p.id === id);
-  if (!profile || !name.trim()) return;
+  if (!profile || !name.trim()) return null;
+  const from = fileNameFor(profile);
   profile.name = name.trim().slice(0, 60);
+  profile.filename = claimFileName(profile);
   profile.updatedAt = Date.now();
   persist();
+  return { from, to: profile.filename, profile };
 }
 
+// Hands back the file the deleted profile was living in, so it can be taken off
+// disk as well. A file left behind is not merely clutter: the next folder scan
+// would read it and bring the deleted profile back.
 export function deleteProfile(id) {
-  if (profiles.length <= 1) return false;   // there is always one
+  if (profiles.length <= 1) return null;   // there is always one
+  const going = profiles.find(p => p.id === id);
+  if (!going) return null;
   profiles = profiles.filter(p => p.id !== id);
   if (currentId === id) currentId = profiles[0].id;
   persist();
-  return true;
+  return fileNameFor(going);
 }
 
-// Merge one in from a file, replacing a profile of the same id
+// Merge one in from a file, replacing a profile of the same id.
+//
+// The file it arrived in is where it goes on living — that is what makes a scan
+// idempotent rather than a way of accumulating copies. But a file someone sent
+// may be named the same as a file already here, and then the newcomer is the
+// one that moves.
 export function adoptProfile(raw) {
   const profile = sanitise(raw);
   if (!profile) return null;
   const at = profiles.findIndex(p => p.id === profile.id);
+  const others = profiles.filter(p => p.id !== profile.id);
+  if (!profile.filename || others.some(p => p.filename === profile.filename)) {
+    profile.filename = claimFileName(profile, others);
+  }
   if (at === -1) profiles.push(profile);
   else profiles[at] = profile;
   persist();
@@ -474,9 +504,61 @@ export async function forgetFolder() {
   try { await handleStore().removeItem(HANDLE_KEY); } catch { /* nothing to forget */ }
 }
 
+const FILE_SUFFIX = '.miditrain.json';
+
+const readableName = (label) =>
+  label.replace(/[^a-z0-9\-_ ]/gi, '').trim().replace(/\s+/g, '-') || 'profile';
+
+// What a profile's file is called.
+//
+// The readable part is the profile's own name, which is the point of it — a
+// folder of these should be legible without opening any of them. But a name is
+// not unique and the sanitising makes it less so: "Anna B." and "Anna B" and
+// "Anna  B" all reduce to the same thing, and a profile whose name is entirely
+// punctuation or entirely non-Latin reduces to "profile". Two of those pointed
+// at one file, and creating the second silently wrote over the first — its
+// bests, gone, with nothing said.
+//
+// So the name is claimed once, against the names every other profile has
+// claimed, and a short piece of the profile's own id settles any argument. The
+// common case keeps the plain readable name it always had; only a genuine
+// clash gets the suffix.
+export function claimFileName(profile, others = profiles) {
+  const base = readableName(profile.name);
+  const taken = new Set(others
+    .filter(p => p.id !== profile.id && p.filename)
+    .map(p => p.filename));
+  const plain = `${base}${FILE_SUFFIX}`;
+  if (!taken.has(plain)) return plain;
+  // Six characters of a UUID settle every argument anybody will actually have.
+  // Growing the slice is for the argument nobody will: two ids alike for six
+  // characters still differ by the whole of them, so this always terminates.
+  for (let len = 6; len < profile.id.length; len++) {
+    const tagged = `${base}.${profile.id.slice(0, len)}${FILE_SUFFIX}`;
+    if (!taken.has(tagged)) return tagged;
+  }
+  return `${base}.${profile.id}${FILE_SUFFIX}`;
+}
+
+// A profile that never went through the store — one still inside a bundle being
+// read — keeps the name it would have had, so its file is found rather than
+// left behind. Everything in the store has claimed a file of its own.
 export function fileNameFor(profile) {
-  const safe = profile.name.replace(/[^a-z0-9\-_ ]/gi, '').trim().replace(/\s+/g, '-') || 'profile';
-  return `${safe}.miditrain.json`;
+  return profile.filename || `${readableName(profile.name)}${FILE_SUFFIX}`;
+}
+
+// Nothing in the store may be without a file: not the "Default" profile the app
+// makes for itself before anyone has chosen a folder, and not the profiles made
+// before a profile recorded where it lived. Claimed in list order, so anything
+// already settled keeps its file and the newcomers work around it.
+function settleFileNames() {
+  let changed = false;
+  for (const profile of profiles) {
+    if (profile.filename) continue;
+    profile.filename = claimFileName(profile);
+    changed = true;
+  }
+  return changed;
 }
 
 export function bundleToJSON(bundle) {
@@ -495,6 +577,27 @@ export function bundleFromJSON(text) {
   return parsed;
 }
 
+// Renaming a profile moves its file rather than leaving the old one behind, and
+// deleting a profile takes its file with it — otherwise the next folder scan
+// would bring the deleted one back.
+export async function removeFromFolder(handle, filename) {
+  try {
+    await handle.removeEntry(filename);
+    return true;
+  } catch {
+    return false;   // already gone, or never written
+  }
+}
+
+export async function readFromFolder(handle, filename) {
+  try {
+    const file = await handle.getFileHandle(filename);
+    return bundleFromJSON(await (await file.getFile()).text());
+  } catch {
+    return null;   // nothing written there yet, or not one of ours
+  }
+}
+
 export async function writeToFolder(handle, filename, text) {
   const file = await handle.getFileHandle(filename, { create: true });
   const writable = await file.createWritable();
@@ -506,10 +609,12 @@ export async function writeToFolder(handle, filename, text) {
 export async function scanFolder(handle) {
   const found = [];
   for await (const entry of handle.values()) {
-    if (entry.kind !== 'file' || !entry.name.endsWith('.miditrain.json')) continue;
+    if (entry.kind !== 'file' || !entry.name.endsWith(FILE_SUFFIX)) continue;
     try {
       const text = await (await entry.getFile()).text();
       const bundle = bundleFromJSON(text);
+      // The file it was found in is where it belongs from now on
+      if (bundle.profile) bundle.profile.filename = entry.name;
       found.push({ filename: entry.name, bundle });
     } catch { /* not one of ours, or damaged — leave it alone */ }
   }

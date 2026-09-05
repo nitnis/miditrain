@@ -60,6 +60,12 @@ the folder tests fake it — and only it. What decides when to write, what the
 file is called and what goes into it is the real code; every write it makes
 lands in an array the test reads back.
 
+The fake keeps what is written to it, and that matters: half of what the app
+does with a folder is read it back. A rename moves a file, a delete takes one
+away, and a scan reads whatever is left — none of which is worth asserting
+against a write log that only ever grows. So it holds files, refuses to open one
+that is not there, and can be asked afterwards what it is holding.
+
 `fakeFolder` models the three states that actually matter, because each has a
 different remedy and the app used to give the same answer to all of them:
 

@@ -1102,6 +1102,14 @@ select:focus { outline: 1px solid var(--accent); }
 .profile-open:hover { text-decoration: underline; }
 .profile-item.active .profile-item-name { color: var(--accent); font-weight: 700; }
 .profile-item-meta { font-size: 11px; color: var(--muted); }
+/* Every profile lives in a file, and the row says which one */
+.profile-item-file {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  opacity: 0.75;
+  white-space: nowrap;
+}
 .profile-row {
   display: flex;
   gap: 8px;
