@@ -9,6 +9,7 @@ import { subdivision } from './metronome.js';
 import { beatOffsets } from './swing.js';
 import { suggestedFinger } from './autofinger.js';
 import { drawHands, forgetHands } from './hand-overlay.js';
+import { dynamicsIn } from './dynamics.js';
 
 // Piano layout constants
 const MIDI_MIN = 21; // A0
@@ -667,6 +668,50 @@ export function fallingMsPerPixel() {
   return h > 0 ? lookaheadMs() / h : 0;
 }
 
+// ── How hard, drawn ──────────────────────────────────────────────────────────
+//
+// Professional mode grades a target the player could not see. A note is drawn
+// as loud as it is meant to be struck: a fortissimo is a full bright bar and a
+// pianissimo a dim sliver.
+//
+// Width and brightness together, because either alone is too quiet to read.
+// Width was tried on its own against a real performance and most of its notes
+// came out looking alike — at the size a falling note actually is, a third off
+// the width of a twenty-pixel bar is not something the eye picks up in traffic.
+// Brightness is the *value* of the colour and not its hue, so the part and the
+// grade, which are carried in hue, still say what they said.
+//
+// Measured against the piece's own soft and loud rather than against 1 and 127.
+// A performance that lives between 40 and 90 would otherwise draw as a row of
+// middling bars saying nothing.
+const DYNAMIC_WIDTH_FLOOR = 0.3;
+const DYNAMIC_ALPHA_FLOOR = 0.55;
+
+let dynamicsOf = null;
+let dynamicsWas = null;
+
+function pieceDynamics(notes) {
+  // The notes array is replaced rather than edited in place when a piece is
+  // loaded, so its identity is the cheap way to ask "is this the same piece" —
+  // and this runs on every frame of the falling notes.
+  if (notes !== dynamicsOf || notes.length !== dynamicsWas?.length) {
+    dynamicsOf = notes;
+    const found = dynamicsIn(notes);
+    dynamicsWas = { length: notes.length, ok: found.ok, anchors: found.anchors };
+  }
+  return dynamicsWas;
+}
+
+// Where this note sits between the piece's own soft and loud, 0 to 1
+function loudnessOf(note, dynamics) {
+  if (!dynamics?.ok) return null;
+  const { soft, loud } = dynamics.anchors;
+  if (loud <= soft) return null;
+  return Math.min(1, Math.max(0, ((note.velocity ?? 90) - soft) / (loud - soft)));
+}
+
+const shareFrom = (floor, at) => (at === null ? 1 : floor + (1 - floor) * at);
+
 export function drawFallingNotes(notes, composition, currentTimeMs, accuracyResults = null, trainMode = false) {
   if (!fallingCtx || !keyLayout.length) return;
 
@@ -711,6 +756,11 @@ export function drawFallingNotes(notes, composition, currentTimeMs, accuracyResu
 
   const dimOthers = (state.ui.trainMode || state.ui.learnMode) && practiceHand() !== 'both';
 
+  // Only where it means something: a mode that grades dynamics, and a piece
+  // that has any. Everything else is drawn exactly as it always was.
+  const showDynamics = state.ui.professional === true;
+  const dynamics = showDynamics ? pieceDynamics(notes) : null;
+
   // Picked out here rather than in drawKeyboard: this runs first in the frame
   // and is already holding the notes and the time that decide it
   collectFingerings(notes, currentTimeMs);
@@ -744,13 +794,17 @@ export function drawFallingNotes(notes, composition, currentTimeMs, accuracyResu
       if (result && GRADE_COLORS[result.grade]) color = GRADE_COLORS[result.grade];
     }
 
+    const loudness = showDynamics ? loudnessOf(note, dynamics) : null;
+
     // Practising one hand: the other one is still drawn, because you need to
     // see what you are playing against, but faintly enough to be background
-    fallingCtx.globalAlpha = dimOthers && !isPractised(note) ? 0.25 : 1;
+    fallingCtx.globalAlpha = (dimOthers && !isPractised(note) ? 0.25 : 1)
+      * shareFrom(DYNAMIC_ALPHA_FLOOR, loudness);
 
     const isBlack = !IS_WHITE[note.pitch % 12];
     const fullW = Math.max(keyInfo.w - 2, 4);
-    const w = isBlack ? Math.max(4, fullW * BLACK_NOTE_WIDTH) : fullW;
+    const keyW = isBlack ? Math.max(4, fullW * BLACK_NOTE_WIDTH) : fullW;
+    const w = Math.max(3, keyW * shareFrom(DYNAMIC_WIDTH_FLOOR, loudness));
     const x = keyInfo.x + (fullW - w) / 2;
     const noteH = Math.max(6, visibleBottom - visibleTop);
 
