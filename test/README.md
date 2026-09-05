@@ -108,6 +108,27 @@ So there is a twenty-note fixture as well, and the star checks that depend on
 length use it. Its rule of thumb: if a property is about a *proportion* of the
 notes, it has to be tested at a length where that proportion can be small.
 
+### Professional mode has one claim before it has any others
+
+It must change nothing. A run graded on dynamics has to come out with the score,
+the stars and the tallies it would have come out with anyway — the level rating
+is a second reading of the same playing, not a re-weighting of the first.
+
+Two runs of the same passage are not identical to the millisecond, so asserting
+one whole result against another would be asserting how busy the machine was.
+What is asserted instead is the thing that cannot be true by accident: **every
+note dead on time and at entirely the wrong volume**. A hundred per cent and ten
+stars both survive it, and they could not if a single number had leaked. The
+tallies are compared run-to-run on top of that, because for a clean run they are
+deterministic; `avgLatencyMs` is left out, because it is a measurement rather
+than a decision.
+
+The three kinds of file the mode has to tell apart are one fixture with its
+velocities rewritten: flat at one value, two values (which is what a generated
+exercise is), and eighteen distinct ones. And the band arithmetic is checked
+against the recording it was fitted to — ±perfect at velocity 62 is 7.6, which
+was that performer's own median note-to-note consistency.
+
 ## `tracks.mjs` — multi-track MIDI
 
 Walks a three-part file, built in the script rather than kept as a fixture,
