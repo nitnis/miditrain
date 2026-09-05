@@ -69,6 +69,18 @@ different remedy and the app used to give the same answer to all of them:
 | `granted: false` | one has, but this page load may not write to it yet — the ordinary state after a refresh |
 | `offered: false` | the picker was opened and dismissed |
 
+### Assert the claim, not everything that happened to be true
+
+Two of these have had to be loosened after they failed on correct behaviour,
+both for the same reason: they pinned a number that was real but incidental.
+One demanded that exactly one note of twenty came out *good* — a second press
+landing a frame late makes it two, and the claim was never about the count. The
+other read the playhead to see which section was being trained, when what it
+wanted was the range the run is grading against, which does not move.
+
+Before pinning a number, ask whether the check would still be about the same
+thing if that number came out one different.
+
 ### Catching something in the act is a race
 
 A replay of a short run lasts about a second, and whether the transport is
