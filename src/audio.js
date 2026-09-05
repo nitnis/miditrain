@@ -9,6 +9,7 @@
 import { state } from './state.js';
 import { atOrPast, EDGE_MS } from './quantizer.js';
 import { isAudible } from './tracks.js';
+import { sustainSpans, soundingEnd } from './pedal.js';
 
 let ctx = null;
 let master = null;
@@ -242,6 +243,32 @@ export function setPlaybackSource(notes) {
   playbackSource = notes && notes.length ? notes : null;
 }
 
+// ── The damper ───────────────────────────────────────────────────────────────
+//
+// A note stops sounding when its key comes up *and* the pedal is up. Playing a
+// pedalled performance without this sounds it detached: the Schubert recording
+// these were built against holds its damper off the strings for 60% of its
+// length, and the app was cutting every note at the key release.
+//
+// Worked out once for a piece rather than per note, because a run of that piece
+// asks it of sixteen thousand of them. Rebuilt when the pedal list changes,
+// which is on import and on load, and never during playback.
+let spans = [];
+let spansFrom = null;
+
+function damperSpans() {
+  const pedal = state.composition.pedal;
+  if (pedal !== spansFrom) {
+    spansFrom = pedal;
+    spans = sustainSpans(pedal || []);
+  }
+  return spans;
+}
+
+// A replay is what the player pressed, and their own feet were not recorded —
+// so a take rings for as long as the keys were held and no longer.
+const pedalled = () => !playbackSource && damperSpans().length > 0;
+
 function pump() {
   const c = getAudioContext();
   const speed = state.transport.speed || 1;
@@ -258,7 +285,9 @@ function pump() {
     // the same notes its walk is about to ask for.
     if (atOrPast(note.startTime, playUntilMs)) continue;
     const when = Math.max(ctxTimeFor(note.startTime, speed), c.currentTime);
-    scheduleVoice(note.pitch, note.velocity ?? 90, when, note.duration / (1000 * speed));
+    const keyUp = note.startTime + note.duration;
+    const stops = pedalled() ? soundingEnd(damperSpans(), keyUp) : keyUp;
+    scheduleVoice(note.pitch, note.velocity ?? 90, when, (stops - note.startTime) / (1000 * speed));
   }
   scheduledUpToMs = horizonMs;
 }
