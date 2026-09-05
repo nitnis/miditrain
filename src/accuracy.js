@@ -2,7 +2,9 @@
 import { state, update, emit, on } from './state.js';
 import { atOrPast } from './quantizer.js';
 import { isPractised } from './hands.js';
-import { analyseDynamics, levelGradeFor, BANDS_VERSION, DEFAULT_FLOOR } from './dynamics.js';
+import {
+  analyseDynamics, dynamicsIn, levelGradeFor, BANDS_VERSION, DEFAULT_FLOOR,
+} from './dynamics.js';
 
 // Timing tiers, measured from the note's written position
 const PERFECT_MS = 50;
@@ -192,6 +194,17 @@ function professionalWanted() {
 
 export function professionalActive() {
   return sessionBands !== null;
+}
+
+// Whether a run of this piece, started now, would be graded on dynamics — asked
+// before the run rather than after, because which best the run is an attempt at
+// has to be known when it starts.
+//
+// The same two questions `startAccuracy` asks, in one place so the two cannot
+// come to different answers: a run filed under the professional key and graded
+// as an ordinary one would be a best nobody could ever beat.
+export function professionalWouldGrade(composition) {
+  return professionalWanted() && dynamicsIn(composition.notes || []).ok;
 }
 
 // The quantize setting is for notation — how the score is written and how big a

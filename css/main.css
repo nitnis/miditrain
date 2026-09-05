@@ -993,6 +993,10 @@ select:focus { outline: 1px solid var(--accent); }
 .bests-tree details > summary:hover { background: var(--surface); }
 .bests-song > summary { font-weight: 700; }
 .bests-hand, .bests-speed { margin-left: 14px; }
+/* Only present when a profile has trained both ways, and then the outermost
+   branch — so the pieces under it indent like everything else does */
+.bests-mode > summary { font-weight: 700; color: var(--accent); }
+.bests-mode > .bests-song { margin-left: 14px; }
 .bests-count { color: var(--muted); font-weight: 400; font-size: 11px; margin-left: 6px; }
 .bests-run {
   display: flex;
@@ -1102,6 +1106,33 @@ select:focus { outline: 1px solid var(--accent); }
 .profile-open:hover { text-decoration: underline; }
 .profile-item.active .profile-item-name { color: var(--accent); font-weight: 700; }
 .profile-item-meta { font-size: 11px; color: var(--muted); }
+/* The dynamics rating, under the tallies. Its own line: it rates different
+   playing from the stars above it, and adding the two would say neither. */
+.level-line {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.level-line.hidden { display: none; }
+.level-stars {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--accent);
+  white-space: nowrap;
+}
+.level-detail { font-size: 12px; color: var(--muted); }
+
+.bests-level {
+  font-size: 12px;
+  color: var(--accent);
+  white-space: nowrap;
+}
+.bests-level.uncalibrated { opacity: 0.6; }
+
 .profile-check {
   display: flex;
   align-items: center;
