@@ -157,8 +157,17 @@ The fixture for it needs the *rest* of the piece too, parked out beyond the
 window. A piece has no dynamic scale to draw against until it has dynamics, and
 three notes do not make one.
 
-The same goes for the synth: how much louder a fortissimo is than a pianissimo
-is measured by rendering both and comparing them, not by reading the curve.
+The same goes for the synth: how much louder a fortissimo is than a pianissimo,
+how much brighter, and whether a note dies away at all are each measured by
+rendering and listening to the result rather than by reading the constants.
+
+Brightness is the spectral centroid — where the energy sits, in hertz — because
+loudness cancels out of it, which is exactly what is wanted when the question is
+about colour. A one-pole high-pass was tried first and reported the softest and
+hardest strikes as 4% apart when a centroid put them 60% apart: at six decibels
+an octave the fundamental leaks into the "high" band and swamps the thing being
+asked about. It is the app's own FFT, so the measurement and the transcriber
+cannot come to disagree about what a spectrum is.
 
 ### Calibration is checked by playing the piece correctly and badly at once
 
