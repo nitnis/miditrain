@@ -93,9 +93,16 @@ await page.evaluate(async () => {
   // `granted` false stands for the ordinary state after a page load: the folder
   // is still chosen, but the permission to write to it has been dropped.
   // `offered` false stands for a picker the player dismissed.
+  // The folder keeps what is written to it, because half of what the app does
+  // with a folder is read it back: a rename moves a file, a delete takes one
+  // away, and both are only true if the folder afterwards says so.
   T.fakeFolder = ({ chosen = true, granted = true, offered = true } = {}) => {
     T.writes = [];
+    T.removed = [];
     T.picked = 0;
+    const files = new Map();
+    T.folderFiles = () => [...files.keys()].sort();
+    T.folderFile = (name) => files.get(name) ?? null;
     let stored = chosen;
     let allowed = granted;
     window.showDirectoryPicker = async () => {
@@ -104,16 +111,32 @@ await page.evaluate(async () => {
       stored = true; allowed = true;
       return handle;
     };
+    const fileHandle = (filename) => ({
+      kind: 'file',
+      name: filename,
+      getFile: async () => ({ text: async () => files.get(filename) }),
+      createWritable: async () => ({
+        write: async (text) => { files.set(filename, text); T.writes.push({ filename, text }); },
+        close: async () => {},
+      }),
+    });
     const handle = {
       name: 'Fake folder',
       queryPermission: async () => (allowed ? 'granted' : 'prompt'),
       requestPermission: async () => { allowed = true; return 'granted'; },
-      getFileHandle: async (filename) => ({
-        createWritable: async () => ({
-          write: async (text) => T.writes.push({ filename, text }),
-          close: async () => {},
-        }),
-      }),
+      getFileHandle: async (filename, opts) => {
+        if (!files.has(filename) && !opts?.create) {
+          throw new DOMException('no such file', 'NotFoundError');
+        }
+        return fileHandle(filename);
+      },
+      removeEntry: async (filename) => {
+        if (!files.delete(filename)) throw new DOMException('no such file', 'NotFoundError');
+        T.removed.push(filename);
+      },
+      async *values() {
+        for (const filename of [...files.keys()]) yield fileHandle(filename);
+      },
     };
     // A handle cannot survive being stored, so the store is what gets replaced
     const real = localforage.createInstance.bind(localforage);
@@ -224,6 +247,9 @@ const setupBars = (bars) => page.evaluate(n => window.__t.setupBars(n), bars);
 const writes = () => page.evaluate(() => window.__t.writes || []);
 const fakeFolder = (opts) => page.evaluate(o => window.__t.fakeFolder(o), opts || {});
 const picked = () => page.evaluate(() => window.__t.picked || 0);
+const folderFiles = () => page.evaluate(() => window.__t.folderFiles?.() ?? []);
+const profileNamed = (name) => page.evaluate(async n =>
+  (await import('/src/profiles.js')).listProfiles().find(p => p.name === n) || null, name);
 const makeProfile = async (name) => {
   await page.click('#btn-profiles');
   await page.fill('#profile-new-name', name);
@@ -649,6 +675,61 @@ const writesBefore = (await writes()).length;
 r = await run('a run that beats nothing', [[500, 62]]);
 await page.waitForTimeout(400);
 check('a run that is not a best writes nothing', (await writes()).length, writesBefore);
+
+// ── one profile, one file, and the file follows the profile ──────────────────
+//
+// The file used to be worked out from the name every time it was written, which
+// is two faults at once. Names are not unique — "Anna B." and "Anna B" sanitise
+// to the same thing — and the second profile made silently wrote over the first
+// one's file, taking its bests with it. And a name can change, which would have
+// left the old file behind for the next scan to read back as a second profile.
+//
+// So a profile claims a file when it is made, keeps it in writing, and takes it
+// with it when it is renamed or deleted.
+await closeResults();
+await fakeFolder();
+
+await makeProfile('Anna B.');
+await makeProfile('Anna B');
+const alike = (await folderFiles()).filter(f => f.startsWith('Anna-B'));
+check('two profiles whose names look alike get a file each', alike.length, 2);
+check('...the first of them keeping the plain readable name',
+  alike.includes('Anna-B.miditrain.json'), true);
+check('...and neither written over the other', await page.evaluate(async () => {
+  const { bundleFromJSON } = await import('/src/profiles.js');
+  return window.__t.folderFiles().filter(f => f.startsWith('Anna-B'))
+    .map(f => bundleFromJSON(window.__t.folderFile(f)).profile.name).sort();
+}), ['Anna B', 'Anna B.']);
+
+const wasCalled = (await profileNamed('Anna B')).filename;
+await page.click('#btn-profiles');
+await page.evaluate(() => { window.prompt = () => 'Bernadette'; });
+await page.click('#profile-list .profile-item.active button:text-is("Rename")');
+await page.waitForTimeout(600);
+check('renaming a profile renames its file',
+  (await profileNamed('Bernadette'))?.filename, 'Bernadette.miditrain.json');
+check('...taking what was in the old one across', await page.evaluate(async () => {
+  const { bundleFromJSON } = await import('/src/profiles.js');
+  const text = window.__t.folderFile('Bernadette.miditrain.json');
+  return text ? bundleFromJSON(text).profile.name : '(no such file)';
+}), 'Bernadette');
+check('...and leaving nothing behind at the old name',
+  (await folderFiles()).includes(wasCalled), false);
+
+await page.evaluate(() => { window.confirm = () => true; });
+await page.click('#profile-list .profile-item.active button:text-is("Delete")');
+await page.waitForTimeout(600);
+check('deleting a profile takes its file away too',
+  (await folderFiles()).includes('Bernadette.miditrain.json'), false);
+await page.click('#btn-profile-scan');
+await page.waitForTimeout(800);
+check('...so scanning the folder cannot walk it back in',
+  await page.evaluate(async () =>
+    (await import('/src/profiles.js')).listProfiles().some(p => p.name === 'Bernadette')), false);
+check('every profile has a file to live in', await page.evaluate(async () =>
+  (await import('/src/profiles.js')).listProfiles()
+    .every(p => p.filename?.endsWith('.miditrain.json'))), true);
+await page.click('#btn-close-profiles');
 
 // ── browsing what a profile has done ─────────────────────────────────────────
 //
