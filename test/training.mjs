@@ -61,6 +61,7 @@ await page.evaluate(async () => {
       missed: results.missed, extra: results.extra,
       penalty: results.penalty, total: results.total,
       completed: results.completed,
+      level: results.level,
       // How each written note turned out, and by how much it was late or early
       notes: acc.getAccuracyResults().map(n => [n.grade, Math.round(n.latencyMs ?? 0)]),
       // Every key that went down: when, and what it was counted as
@@ -84,6 +85,16 @@ await page.evaluate(async () => {
     state.composition.tracks = [];
     emit('transport:noteschanged', notes);
     return notes.map(n => [n.startTime, n.pitch]);
+  };
+
+  // Give the piece a dynamic shape without giving it different notes. Whether
+  // professional mode will grade a file at all is decided from its velocities
+  // alone, so the three cases it has to tell apart — a flat export, two levels,
+  // and real playing — are the same fixture with this run over it.
+  T.revelocity = (values) => {
+    state.composition.notes.forEach((n, i) => { n.velocity = values[i % values.length]; });
+    emit('transport:noteschanged', state.composition.notes);
+    return state.composition.notes.map(n => n.velocity);
   };
 
   // The folder the app writes a profile to is a browser handle it can only be
@@ -188,8 +199,8 @@ await page.evaluate(async () => {
     const pending = [...presses];
     const tick = (now) => {
       while (pending.length && pending[0][0] <= now) {
-        const pitch = pending.shift()[1];
-        emit('midi:noteon', { pitch, velocity: 90 });
+        const [, pitch, velocity = 90] = pending.shift();
+        emit('midi:noteon', { pitch, velocity });
       }
       if (now >= stopAt) { offTick(); document.getElementById('btn-stop').click(); }
     };
@@ -216,12 +227,15 @@ await page.evaluate(async () => {
   // driver's. A timer under a busy page drifts by a couple of hundred
   // milliseconds, which is the difference between "perfect" and "almost" and
   // would make every score here a measure of how loaded the machine was.
+  // A press is [when, pitch] — or [when, pitch, velocity] where how hard it was
+  // struck is the point. Left off, it is the 90 every fixture is written at, so
+  // a press with no velocity on it is always dead on the target.
   T.run = (label, presses) => new Promise((resolve) => {
     const pending = [...presses];
     const tick = (now) => {
       while (pending.length && pending[0][0] <= now) {
-        const pitch = pending.shift()[1];
-        emit('midi:noteon', { pitch, velocity: 90 });
+        const [, pitch, velocity = 90] = pending.shift();
+        emit('midi:noteon', { pitch, velocity });
         setTimeout(() => emit('midi:noteoff', { pitch }), 120);
       }
     };
@@ -929,6 +943,141 @@ await page.click('#btn-section-again');
 await page.waitForTimeout(400);
 await page.evaluate(async () => (await import('/src/transport.js')).stop());
 await page.waitForTimeout(300);
+
+// ── professional mode: graded on how hard, as well as on when ────────────────
+//
+// The requirement it has to meet before it does anything useful is that it
+// changes nothing. A run played in professional mode has to come out with the
+// same score, the same stars and the same tallies it would have come out with
+// otherwise — the level rating is a second, separate reading of the same
+// playing, not a re-weighting of the first one.
+//
+// The sharpest way to say that: play every note dead on time and at entirely
+// the wrong volume. If a single number leaked, a hundred per cent and ten stars
+// could not both survive it.
+// The section walk above leaves its own screen up, and Escape is how the app
+// itself gets out of one
+if (await page.locator('#section-modal').isVisible()) {
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(300);
+}
+await closeResults();
+await page.evaluate(() => {
+  document.getElementById('btn-stop').click();
+  if (window.__t.state.ui.learnMode) document.getElementById('btn-learn-mode').click();
+});
+await page.waitForTimeout(400);
+
+// Eighteen notes, every one a different velocity: what a person playing sounds
+// like, as against what a notation export does
+const SHAPED = Array.from({ length: 18 }, (_, i) => 40 + (i * 37) % 68);
+
+const gate = () => page.evaluate(async () => {
+  const { dynamicsIn } = await import('/src/dynamics.js');
+  const { state } = await import('/src/state.js');
+  const d = dynamicsIn(state.composition.notes);
+  return { ok: d.ok, distinct: d.distinct, sd: Math.round(d.sd) };
+});
+const setPro = (on) => page.evaluate(v => window.__t.update('ui.professional', v), on);
+const revelocity = (values) => page.evaluate(v => window.__t.revelocity(v), values);
+
+await setup();
+const grid = await setupBars(6);
+await section(1, 2);
+const inSection = grid.filter(([at]) => at < 4000);
+
+// The three files it has to tell apart, from the one fixture
+check('a file written at one velocity has no dynamics to grade',
+  await gate(), { ok: false, distinct: 1, sd: 0 });
+await revelocity([92, 74]);
+check('nor has one written at two — which is what a generated exercise is',
+  (await gate()).ok, false);
+await revelocity(SHAPED);
+check('a file that was actually played does', await gate(), { ok: true, distinct: 18, sd: 20 });
+
+// Same notes, same times, both runs. The first at the written velocities, the
+// second at a velocity nothing was written at.
+const onTime = inSection.map(([at, pitch]) => [at, pitch]);
+const wrongVolume = inSection.map(([at, pitch], i) => [at, pitch, i % 2 ? 15 : 127]);
+
+await setPro(false);
+const plain = await run('professional mode off', onTime);
+check('an ordinary run carries no level rating', plain.level, null);
+
+await setPro(true);
+const loud = await run('every note on time, every one at the wrong volume', wrongVolume);
+const standard = (r) => ({
+  score: r.score, stars: r.stars, perfect: r.perfect, good: r.good, almost: r.almost,
+  correct: r.correct, missed: r.missed, extra: r.extra, total: r.total,
+  penalty: r.penalty, extrasCharged: r.extrasCharged, completed: r.completed,
+});
+check('a run at entirely the wrong volume still scores what it played', loud.score, 100);
+check('...and still gets all ten stars', loud.stars, 10);
+check('...every standard number of it identical to the same run graded plainly',
+  standard(loud), standard(plain));
+check('...while the level rating says how wrong it was', loud.level.off, loud.level.graded);
+check('...and gives it no stars for that', loud.level.stars, 0);
+
+const right = await run('every note on time and at what was written',
+  inSection.map(([at, pitch], i) => [at, pitch, SHAPED[i]]));
+check('playing what was written is ten level stars', right.level.stars, 10);
+check('...off the same six notes the timing was graded on', right.level.graded, right.level.total);
+check('...with no lean either way', right.level.bias, 0);
+
+const heavy = await run('every note on time, all of them leaned on',
+  inSection.map(([at, pitch], i) => [at, pitch, Math.min(127, SHAPED[i] + 28)]));
+check('a player leaning on everything is one habit, not six mistakes',
+  heavy.level.bias > 20, true);
+check('...and it costs level stars without costing a single point of the score',
+  [heavy.level.stars < 10, heavy.score], [true, 100]);
+
+// The gate again, but from inside a run: the flag is on and the file is flat,
+// so there is nothing to grade and the run says so rather than inventing one
+await revelocity([90]);
+const flat = await run('professional mode on, but the file is flat', onTime);
+check('professional mode on a file with no dynamics grades it the ordinary way',
+  [flat.level, flat.score], [null, 100]);
+await revelocity(SHAPED);
+
+// ── the band itself ──────────────────────────────────────────────────────────
+//
+// Fitted against a real recording rather than picked: +/-perfect at that
+// performance's median velocity of 62 is 7.6, which is that performer's own
+// median note-to-note consistency. Asking for tighter than that is asking for
+// more than the person being copied managed.
+const widths = await page.evaluate(async () => {
+  const { bandWidths } = await import('/src/dynamics.js');
+  const at = (v, opts) => {
+    const b = bandWidths(v, opts);
+    return [b.perfect, b.good, b.almost].map(x => Math.round(x * 10) / 10);
+  };
+  return {
+    mid: at(62),
+    soft: at(20),
+    loud: at(110),
+    scattered: at(62, { localSd: 30 }),
+  };
+});
+check('at the reference median the band is the performer’s own consistency',
+  widths.mid, [7.6, 11.7, 20.7]);
+check('a loud note gets a wider band, because loudness is not linear',
+  widths.loud, [13.4, 20.7, 36.7]);
+check('a soft one would get an unplayable 2.4, so the floor takes over',
+  widths.soft, [5, 5, 6.7]);
+check('and where the reference itself scattered, the band opens to match',
+  widths.scattered, [15, 22.5, 37.5]);
+
+const tiers = await page.evaluate(async () => {
+  const { bandWidths, levelGradeFor } = await import('/src/dynamics.js');
+  const b = bandWidths(62);
+  return [0, 7, 8, 11, 15, 25].map(d => levelGradeFor(d, b));
+});
+check('and the tiers read off it in order',
+  tiers, ['perfect', 'perfect', 'good', 'good', 'almost', 'off']);
+
+await setPro(false);
+await page.evaluate(() => document.getElementById('btn-stop').click());
+await closeResults();
 
 // ── it survives a reload ─────────────────────────────────────────────────────
 // The log lives on the page, and the reload below is about to take it with

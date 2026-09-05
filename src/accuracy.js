@@ -2,6 +2,7 @@
 import { state, update, emit, on } from './state.js';
 import { atOrPast } from './quantizer.js';
 import { isPractised } from './hands.js';
+import { analyseDynamics, levelGradeFor, BANDS_VERSION, DEFAULT_FLOOR } from './dynamics.js';
 
 // Timing tiers, measured from the note's written position
 const PERFECT_MS = 50;
@@ -133,6 +134,11 @@ let playedNotes = [];   // { pitch, time, matched }
 let cleanupFns = [];
 let sessionRange = null; // { startMs, endMs } when training a section
 let sessionBeatMs = 500; // the beat this run was played at
+// The tolerances this run is being judged on, or null when it is an ordinary
+// run. Everything downstream of it is additive: while this is null, not one
+// number in the results is computed differently from before it existed.
+let sessionBands = null;
+let sessionFloor = DEFAULT_FLOOR;
 // After this, the passage is over and keypresses stop being anybody's business
 let sessionEndMs = Infinity;
 
@@ -171,6 +177,29 @@ function afterThePassage(timeMs) {
 // ordinary wobble on top. No amount of playing it right could fix it, because
 // playing it right was what was being punished.
 //
+// ── Professional mode ────────────────────────────────────────────────────────
+// Whether this run is also being judged on how hard each note was struck.
+//
+// The whole of it is additive. A run with it off computes every number exactly
+// as it did before any of this existed, and a run with it on computes those
+// same numbers by the same code and then works out a second, separate block.
+// Nothing in the level block is read by the score, the stars or the extras.
+function professionalWanted() {
+  return state.ui.professional === true;
+}
+
+// The narrowest band anyone is asked to hit. A guess until the player has been
+// measured against their own keyboard, which is what calibration is for — it
+// replaces this with their own reproducibility, and that is the only thing that
+// will ever come through here.
+function levelFloor() {
+  return DEFAULT_FLOOR;
+}
+
+export function professionalActive() {
+  return sessionBands !== null;
+}
+
 // The quantize setting is for notation — how the score is written and how big a
 // step-record step is. It has no business deciding when a note is due.
 export function startAccuracy(composition, range = null) {
@@ -179,6 +208,16 @@ export function startAccuracy(composition, range = null) {
 
   sessionRange = range;
   sessionBeatMs = beatMs;
+  // Worked out from the whole piece before a note is played, and only when this
+  // run is going to be graded on it. A file with no dynamics in it gets no
+  // bands, so asking for professional mode on a flat MIDI export quietly grades
+  // the run the ordinary way rather than inventing a target.
+  const dynamics = professionalWanted()
+    ? analyseDynamics(composition.notes, { floorDelta: levelFloor() })
+    : null;
+  sessionBands = dynamics?.ok ? dynamics.bands : null;
+  sessionFloor = dynamics?.floorDelta ?? DEFAULT_FLOOR;
+
   // Practising one hand grades only that hand. The other one still sounds
   // through playback, which is the point — you play your part against it.
   expectedNotes = composition.notes
@@ -190,6 +229,11 @@ export function startAccuracy(composition, range = null) {
       durationMs: n.duration,
       grade: null,
       latencyMs: null,
+      // How hard it was written to be struck, and how hard it was. Read by the
+      // level block and by nothing else.
+      velocity: n.velocity ?? 90,
+      levelGrade: null,
+      levelDelta: null,
     }))
     .sort((a, b) => a.startTimeMs - b.startTimeMs)
     // Training a section only grades what is inside it
@@ -251,11 +295,20 @@ function checkHit(pitch, time, playedNote) {
     best.grade = gradeFor(bestDist);
     best.latencyMs = time - best.startTimeMs;
     playedNote.matched = true;
+    // Set after the timing grade and never before it, so that whether a note
+    // was struck at the right moment cannot depend on how hard it was struck
+    const band = sessionBands?.get(best.id);
+    if (band) {
+      best.levelDelta = playedNote.velocity - band.target;
+      best.levelGrade = levelGradeFor(best.levelDelta, band);
+    }
     emit('accuracy:note', {
       noteId: best.id,
       pitch: best.pitch,
       grade: best.grade,
       latencyMs: best.latencyMs,
+      levelGrade: best.levelGrade,
+      levelDelta: best.levelDelta,
     });
   } else {
     // Nothing it could have been: a wrong note
@@ -357,7 +410,7 @@ function countGrade(grade) {
 function computeResults() {
   const total = expectedNotes.length;
   if (total === 0) {
-    return { score: 0, stars: 0, perfect: 0, good: 0, almost: 0, correct: 0, missed: 0, extra: 0, avgLatencyMs: 0, total: 0 };
+    return { score: 0, stars: 0, perfect: 0, good: 0, almost: 0, correct: 0, missed: 0, extra: 0, avgLatencyMs: 0, total: 0, level: null };
   }
 
   const perfect = countGrade('perfect');
@@ -380,6 +433,49 @@ function computeResults() {
     // than recomputing a rule it does not own
     penalty: Math.round(extraCost(extra, total).penalty),
     extrasCharged: extraCost(extra, total).dearer,
+    // Null unless this run was being judged on dynamics. Added last and read by
+    // nothing above it: every field before this line is the number an ordinary
+    // run would have produced from the same playing.
+    level: levelResults(),
+  };
+}
+
+// ── How hard it was struck ───────────────────────────────────────────────────
+//
+// Only the notes that were actually played. A note that was missed has no
+// volume to judge, and the timing score has already charged it — charging it
+// again here would be the double-billing this file learned not to do with
+// extras. `coverage` says how much of the passage the rating is speaking for,
+// so a rating off three notes of forty cannot be read as a rating of the run.
+//
+// Extras are not charged here either, for the same reason: a wrong note is a
+// wrong note once, and it is already priced in the score and the stars.
+function levelResults() {
+  if (!sessionBands) return null;
+
+  const struck = expectedNotes.filter(n => n.levelGrade !== null);
+  const count = (grade) => struck.filter(n => n.levelGrade === grade).length;
+  const perfect = count('perfect');
+  const good = count('good');
+  const almost = count('almost');
+  const off = count('off');
+
+  const deltas = struck.map(n => n.levelDelta);
+  const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+
+  return {
+    bandsVersion: BANDS_VERSION,
+    floorDelta: sessionFloor,
+    perfect, good, almost, off,
+    graded: struck.length,
+    total: expectedNotes.length,
+    coverage: expectedNotes.length ? struck.length / expectedNotes.length : 0,
+    stars: starsFromCounts({ perfect, good, almost, total: struck.length }),
+    // How far off, and — the more useful of the two for practising — which way.
+    // A player whose bias is +14 is leaning on everything, which is one habit
+    // to fix rather than a hundred separate notes to correct.
+    meanAbsDelta: Math.round(mean(deltas.map(Math.abs))),
+    bias: Math.round(mean(deltas)),
   };
 }
 
