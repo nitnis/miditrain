@@ -144,6 +144,22 @@ shaping buys them back.
 The check for it plays a run two stars better on shaping and one worse in time,
 and asserts that it does *not* take the record.
 
+### Reading a drawing back off the canvas
+
+Whether a note is drawn as loud as it is meant to be played is asked of the
+canvas, not of the formula that decides it: draw one note, scan the row just
+above the hit line, and count the lit pixels. That is the only version of the
+question worth asking — the formula was right for a while before the drawing
+was, because most of a real performance sits between the piece's own soft and
+loud and looked unchanged.
+
+The fixture for it needs the *rest* of the piece too, parked out beyond the
+window. A piece has no dynamic scale to draw against until it has dynamics, and
+three notes do not make one.
+
+The same goes for the synth: how much louder a fortissimo is than a pianissimo
+is measured by rendering both and comparing them, not by reading the curve.
+
 ### Calibration is checked by playing the piece correctly and badly at once
 
 The calibration screen listens to the same `midi:noteon` as everything else, so

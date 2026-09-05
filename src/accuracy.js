@@ -540,6 +540,11 @@ export function getAccuracyResults() {
     // Kept for callers that only care whether it counted as a hit
     hit: n.grade === 'perfect' || n.grade === 'good',
     latencyMs: n.latencyMs,
+    // Null on every note of an ordinary run. Read for drawing rather than for
+    // scoring, and never stored — a run's dynamics are summarised in the level
+    // block, and this is the note-by-note working behind it.
+    levelGrade: n.levelGrade,
+    levelDelta: n.levelDelta,
   }));
 }
 
