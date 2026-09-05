@@ -11,7 +11,10 @@ import {
 } from './section-learn.js';
 import { saveComposition, listCompositions, deleteComposition, compositionToJSON, compositionFromJSON } from './storage.js';
 import { compositionToMidi, midiToComposition } from './midi-file.js';
-import { startAccuracy, stopAccuracy, getWorstSection, getTake, STAR_COUNT } from './accuracy.js';
+import {
+  startAccuracy, stopAccuracy, getWorstSection, getTake, STAR_COUNT,
+  professionalWouldGrade,
+} from './accuracy.js';
 import { startMetronome, stopMetronome } from './metronome.js';
 import { resumeAudioContext, applyOutputLevel, applyClicksOnly, silenceMonitored, setPlaybackSource } from './audio.js';
 import { setInputEnabled } from './midi.js';
@@ -1007,8 +1010,9 @@ function renderBestsTree(profile) {
   const tree = bestsTree(profile);
   host.innerHTML = '';
 
-  const total = tree.reduce((n, s) => n + s.hands.reduce(
+  const runsIn = (songs) => songs.reduce((n, s) => n + s.hands.reduce(
     (m, h) => m + h.speeds.reduce((k, v) => k + v.runs.length, 0), 0), 0);
+  const total = tree.reduce((n, branch) => n + runsIn(branch.songs), 0);
   document.getElementById('bests-title').textContent = `${profile.name} · best runs`;
   document.getElementById('bests-sub').textContent = total
     ? 'Open a piece to see what it has been played at. Load puts the piece, the hand, the speed and the bars back where they were, and plays the run.'
@@ -1034,28 +1038,44 @@ function renderBestsTree(profile) {
     return el;
   };
 
-  for (const song of tree) {
-    const runsHere = song.hands.reduce(
-      (m, h) => m + h.speeds.reduce((k, v) => k + v.runs.length, 0), 0);
-    const songEl = detail('bests-song', song.songName, runsHere);
-    // One piece opens by itself, because opening it is then the only thing
-    // there is to do
-    songEl.open = tree.length === 1;
+  // What was being asked of the player is the outermost division, above the
+  // piece. Only shown as a branch when there is more than one of them: a
+  // profile that has never trained on dynamics should look exactly as it did.
+  const branched = tree.length > 1;
 
-    for (const hand of song.hands) {
-      const handEl = detail('bests-hand', HAND_NAMES[hand.hand] || hand.hand);
-      for (const speed of hand.speeds) {
-        const speedEl = detail('bests-speed', `${speed.bpm} BPM`);
-        for (const run of speed.runs) {
-          speedEl.appendChild(bestRow(run));
+  for (const branch of tree) {
+    const songs = branch.songs;
+    const into = branched
+      ? detail('bests-mode', MODE_NAMES[branch.mode] || branch.mode, runsIn(songs))
+      : host;
+    if (branched) into.open = branch.mode === 'standard';
+
+    for (const song of songs) {
+      const runsHere = song.hands.reduce(
+        (m, h) => m + h.speeds.reduce((k, v) => k + v.runs.length, 0), 0);
+      const songEl = detail('bests-song', song.songName, runsHere);
+      // One piece opens by itself, because opening it is then the only thing
+      // there is to do
+      songEl.open = !branched && songs.length === 1;
+
+      for (const hand of song.hands) {
+        const handEl = detail('bests-hand', HAND_NAMES[hand.hand] || hand.hand);
+        for (const speed of hand.speeds) {
+          const speedEl = detail('bests-speed', `${speed.bpm} BPM`);
+          for (const run of speed.runs) {
+            speedEl.appendChild(bestRow(run));
+          }
+          handEl.appendChild(speedEl);
         }
-        handEl.appendChild(speedEl);
+        songEl.appendChild(handEl);
       }
-      songEl.appendChild(handEl);
+      into.appendChild(songEl);
     }
-    host.appendChild(songEl);
+    if (branched) host.appendChild(into);
   }
 }
+
+const MODE_NAMES = { standard: 'Standard', pro: 'Professional — graded on dynamics too' };
 
 function bestRow(run) {
   const row = document.createElement('div');
@@ -1068,10 +1088,23 @@ function bestRow(run) {
   const stars = document.createElement('span');
   stars.className = 'bests-stars';
   stars.textContent = run.stars == null ? '—' : `★ ${starText(run.stars)}`;
+  stars.title = 'How the notes were timed';
 
   const score = document.createElement('span');
   score.className = 'bests-score';
   score.textContent = `${run.score}%`;
+
+  // The second rating, on the rows that have one. Kept as its own thing rather
+  // than added to the stars: they measure different playing.
+  let level = null;
+  if (run.level) {
+    level = document.createElement('span');
+    level.className = `bests-level${run.level.calibrated ? '' : ' uncalibrated'}`;
+    level.textContent = `♪ ${starText(run.level.stars)}`;
+    level.title = run.level.calibrated
+      ? 'How the notes were shaped, measured against your own keyboard'
+      : 'How the notes were shaped — set before this keyboard was calibrated';
+  }
 
   const when = document.createElement('span');
   when.className = 'bests-when';
@@ -1088,7 +1121,7 @@ function bestRow(run) {
     : 'This run was too long to keep a recording of';
   load.onclick = () => loadBestRun(run.key);
 
-  row.append(bars, stars, score, when, load);
+  row.append(bars, stars, ...(level ? [level] : []), score, when, load);
   return row;
 }
 
@@ -1130,6 +1163,12 @@ async function loadBestRun(key) {
 
   update('ui.practiceHand', at.hand);
   document.getElementById('practice-hand').value = at.hand;
+
+  // A professional best cannot be beaten by an ordinary run, so loading one
+  // arms the mode it was set in. Going the other way matters just as much: a
+  // standard best loaded with the mode left on would file the retry under the
+  // professional key and leave the record it was meant to beat untouched.
+  update('ui.professional', at.mode === 'pro');
 
   const bars = at.bars === 'all' ? null : {
     startBar: parseInt(at.bars.split('-')[0], 10),
@@ -2294,6 +2333,10 @@ function keyForRun(bars) {
     bars,
     hand: practiceHand(),
     bpm: effectiveBpm(),
+    // A run graded on dynamics is an attempt at a different thing, and is filed
+    // under it. Asked of the same rule the run itself will use, so the key and
+    // the grading cannot disagree about which it was.
+    mode: professionalWouldGrade(state.composition) ? 'pro' : 'standard',
   });
 }
 
@@ -4160,6 +4203,12 @@ function updateChordOverlay() {
 function cheerFor(best, previous) {
   const stars = best.stars ?? 0;
   if (!previous) return `${starText(stars)} stars — that is the bar to beat`;
+  // The rarest thing this app can say, and it should not be said for a run that
+  // only got the timing right when the dynamics were being graded too
+  if (stars >= STAR_COUNT && best.level && best.level.stars >= STAR_COUNT) {
+    return 'Flawless. Every note dead on, and shaped exactly 🎉';
+  }
+  if (stars >= STAR_COUNT && best.level) return 'Every note dead on — now for the shaping 🎉';
   if (stars >= STAR_COUNT) return 'Flawless. Every note dead on 🎉';
   if (stars >= 9) return 'New personal best — outstanding 🎉';
   if (stars >= 7) return 'New personal best 🎉';
@@ -4225,7 +4274,14 @@ function showBestLine() {
   // better one and what the screen above says. The percentage rides along,
   // where it can be seen to disagree without being mistaken for the thing
   // being beaten.
-  const rating = (b) => b.stars == null ? `<b>${b.score}%</b>` : `<b>${starText(b.stars)}</b> stars`;
+  // A professional best is rated on both, and both are said — otherwise a run
+  // that beat the standing best on dynamics alone reads as having beaten a
+  // record it appears to have tied.
+  const rating = (b) => {
+    if (b.stars == null) return `<b>${b.score}%</b>`;
+    const timing = `<b>${starText(b.stars)}</b> stars`;
+    return b.level ? `${timing} and <b>${starText(b.level.stars)}</b> on dynamics` : timing;
+  };
 
   if (lastAbandoned) {
     // Said rather than left to be noticed: a run that scored well on the part
@@ -4271,6 +4327,31 @@ function showStars(value) {
   document.getElementById('star-value').textContent = starText(value);
 }
 
+// How the notes were shaped, said separately from how they were timed.
+//
+// The lean is the useful half. A player at +18 is leaning on everything, which
+// is one habit to take away and work on rather than forty notes that were each
+// individually wrong.
+function showLevelLine(level) {
+  const line = document.getElementById('level-line');
+  line.classList.toggle('hidden', !level || !level.graded);
+  if (!level || !level.graded) return;
+
+  document.getElementById('level-stars').textContent = `♪ ${starText(level.stars)} / ${STAR_COUNT}`;
+
+  const lean = level.bias > 2 ? `leaning ${level.bias} too hard`
+    : level.bias < -2 ? `holding back by ${-level.bias}`
+    : 'evenly balanced';
+  const parts = [
+    `dynamics · ${level.perfect} on the mark, ${level.off} well off`,
+    lean,
+  ];
+  // Worth saying, because it is the difference between a rating of this player
+  // and a rating of whatever keyboard they happen to be sitting at
+  if (!level.calibrated) parts.push('not calibrated to this keyboard');
+  document.getElementById('level-detail').textContent = parts.join(' · ');
+}
+
 function showAccuracyResults(results) {
   lastResults = results;
   const modal = document.getElementById('accuracy-modal');
@@ -4303,6 +4384,7 @@ function showAccuracyResults(results) {
     arc.style.stroke = score >= 80 ? '#2ecc71' : score >= 50 ? '#f1c40f' : '#e74c3c';
   }
 
+  showLevelLine(results.level);
   showBestLine();
   syncResultsSectionButtons();
 

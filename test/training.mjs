@@ -1089,6 +1089,148 @@ const tiers = await page.evaluate(async () => {
 check('and the tiers read off it in order',
   tiers, ['perfect', 'perfect', 'good', 'good', 'almost', 'off']);
 
+// ── a professional best is a different achievement ───────────────────────────
+//
+// Not a harder attempt at the same thing: a different thing being asked. A run
+// graded on dynamics has nothing to prove against one that was not, so they are
+// filed apart and shown apart.
+const keys = () => page.evaluate(async () =>
+  Object.keys((await import('/src/profiles.js')).current().bests || {}).sort());
+
+await page.evaluate(async () => {
+  const { createProfile } = await import('/src/profiles.js');
+  createProfile('Two ways of playing');
+});
+await setup();
+await setupBars(6);
+await revelocity(SHAPED);
+await section(1, 2);
+const sixNotes = await page.evaluate(async () =>
+  (await import('/src/state.js')).state.composition.notes
+    .filter(n => n.startTime < 4000).map(n => [n.startTime, n.pitch, n.velocity]));
+
+await setPro(false);
+await run('an ordinary run, on a profile of its own', sixNotes.map(([t, p]) => [t, p]));
+await setPro(true);
+await run('the same passage, graded on dynamics too', sixNotes);
+
+const filed = await keys();
+check('the two runs are filed under keys of their own',
+  [filed.length, filed[1] === `${filed[0]}|pro`], [2, true]);
+check('a key written before there were modes still reads as the ordinary one',
+  await page.evaluate(async () => {
+    const { parseTrainingKey } = await import('/src/profiles.js');
+    return [parseTrainingKey('Prelude | No. 2|1-4|left|60').mode,
+            parseTrainingKey('Prelude | No. 2|1-4|left|60|pro').mode,
+            parseTrainingKey('Prelude | No. 2|1-4|left|60|pro').songName];
+  }), ['standard', 'pro', 'Prelude | No. 2']);
+
+const both = await page.evaluate(async () =>
+  (await import('/src/profiles.js')).current().bests);
+check('only the professional one carries a dynamics rating',
+  [both[filed[0]].level, both[filed[1]].level !== null], [null, true]);
+check('...and it records which rules judged it', both[filed[1]].level.bandsVersion, 1);
+
+// ── which run is the better one ──────────────────────────────────────────────
+//
+// The notes come first, and only among runs that played them equally well does
+// the shaping decide. Adding the two ratings together was tried and is wrong:
+// the dynamics rating is taken over the notes actually struck, so a run that
+// hit three of forty and shaped those three beautifully rates ten on dynamics,
+// and a sum would let it beat a run that played the passage.
+const rank = await page.evaluate(async () => {
+  const { createProfile, rememberBest, trainingKey, bestFor } = await import('/src/profiles.js');
+  createProfile('Ranking under test');
+  const key = trainingKey({ songName: 'X', bars: null, hand: 'both', bpm: 120, mode: 'pro' });
+  const run = (stars, levelStars, score, bandsVersion = 1) => ({
+    score, stars, perfect: 6, good: 0, almost: 0, missed: 0, extra: 0,
+    total: 6, avgLatencyMs: 20, tempo: 120, take: null,
+    level: { bandsVersion, stars: levelStars, perfect: 6, good: 0, almost: 0, off: 0,
+             graded: 6, total: 6, meanAbsDelta: 2, bias: 0, floorDelta: 5, calibrated: true },
+  });
+  const out = {};
+  rememberBest(key, run(9, 5, 100));
+  out.betterShaping = rememberBest(key, run(9, 7, 100));       // same notes, shaped better
+  out.afterBetter = bestFor(key).level.stars;
+  out.worseShaping = rememberBest(key, run(9, 6, 100));        // a step back
+  // Better shaped by two, worse timed by one. Under a sum this would win.
+  out.louderButLater = rememberBest(key, run(8, 9, 100));
+  out.timingStillWins = bestFor(key).stars;
+  // A rating judged by rules that have since moved cannot be compared on
+  out.otherRules = rememberBest(key, run(9, 10, 100, 99));
+  out.stoodItsGround = bestFor(key).level.stars;
+  return out;
+});
+check('a run that shaped the same notes better takes the record', rank.betterShaping, true);
+check('...and the record says so', rank.afterBetter, 7);
+check('a step back on the shaping does not', rank.worseShaping, false);
+check('nor does better shaping bought with worse timing', rank.louderButLater, false);
+check('...because the notes come first', rank.timingStillWins, 9);
+check('a rating measured by rules that have since changed is not compared on',
+  [rank.otherRules, rank.stoodItsGround], [false, 7]);
+
+// The rating has to survive the trip to disk and back, or a professional best
+// would quietly become an ordinary one the next time the app opened
+// `adoptProfile` is the door a profile file actually comes through, and the one
+// that validates it
+check('a dynamics rating written out and read back is the same rating',
+  await page.evaluate(async () => {
+    const { bundleToJSON, bundleFromJSON, current, adoptProfile } = await import('/src/profiles.js');
+    const raw = bundleFromJSON(bundleToJSON({ profile: current() })).profile;
+    const back = adoptProfile(raw);
+    return back.bests[Object.keys(back.bests).find(k => k.endsWith('|pro'))].level;
+  }),
+  { bandsVersion: 1, stars: 7, perfect: 6, good: 0, almost: 0, off: 0, graded: 6,
+    total: 6, meanAbsDelta: 2, bias: 0, floorDelta: 5, calibrated: true });
+check('...and one with no rules recorded is not trusted as one',
+  await page.evaluate(async () => {
+    const { bundleToJSON, current, adoptProfile } = await import('/src/profiles.js');
+    const raw = JSON.parse(bundleToJSON({ profile: current() })).profile;
+    delete raw.bests[Object.keys(raw.bests).find(k => k.endsWith('|pro'))].level.bandsVersion;
+    const back = adoptProfile(raw);
+    return back.bests[Object.keys(back.bests).find(k => k.endsWith('|pro'))].level;
+  }), null);
+
+// ── and it is shown apart ────────────────────────────────────────────────────
+await closeResults();
+await page.evaluate(async () => {
+  const { switchProfile, listProfiles } = await import('/src/profiles.js');
+  switchProfile(listProfiles().find(p => p.name === 'Two ways of playing').id);
+});
+await page.click('#btn-profiles');
+await page.waitForTimeout(300);
+await page.locator('.profile-item.active .profile-open').click();
+await page.waitForTimeout(400);
+await page.evaluate(() => document.querySelectorAll('#bests-tree details').forEach(d => { d.open = true; }));
+await page.waitForTimeout(200);
+check('the tree grows a branch for each, the ordinary one first',
+  await page.evaluate(() => [...document.querySelectorAll('.bests-mode > summary')]
+    .map(s => s.firstChild.textContent)),
+  ['Standard', 'Professional — graded on dynamics too']);
+check('...and only the professional rows carry the second rating',
+  await page.evaluate(() => [...document.querySelectorAll('.bests-mode')]
+    .map(m => m.querySelectorAll('.bests-level').length)), [0, 1]);
+
+// Loading a best arms the mode it was set in — a standard best retried with the
+// mode left on would file the retry somewhere the record it meant to beat is not
+await page.locator('.bests-mode').nth(1).locator('.bests-run button').click();
+await page.waitForTimeout(900);
+check('loading a professional best arms professional mode',
+  await page.evaluate(() => window.__t.state.ui.professional), true);
+await page.evaluate(() => document.getElementById('btn-stop').click());
+await closeResults();
+await page.click('#btn-profiles');
+await page.waitForTimeout(250);
+await page.locator('.profile-item.active .profile-open').click();
+await page.waitForTimeout(400);
+await page.evaluate(() => document.querySelectorAll('#bests-tree details').forEach(d => { d.open = true; }));
+await page.locator('.bests-mode').nth(0).locator('.bests-run button').click();
+await page.waitForTimeout(900);
+check('...and loading an ordinary one disarms it again',
+  await page.evaluate(() => window.__t.state.ui.professional), false);
+await page.evaluate(() => document.getElementById('btn-stop').click());
+await closeResults();
+
 // ── calibration: whose keyboard is being graded ──────────────────────────────
 //
 // Velocity is not a measurement of anything physical — it is whatever a keybed
