@@ -219,6 +219,7 @@ function applyStateToControls() {
   document.getElementById('btn-beat-overlay').classList.toggle('active', ui.showBeatOverlay);
   document.getElementById('btn-chord-overlay').classList.toggle('active', ui.showChordOverlay);
   document.getElementById('btn-count-overlay').classList.toggle('active', ui.showCountOverlay);
+  document.getElementById('btn-pedal-overlay').classList.toggle('active', ui.showPedal);
   document.getElementById('btn-fingering').classList.toggle('active', ui.showFingering);
   document.getElementById('btn-suggest-fingering').classList.toggle('active', ui.suggestFingering);
   document.getElementById('btn-hand-overlay').classList.toggle('active', ui.handOverlay);
@@ -1121,7 +1122,16 @@ function bestRow(run) {
     : 'This run was too long to keep a recording of';
   load.onclick = () => loadBestRun(run.key);
 
-  row.append(bars, stars, ...(level ? [level] : []), score, when, load);
+  let feet = null;
+  if (run.pedal) {
+    feet = document.createElement('span');
+    feet.className = 'bests-level';
+    feet.textContent = `Ped. ${starText(run.pedal.stars)}`;
+    feet.title = 'How the pedalling was timed';
+  }
+
+  row.append(bars, stars, ...(level ? [level] : []), ...(feet ? [feet] : []),
+             score, when, load);
   return row;
 }
 
@@ -2168,6 +2178,7 @@ const OVERLAYS = {
   beat:      { path: 'ui.showBeatOverlay',  button: 'btn-beat-overlay',  on: 'Beat counter on',  off: 'Beat counter off' },
   chord:     { path: 'ui.showChordOverlay', button: 'btn-chord-overlay', on: 'Chord names on',   off: 'Chord names off' },
   count:     { path: 'ui.showCountOverlay', button: 'btn-count-overlay', on: 'Counting the bar out', off: 'Counting off' },
+  pedal:     { path: 'ui.showPedal',        button: 'btn-pedal-overlay', on: 'Pedalling shown',  off: 'Pedalling hidden' },
   // The falling notes are redrawn every frame and pick their overlays up for
   // free; the score is drawn on demand and has to be asked again
   fingering: { path: 'ui.showFingering',    button: 'btn-fingering',     on: 'Fingering on',     off: 'Fingering off', redrawsSheet: true },
@@ -2185,6 +2196,10 @@ function toggleOverlay(which) {
   // that the piece simply has nothing to show. Say so, and say what would.
   if (shown && which === 'fingering' && !fingeringAvailable()) {
     showToast('Fingering on — this piece has none written. Turn on Suggest for an automated one.', 3000);
+    return;
+  }
+  if (shown && which === 'pedal' && !hasPedal(state.composition.pedal)) {
+    showToast('Pedalling on — this piece carries none. A performance recorded from a real instrument usually does.', 3600);
     return;
   }
   showToast(shown ? on : off, 1200);
@@ -2779,6 +2794,7 @@ function bindToolbar() {
   document.getElementById('btn-beat-overlay').onclick = () => toggleOverlay('beat');
   document.getElementById('btn-chord-overlay').onclick = () => toggleOverlay('chord');
   document.getElementById('btn-count-overlay').onclick = () => toggleOverlay('count');
+  document.getElementById('btn-pedal-overlay').onclick = () => toggleOverlay('pedal');
   document.getElementById('btn-fingering').onclick = () => {
     toggleOverlay('fingering'); syncFingeringGuessNote(); syncHandStage();
   };
@@ -3434,6 +3450,10 @@ function shortcutActions() {
       section: 'Options', label: 'Count the bar out over the falling notes',
       defaultBindings: [{ code: 'KeyN', shift: true }],
       run: () => toggleOverlay('count') },
+    { id: 'pedal-overlay', group: 'global', hint: 'btn-pedal-overlay',
+      section: 'Options', label: 'Show the pedalling over the falling notes',
+      defaultBindings: [{ code: 'KeyP', shift: true }],
+      run: () => toggleOverlay('pedal') },
     { id: 'fingering', group: 'global', hint: 'btn-fingering',
       section: 'Options', label: 'Show fingering on the keyboard',
       defaultBindings: [{ code: 'KeyF', shift: true }],
@@ -4418,6 +4438,31 @@ function drawLevelStrip(level) {
   });
 }
 
+// What the feet were worth. The lean is the coaching number again: a player
+// consistently late on the pedal is holding the last harmony into the next one,
+// which is one habit and one thing to fix.
+function showPedalLine(pedal) {
+  const line = document.getElementById('pedal-line');
+  line.classList.toggle('hidden', !pedal || !pedal.total);
+  if (!pedal || !pedal.total) return;
+
+  // "Ped." is what a score says, and it renders in every font. The musical
+  // pedal glyph is outside the basic planes and comes out as whatever the
+  // system has lying at that code point.
+  document.getElementById('pedal-stars').textContent =
+    `Ped. ${starText(pedal.stars)} / ${STAR_COUNT}`;
+  const lean = pedal.biasMs > 40 ? `${pedal.biasMs} ms late`
+    : pedal.biasMs < -40 ? `${-pedal.biasMs} ms early`
+    : 'on the harmony';
+  const parts = [
+    `pedal · ${pedal.perfect} of ${pedal.total} changes clean`,
+    lean,
+    `down alongside the piece ${pedal.held}% of the passage`,
+  ];
+  if (pedal.extra) parts.push(`${pedal.extra} the passage did not ask for`);
+  document.getElementById('pedal-detail').textContent = parts.join(' \u00b7 ');
+}
+
 function showAccuracyResults(results) {
   lastResults = results;
   const modal = document.getElementById('accuracy-modal');
@@ -4451,6 +4496,7 @@ function showAccuracyResults(results) {
   }
 
   showLevelLine(results.level);
+  showPedalLine(results.pedal);
   showBestLine();
   syncResultsSectionButtons();
 

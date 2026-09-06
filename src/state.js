@@ -51,6 +51,7 @@ const _state = {
     showBeatOverlay: true,  // the beat counter over the falling notes, seen without being heard
     showChordOverlay: true, // the name of the chord under the playhead
     showCountOverlay: true, // the bar counted out in syllables — 1 e & a 2 e & a
+    showPedal: true,        // the pedalling washed over the falling notes, where the piece has any
     showFingering: true,    // finger numbers on the keys, where the exercise carries them
     suggestFingering: false, // work out a fingering for a piece that has none: a guess, off by default
     handOverlay: false,     // draw hands on the keys instead of finger numbers

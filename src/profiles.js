@@ -197,6 +197,26 @@ function sanitiseLevel(raw) {
   };
 }
 
+// What the feet were worth, kept with the run. Its own version, because the
+// pedal windows can move independently of the dynamics bands and a rating is
+// only comparable with one measured the same way.
+function sanitisePedalRating(raw) {
+  if (!raw || typeof raw !== 'object' || !Number.isFinite(raw.version)) return null;
+  if (!Number.isFinite(raw.stars)) return null;
+  return {
+    version: int(raw.version, 0, 1e6, 0),
+    stars: Math.min(10, Math.max(0, Math.round(raw.stars * 4) / 4)),
+    perfect: int(raw.perfect, 0, 1e6, 0),
+    good: int(raw.good, 0, 1e6, 0),
+    almost: int(raw.almost, 0, 1e6, 0),
+    missed: int(raw.missed, 0, 1e6, 0),
+    extra: int(raw.extra, 0, 1e6, 0),
+    total: int(raw.total, 0, 1e6, 0),
+    biasMs: int(raw.biasMs, -5000, 5000, 0),
+    held: int(raw.held, 0, 100, 0),
+  };
+}
+
 function sanitiseBests(raw) {
   if (!raw || typeof raw !== 'object') return {};
   const out = {};
@@ -237,6 +257,7 @@ function sanitiseBests(raw) {
       at: Number.isFinite(value.at) ? value.at : Date.now(),
       take: sanitiseTake(value.take),
       level: sanitiseLevel(value.level),
+      pedal: sanitisePedalRating(value.pedal),
     };
   }
   return capBests(out);
@@ -493,6 +514,11 @@ function sameBands(run, standing) {
     && run.level.bandsVersion === standing.level.bandsVersion;
 }
 
+function samePedalRules(run, standing) {
+  return Number.isFinite(run.pedal?.stars) && Number.isFinite(standing.pedal?.stars)
+    && run.pedal.version === standing.pedal.version;
+}
+
 function beats(run, standing) {
   // A record with no stars and no tallies to work them out from cannot be rated
   // at all. It yields to one that can be, as soon as it is matched, rather than
@@ -515,6 +541,11 @@ function beats(run, standing) {
   if (run.stars !== standing.stars) return run.stars > standing.stars;
   if (sameBands(run, standing) && run.level.stars !== standing.level.stars) {
     return run.level.stars > standing.level.stars;
+  }
+  // ...and then the feet, on the same principle: a run is only judged on the
+  // finer thing once the coarser one has been matched.
+  if (samePedalRules(run, standing) && run.pedal.stars !== standing.pedal.stars) {
+    return run.pedal.stars > standing.pedal.stars;
   }
   return run.score > standing.score;
 }
@@ -546,6 +577,7 @@ export function rememberBest(key, run) {
     // Null on an ordinary run, and the whole of what professional mode made of
     // this one otherwise
     level: sanitiseLevel(run.level),
+    pedal: sanitisePedalRating(run.pedal),
   };
   profile.bests = capBests(profile.bests);
   profile.updatedAt = Date.now();

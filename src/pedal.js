@@ -87,13 +87,161 @@ export function hasPedal(events, pedal = null) {
 
 // What a pedal is at, at a moment. The last thing said about it before then,
 // and zero if nothing has been said yet.
+//
+// Found rather than scanned to, because the gauge asks this of every frame and
+// walking a real performance's thousands of events from the beginning each time
+// gets slower the further into the piece you are.
 export function pedalAt(events, timeMs, pedal = 'sustain') {
-  let value = 0;
-  for (const e of events) {
-    if (e.time > timeMs) break;
-    if (e.pedal === pedal) value = e.value;
+  if (!events?.length) return 0;
+  let lo = 0;
+  let hi = events.length - 1;
+  let at = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (events[mid].time <= timeMs) { at = mid; lo = mid + 1; } else hi = mid - 1;
   }
-  return value;
+  for (let i = at; i >= 0; i--) {
+    if (events[i].pedal === pedal) return events[i].value;
+  }
+  return 0;
+}
+
+// ── What the drawing needs ───────────────────────────────────────────────────
+//
+// The stretch of one pedal's events that a window of time covers, and the one
+// before it — without that first one the window would start at nothing, and a
+// pedal held down across the whole of it would draw as up.
+//
+// A binary search rather than a filter because this runs on every frame of the
+// falling notes and a real performance holds thousands of events.
+export function pedalSlice(events, fromMs, toMs, pedal = 'sustain') {
+  const out = [];
+  if (!events?.length) return out;
+
+  let lo = 0;
+  let hi = events.length - 1;
+  let at = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (events[mid].time <= fromMs) { at = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  // Back up to the last event of this pedal at or before the window opens
+  let before = null;
+  for (let i = at; i >= 0; i--) {
+    if (events[i].pedal === pedal) { before = events[i]; break; }
+  }
+  if (before) out.push(before);
+  for (let i = at; i < events.length && events[i].time < toMs; i++) {
+    if (events[i].pedal === pedal && events[i] !== before) out.push(events[i]);
+  }
+  return out;
+}
+
+// ── Grading the feet ─────────────────────────────────────────────────────────
+//
+// What is graded is the *changes*: the moments the damper leaves the strings
+// and the moments it comes back. Not whether the pedal was down at each instant
+// — the recording this was built against has its damper up for 60% of its
+// length, so holding the pedal down from beginning to end would score 60% and
+// doing nothing at all would score 40%, and neither is pedalling.
+//
+// The changes are where the skill is. Lifting on the new harmony and pressing
+// again just after it has sounded is the whole of what a pianist is taught
+// about the sustain pedal, and it is a matter of a tenth of a second either
+// way. That is a thing worth being graded on, and it grades like a note does.
+export const PEDAL_GRADE_VERSION = 1;
+
+// Wider than the note windows, and deliberately. A pedal change is placed
+// against a harmony rather than against a beat, and the reference is a person
+// rather than a grid — the recording's own presses sit a tenth of a second
+// after the chords they catch. Tighter than the shortest presses in it, though:
+// the shortest twentieth are 119 ms apart, and a window wider than the gap
+// between two changes would let one keypress answer both.
+export const PEDAL_PERFECT_MS = 110;
+export const PEDAL_GOOD_MS = 240;
+export const PEDAL_ALMOST_MS = 480;
+
+// The moments the damper moves, within a stretch of time. A press is up going
+// down and a lift is down coming up; the value in between is not a change.
+export function pedalChanges(events, fromMs = 0, toMs = Infinity, pedal = 'sustain') {
+  const out = [];
+  let down = false;
+  for (const e of events || []) {
+    if (e.pedal !== pedal) continue;
+    const nowDown = e.value >= PEDAL_DOWN_AT;
+    if (nowDown === down) continue;
+    down = nowDown;
+    if (e.time >= fromMs && e.time < toMs) out.push({ time: e.time, down });
+  }
+  return out;
+}
+
+const pedalGradeFor = (off) => (off <= PEDAL_PERFECT_MS ? 'perfect'
+  : off <= PEDAL_GOOD_MS ? 'good' : 'almost');
+
+// Each expected change against the earliest unclaimed one the player made in
+// the same direction.
+//
+// Earliest unclaimed rather than nearest, for the reason the note grading
+// already learned: a player uniformly late by a fraction of a second is closer
+// to the *next* change than to the one they were answering, and matching on
+// distance shunts the whole run along by one and leaves the last change
+// unanswered.
+export function gradePedalChanges(expected, played) {
+  const taken = new Array(played.length).fill(false);
+  const graded = [];
+
+  for (const want of expected) {
+    let at = -1;
+    for (let i = 0; i < played.length; i++) {
+      if (taken[i] || played[i].down !== want.down) continue;
+      if (Math.abs(played[i].time - want.time) > PEDAL_ALMOST_MS) continue;
+      at = i;
+      break;
+    }
+    if (at === -1) { graded.push({ ...want, grade: 'miss', deltaMs: null }); continue; }
+    taken[at] = true;
+    const deltaMs = Math.round(played[at].time - want.time);
+    graded.push({ ...want, grade: pedalGradeFor(Math.abs(deltaMs)), deltaMs });
+  }
+
+  const count = (g) => graded.filter(x => x.grade === g).length;
+  const deltas = graded.filter(x => x.deltaMs !== null).map(x => x.deltaMs);
+  return {
+    graded,
+    perfect: count('perfect'), good: count('good'), almost: count('almost'),
+    missed: count('miss'),
+    // Changes the player made that answered nothing. A foot going up and down
+    // through a passage that asked for neither is its own kind of wrong.
+    extra: taken.filter(t => !t).length,
+    total: expected.length,
+    // Which way they were out, not only how far. Consistently late is one habit
+    // to correct; scattered either side is a lack of control.
+    biasMs: deltas.length ? Math.round(deltas.reduce((a, b) => a + b, 0) / deltas.length) : 0,
+  };
+}
+
+// How much of the passage the two agreed about, damper up or damper down.
+// Reported rather than scored — it is dominated by doing nothing, which is
+// exactly why the changes are what gets graded.
+export function heldShare(expected, played, fromMs, toMs) {
+  const span = toMs - fromMs;
+  if (!(span > 0)) return 0;
+  const edges = [...new Set([fromMs, toMs,
+    ...expected.map(c => c.time), ...played.map(c => c.time)])]
+    .filter(t => t >= fromMs && t <= toMs)
+    .sort((a, b) => a - b);
+  const stateAt = (changes, t) => {
+    let down = false;
+    for (const c of changes) { if (c.time > t) break; down = c.down; }
+    return down;
+  };
+  let agreed = 0;
+  for (let i = 0; i < edges.length - 1; i++) {
+    const mid = (edges[i] + edges[i + 1]) / 2;
+    if (stateAt(expected, mid) === stateAt(played, mid)) agreed += edges[i + 1] - edges[i];
+  }
+  return agreed / span;
 }
 
 // ── What playback needs ──────────────────────────────────────────────────────

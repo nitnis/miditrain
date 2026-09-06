@@ -38,6 +38,7 @@ const SETTINGS = {
   'ui.showBeatOverlay': bool,
   'ui.showChordOverlay': bool,
   'ui.showCountOverlay': bool,
+  'ui.showPedal': bool,
   'ui.showFingering': bool,
   'ui.suggestFingering': bool,
   'ui.handOverlay': bool,
