@@ -19,12 +19,23 @@ below, which lived happily here for a long time. Three cases as of this writing:
 K331 mvt1 `0.9576`, mvt3 `0.9501`, and a real Schubert performance `0.7005`,
 mean `0.8694`, over the first 25 seconds of each.
 
-This harness is **not in the repo**, because the MIDI files it runs on are not.
-It is a short Playwright script — import `midiToComposition`, `renderToPcm` and
-`transcribe`, match written notes to wanted ones by pitch within 100 ms, each
-written note claimed once — and it is the strongest check on this code, so it
-being reproducible only by whoever has the files is the largest gap in how any
-of this is measured.
+It is `test/rendered.mjs`. **The fixtures are not in the repo and it skips
+without them** — a MIDI file carries its own licence whatever the age of the
+music, and this repository is MIT; `test/fixtures/rendered/README.md` says what
+to drop in and where to get it. Baselines live beside the fixtures for the same
+reason, since a recorded number for a file nobody has is not something anyone
+can check.
+
+Two things it does that were rebuilt from scratch several times before they
+lived anywhere:
+
+    node test/rendered.mjs --why
+    node test/rendered.mjs --sweep maxVoices=8,16 --sweep gateHi=0.40,0.34
+
+`--why` sorts every missed note into why it was missed, which is the first thing
+to run when recall moves. `--sweep` runs every combination of any keys in
+`TUNING`, rendering once per fixture and reusing it, which is how every number
+in that object was settled.
 
 **The tempo suite.** Thirty-four synthetic cases — steady, rubato, swung,
 sparse, syncopated — each with a known tempo. Currently 30/34. Four of these
@@ -419,10 +430,10 @@ In rough order of expected value:
    should show in it as a rise the peeling cannot see.
 2. **The gap between a rendering and a performance.** Two rendered Mozart
    movements score 0.95; a real performance rendered the same way scores 0.70,
-   at 0.87 precision and 0.57 recall. Everything in this file was tuned against
+   at 0.84 precision and 0.60 recall. Everything in this file was tuned against
    music that is sparser and more evenly voiced than what people actually play.
-   More performance MIDI in the rendered set would be worth more than another
-   parameter sweep.
+   One more real performance in `test/fixtures/rendered/` is worth more than
+   another parameter sweep.
 3. **A gate that adapts without following the loud passages** — the
    `localReference` idea with an asymmetric response, falling quickly and rising
    slowly. The one form of adaptation not yet measured; note that both the
