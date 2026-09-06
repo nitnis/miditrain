@@ -5,6 +5,10 @@ import { isPractised } from './hands.js';
 import {
   analyseDynamics, dynamicsIn, levelGradeFor, BANDS_VERSION, DEFAULT_FLOOR,
 } from './dynamics.js';
+import {
+  pedalChanges, gradePedalChanges, heldShare, hasPedal,
+  PEDAL_DOWN_AT, PEDAL_GRADE_VERSION,
+} from './pedal.js';
 
 // Timing tiers, measured from the note's written position
 const PERFECT_MS = 50;
@@ -143,6 +147,10 @@ let sessionBands = null;
 let sessionFloor = DEFAULT_FLOOR;
 let sessionMap = null;      // this keyboard's velocities, read onto the piece's scale
 let sessionCalibrated = false;
+// The feet: what the piece asked for inside this passage, and what the player
+// actually did. Null on a run that is not being graded on pedalling.
+let sessionPedal = null;    // { expected, fromMs, toMs }
+let playedPedal = [];       // { time, down }
 // After this, the passage is over and keypresses stop being anybody's business
 let sessionEndMs = Infinity;
 
@@ -203,8 +211,12 @@ export function professionalActive() {
 // The same two questions `startAccuracy` asks, in one place so the two cannot
 // come to different answers: a run filed under the professional key and graded
 // as an ordinary one would be a best nobody could ever beat.
+// A piece can carry pedalling without carrying dynamics, and the other way
+// about. Either one is something professional mode can grade, and a run graded
+// on either is a professional run.
 export function professionalWouldGrade(composition) {
-  return professionalWanted() && dynamicsIn(composition.notes || []).ok;
+  if (!professionalWanted()) return false;
+  return dynamicsIn(composition.notes || []).ok || hasPedal(composition.pedal, 'sustain');
 }
 
 // The quantize setting is for notation — how the score is written and how big a
@@ -230,6 +242,18 @@ export function startAccuracy(composition, range = null, { calibration = null } 
   sessionFloor = dynamics?.floorDelta ?? DEFAULT_FLOOR;
   sessionMap = dynamics?.map ?? null;
   sessionCalibrated = dynamics?.calibrated ?? false;
+
+  // What the feet were asked to do inside this passage. The whole piece when
+  // there is no section, because that is the passage.
+  const fromMs = range ? range.startMs : 0;
+  const toMs = range ? range.endMs : Infinity;
+  const wantPedal = professionalWanted() && hasPedal(composition.pedal, 'sustain');
+  const expectedPedal = wantPedal
+    ? pedalChanges(composition.pedal, fromMs, toMs) : [];
+  // A passage the pedal never moves in has nothing to grade, and a rating off
+  // no changes at all would be a free ten stars
+  sessionPedal = expectedPedal.length ? { expected: expectedPedal, fromMs, toMs } : null;
+  playedPedal = [];
 
   // Practising one hand grades only that hand. The other one still sounds
   // through playback, which is the point — you play your part against it.
@@ -278,8 +302,21 @@ export function startAccuracy(composition, range = null, { calibration = null } 
     }
   };
 
+  // The player's own foot. `midi.js` has emitted this since there was MIDI at
+  // all and nothing has ever listened to it.
+  let pedalDown = false;
+  const onControl = ({ controller, value }) => {
+    if (!sessionPedal || controller !== 64) return;
+    const down = value >= PEDAL_DOWN_AT;
+    if (down === pedalDown) return;      // a value moving inside its half is not a change
+    pedalDown = down;
+    playedPedal.push({ time: state.transport.currentTime, down });
+  };
+
   cleanupFns.forEach(fn => fn()); // clean up any previous session listener
-  cleanupFns = [on('midi:noteon', onNoteOn), on('midi:noteoff', onNoteOff)];
+  cleanupFns = [
+    on('midi:noteon', onNoteOn), on('midi:noteoff', onNoteOff), on('midi:cc', onControl),
+  ];
 }
 
 function gradeFor(distanceMs) {
@@ -425,7 +462,7 @@ function countGrade(grade) {
 function computeResults() {
   const total = expectedNotes.length;
   if (total === 0) {
-    return { score: 0, stars: 0, perfect: 0, good: 0, almost: 0, correct: 0, missed: 0, extra: 0, avgLatencyMs: 0, total: 0, level: null };
+    return { score: 0, stars: 0, perfect: 0, good: 0, almost: 0, correct: 0, missed: 0, extra: 0, avgLatencyMs: 0, total: 0, level: null, pedal: null };
   }
 
   const perfect = countGrade('perfect');
@@ -452,6 +489,37 @@ function computeResults() {
     // nothing above it: every field before this line is the number an ordinary
     // run would have produced from the same playing.
     level: levelResults(),
+    pedal: pedalResults(),
+  };
+}
+
+// ── What the feet did ────────────────────────────────────────────────────────
+//
+// Its own rating, beside the notes and the dynamics rather than folded into
+// them. Pedalling is a third thing a pianist is doing and a player can be good
+// at it while being poor at the other two, or the reverse; one number covering
+// all three would say nothing about any of them.
+function pedalResults() {
+  if (!sessionPedal) return null;
+  const { expected, fromMs, toMs } = sessionPedal;
+  const graded = gradePedalChanges(expected, playedPedal);
+  const span = Number.isFinite(toMs)
+    ? toMs : Math.max(fromMs, endOfPassage(sessionRange));
+
+  return {
+    version: PEDAL_GRADE_VERSION,
+    perfect: graded.perfect, good: graded.good, almost: graded.almost,
+    missed: graded.missed, extra: graded.extra, total: graded.total,
+    // Extras are charged here, unlike in the dynamics rating: a foot going up
+    // and down through a passage that asked for neither is a mistake of its
+    // own and is not already paid for anywhere else.
+    stars: starsFromCounts({
+      perfect: graded.perfect, good: graded.good, almost: graded.almost,
+      total: graded.total, extra: graded.extra,
+    }),
+    biasMs: graded.biasMs,
+    // Reported, never scored — see `heldShare`
+    held: Math.round(heldShare(expected, playedPedal, fromMs, span) * 100),
   };
 }
 

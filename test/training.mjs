@@ -95,6 +95,18 @@ await page.evaluate(async () => {
     update('midi.connected', Boolean(id));
   };
 
+  // The player's foot. A run takes presses as [when, pitch, velocity]; this
+  // takes them as [when, down] and sends them on the same bus `midi.js` uses.
+  T.runWithPedal = (label, presses, pedal) => {
+    const feet = [...pedal];
+    const off = on('transport:tick', (now) => {
+      while (feet.length && feet[0][0] <= now) {
+        emit('midi:cc', { controller: 64, value: feet.shift()[1] ? 127 : 0 });
+      }
+    });
+    return T.run(label, presses).finally(off);
+  };
+
   // One pass of the calibration. The screen listens to the same `midi:noteon`
   // everything else does, so this is a person playing eight notes.
   T.strikes = (velocities) => {
@@ -1358,6 +1370,107 @@ check('and a note dies away rather than holding, the way a string does',
   rings <= -10, true);
 
 await page.evaluate(() => window.__t.update('ui.professional', false));
+
+// ── the feet, graded — and only in professional mode ─────────────────────────
+//
+// Pedalling is shown to everybody, because it is what the piece says to do. It
+// is only *graded* in professional mode, and what gets graded is the changes:
+// the moments the damper leaves the strings and comes back. Not whether it was
+// down at each instant — the recording this was built against has its damper up
+// for 60% of its length, so holding the pedal down throughout would score 60%
+// and doing nothing would score 40%, and neither is pedalling.
+await closeResults();
+const runWithPedal = (label, presses, pedal) =>
+  page.evaluate(([l, p, f]) => window.__t.runWithPedal(l, p, f), [label, presses, pedal]);
+const withPedal = (events) => page.evaluate(async (e) => {
+  const { state, emit } = await import('/src/state.js');
+  state.composition.pedal = e;
+  emit('transport:noteschanged', state.composition.notes);
+}, events);
+
+await setup();
+const pedalGrid = await setupBars(6);
+await revelocity(SHAPED);
+await section(1, 2);
+const pedalNotes = pedalGrid.filter(([at]) => at < 4000).map(([at, p]) => [at, p]);
+// Two presses and two lifts inside bars one and two
+const askedFor = [
+  { time: 400, pedal: 'sustain', value: 127 },
+  { time: 1400, pedal: 'sustain', value: 0 },
+  { time: 2400, pedal: 'sustain', value: 127 },
+  { time: 3400, pedal: 'sustain', value: 0 },
+];
+await withPedal(askedFor);
+
+await setPro(false);
+const noGrade = await runWithPedal('pedalling, but not in professional mode', pedalNotes,
+  [[400, true], [1400, false], [2400, true], [3400, false]]);
+check('an ordinary run is not graded on the pedal', noGrade.pedal, null);
+
+await setPro(true);
+const footPerfect = await runWithPedal('every change where the piece asked for it', pedalNotes,
+  [[400, true], [1400, false], [2400, true], [3400, false]]);
+check('all four changes on the mark is ten stars for the feet',
+  [footPerfect.pedal.stars, footPerfect.pedal.perfect, footPerfect.pedal.total], [10, 4, 4]);
+check('...and it does not touch the notes or their stars',
+  [footPerfect.score, footPerfect.stars], [100, 10]);
+
+const footLate = await runWithPedal('every change, but consistently late', pedalNotes,
+  [[700, true], [1700, false], [2700, true], [3700, false]]);
+check('a foot consistently a third of a second late is graded down',
+  footLate.pedal.stars < 10, true);
+check('...and told which way it was out, because that is one habit not four',
+  footLate.pedal.biasMs > 150, true);
+
+const footNone = await runWithPedal('no pedal at all', pedalNotes, []);
+check('a passage played with no pedal misses every change',
+  [footNone.pedal.missed, footNone.pedal.stars], [4, 0]);
+check('...and the score for the notes is untouched by that', footNone.score, 100);
+
+const footStuck = await runWithPedal('the pedal held down throughout', pedalNotes,
+  [[100, true]]);
+check('holding it down the whole way is not pedalling either',
+  footStuck.pedal.stars < 2.5, true);
+
+const footBusy = await runWithPedal('pedalling the piece and then some', pedalNotes,
+  [[400, true], [1400, false], [1700, true], [1900, false], [2400, true], [3400, false]]);
+check('changes the passage never asked for are charged', footBusy.pedal.extra >= 1, true);
+
+// A piece with no pedalling in the passage has nothing to grade, in either mode
+await withPedal([]);
+const footNothing = await runWithPedal('professional mode, but the piece has no pedalling',
+  pedalNotes, [[400, true]]);
+check('a passage the pedal never moves in is not graded on it',
+  footNothing.pedal, null);
+check('...and professional mode still grades the dynamics it does have',
+  footNothing.level !== null, true);
+await withPedal(askedFor);
+
+// Ranked after the notes and the dynamics, on the same principle: the finer
+// thing only decides once the coarser one is matched
+check('a better-pedalled run of the same notes takes the record',
+  await page.evaluate(async () => {
+    const { createProfile, rememberBest, trainingKey, bestFor } = await import('/src/profiles.js');
+    createProfile('Feet under test');
+    const key = trainingKey({ songName: 'X', bars: null, hand: 'both', bpm: 120, mode: 'pro' });
+    const run = (stars, levelStars, pedalStars) => ({
+      score: 100, stars, perfect: 6, good: 0, almost: 0, missed: 0, extra: 0,
+      total: 6, avgLatencyMs: 20, tempo: 120, take: null,
+      level: { bandsVersion: 1, stars: levelStars, perfect: 6, good: 0, almost: 0, off: 0,
+               graded: 6, total: 6, meanAbsDelta: 2, bias: 0, floorDelta: 5, calibrated: true },
+      pedal: { version: 1, stars: pedalStars, perfect: 4, good: 0, almost: 0, missed: 0,
+               extra: 0, total: 4, biasMs: 0, held: 90 },
+    });
+    rememberBest(key, run(9, 7, 4));
+    const better = rememberBest(key, run(9, 7, 8));      // same notes, same shaping
+    const worseNotes = rememberBest(key, run(8, 7, 10)); // best feet, worse notes
+    return { better, worseNotes, stands: bestFor(key).pedal.stars };
+  }), { better: true, worseNotes: false, stands: 8 });
+
+await setPro(false);
+await withPedal([]);
+await page.evaluate(() => document.getElementById('btn-stop').click());
+await closeResults();
 
 // ── calibration: whose keyboard is being graded ──────────────────────────────
 //

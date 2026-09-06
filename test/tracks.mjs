@@ -336,6 +336,33 @@ check('a piece with no pedalling is drawn exactly as it always was',
     return sum;
   }, threePartMidi()));
 
+// Every other overlay in this app has a switch — the beat, the chord name, the
+// count, the fingering — and this one is no different for being useful
+check('switching the pedalling off draws the piece as though it had none',
+  await page.evaluate(async (bytes) => {
+    const mf = await import('/src/midi-file.js');
+    const { state, update } = await import('/src/state.js');
+    const { drawFallingNotes } = await import('/src/pianoroll.js');
+    const song = mf.midiToComposition(new Uint8Array(bytes).buffer);
+    const c = document.getElementById('falling-canvas');
+    const ctx = c.getContext('2d');
+    const sum = (pedal, show) => {
+      state.composition.pedal = pedal;
+      update('ui.showPedal', show);
+      drawFallingNotes(song.notes, state.composition, 500, null, false);
+      const d = ctx.getImageData(0, 0, c.width, c.height).data;
+      let t = 0;
+      for (let i = 0; i < d.length; i += 4) t += d[i] + d[i + 1] + d[i + 2];
+      return t;
+    };
+    const off = sum(song.pedal, false);
+    const none = sum([], true);
+    const on = sum(song.pedal, true);
+    update('ui.showPedal', true);
+    return { same: off === none, andBackOn: on > none };
+  }, threePartMidi()),
+  { same: true, andBackOn: true });
+
 // A window too short for the gauge gets no gauge rather than one running off
 // the bottom of it
 check('a window with no room for the gauge simply has none', await page.evaluate(async () => {

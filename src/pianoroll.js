@@ -688,7 +688,7 @@ const PEDAL_EDGE = 'rgba(255,255,255,0.30)';
 
 function drawPedalWash(ch, cw, currentTimeMs, pixelsPerMs, windowStart, windowEnd) {
   const events = state.composition.pedal;
-  if (!events?.length) return;
+  if (!state.ui.showPedal || !events?.length) return;
   const slice = pedalSlice(events, windowStart, windowEnd, 'sustain');
   if (!slice.length) return;
 
@@ -951,7 +951,7 @@ const GAUGE_H = 38;
 
 function drawPedalGauge(currentTimeMs, ch, cw, signal) {
   const events = state.composition.pedal;
-  if (!hasPedal(events)) return;
+  if (!state.ui.showPedal || !hasPedal(events)) return;
 
   const s = signal.s;
   const shown = [

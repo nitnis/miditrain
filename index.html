@@ -251,6 +251,17 @@
           </svg>
           <span class="btn-label">Count</span>
         </button>
+        <button class="toggle-btn icon-only" id="btn-pedal-overlay" title="Show the pedalling over the falling notes, where the piece carries any (Shift+P)">
+          <!-- A sustain pedal seen from the side: the plate, its hinge, and the
+               lyre it hangs from -->
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="3" x2="12" y2="12"/>
+            <path d="M6 19h9a3 3 0 0 0 3-3v-1"/>
+            <path d="M8 12h8" opacity="0.55"/>
+            <line x1="4" y1="21" x2="20" y2="21" opacity="0.4"/>
+          </svg>
+          <span class="btn-label">Pedal</span>
+        </button>
         <button class="toggle-btn icon-only" id="btn-fingering" title="Show the fingering on the keyboard (Shift+F)">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M9 11V4.5a1.5 1.5 0 0 1 3 0V11"/>
@@ -553,6 +564,13 @@
            how many were loose, this says where they were and whether they were
            loose in the same direction — which is a different fault. -->
       <canvas class="level-strip hidden" id="level-strip" width="800" height="90"></canvas>
+      <!-- And the feet, on a line of their own: a third thing a pianist is
+           doing, and a player can be good at it while being poor at the other
+           two, or the reverse. -->
+      <div class="level-line hidden" id="pedal-line">
+        <span class="level-stars" id="pedal-stars"></span>
+        <span class="level-detail" id="pedal-detail"></span>
+      </div>
       <!-- Said out loud, and only when there is something to say: the run just
            played is the best this passage has had at this hand and speed. -->
       <p class="best-cheer hidden" id="best-cheer"></p>
