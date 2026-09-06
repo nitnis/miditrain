@@ -43,13 +43,21 @@ const ORIGIN = process.env.ORIGIN || 'http://localhost:7700';
 // number to have regressed from; these are not targets to tune towards, and
 // moving them is only meaningful alongside the rendered-MIDI tests.
 const BASELINE = {
-  notes: 143,
-  chroma: 0.942,
-  onsetF1: 0.905,
-  explained: 0.770,
+  notes: 133,
+  chroma: 0.953,
+  onsetF1: 0.897,
+  explained: 0.769,
   unexplainedAtFundamentals: 0.134,
-  roundTripF1: 0.848,
+  roundTripF1: 0.924,
 };
+
+// The shape this transcriber used to invent: a note beginning at the same
+// instant as the octave below it. Fifteen of them once; the four that are left
+// are the four with independent evidence of being real — see
+// docs/transcription-notes.md. Counted rather than eyeballed, because it went
+// wrong for five attempts in a row and nothing but a number was ever able to
+// say so.
+const MAX_OCTAVE_DOUBLES = 4;
 
 const browser = await chromium.launch({
   executablePath: process.env.CHROME || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
@@ -206,6 +214,10 @@ const measured = await page.evaluate(async ({ wav, seconds }) => {
     seconds: +(original.length / RATE).toFixed(1),
     transcribeMs,
     notes: notes.length,
+    // The shape this transcriber used to invent — see the note by
+    // MAX_OCTAVE_DOUBLES above
+    octaveDoubles: notes.filter(n => notes.some(l => l.pitch === n.pitch - 12
+      && l.startTime <= n.startTime && n.startTime - l.startTime <= 60)).length,
     tempo: fit ? fit.tempo : null,
     lowest: Math.min(...notes.map(n => n.pitch)),
     highest: Math.max(...notes.map(n => n.pitch)),
@@ -240,5 +252,11 @@ console.log(`  ${pad('range', 26)}MIDI ${measured.lowest}–${measured.highest}`
 console.log(`  ${pad('unexplained, by octave', 26)}${JSON.stringify(measured.unexplainedByOctave)}`);
 console.log(`  ${pad('transcribed in', 26)}${measured.transcribeMs} ms`);
 console.log(`\n  console: ${problems.length ? problems.slice(0, 5).join('\n    ') : 'clean'}`);
+console.log(`\n  octave doubles            ${String(measured.octaveDoubles).padEnd(10)}${MAX_OCTAVE_DOUBLES} allowed`);
+if (measured.octaveDoubles > MAX_OCTAVE_DOUBLES) {
+  regressed += 1;
+  console.log('   ^ the octave ghost is back');
+}
+
 console.log(regressed ? `\n${regressed} measure(s) moved from the baseline.\n` : '\nNothing regressed.\n');
 process.exit(regressed || problems.length ? 1 : 0);

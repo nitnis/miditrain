@@ -45,6 +45,7 @@
 // their own rates over time, can. Both are a different design from this one.
 // The synthetic octave test does not catch any of it, because the app's own
 // voice has no even partials at all and so never creates the ambiguity.
+import { buildSupport, spectrogram, factorise } from './nmf.js';
 import {
   makeAnalyzer, midiToFreq, RATE, HOP,
   FINE_WINDOW, COARSE_WINDOW, COARSE_RATE, COARSE_CEILING, CROSSOVER_MIDI,
@@ -65,6 +66,14 @@ const HARMONIC_WEIGHTS = [1, 0.5, 0.4, 0.25, 0.2, 0.15];
 // semitone covers the window's own smearing and a render tuned a few cents away
 // from A440, without reaching far enough to collect the neighbour.
 const PARTIAL_TOLERANCE = 0.25;
+
+// Two onsets this close are one instant, as far as anything about octaves is
+// concerned — the analysis hop is 23 ms, so a doubled onset lands one or two
+// frames apart rather than exactly together.
+const TOGETHER_MS = 60;
+// Atoms either side of the pitches in question, so a factorisation asked about
+// one octave is not blind to what is sounding beside it
+const OCTAVE_ATOM_MARGIN = 12;
 
 // How many notes may sound at once before the rest is called noise. Ten fingers,
 // but a frame with eight distinct pitches in it is already a chord nobody voiced
@@ -92,6 +101,10 @@ const SUBTRACT_STRENGTH = 0.7;
 // sweep settled on; nothing here is a guess left in place.
 export const TUNING = {
   gateHi: 0.40, gateLo: 0.18, reattack: 0.16,
+  // What a doubled note has to be carrying, over the octave below it, to be
+  // believed. Swept on the fixture: below this the invented notes go and the
+  // played octaves stay.
+  octaveShare: 1.0, nmfIterations: 24, nmfSettle: 8, nmfStride: 3,
   voiceFloor: VOICE_FLOOR, subtract: SUBTRACT_STRENGTH,
   minFrames: 4, restrikeLag: 2, presence: 0.6, dip: 0.75, restrikeSpan: 4,
   reattackFloor: 0.14,
@@ -454,6 +467,58 @@ export function tracksToNotes(salience, frames, pitches, frameMs, reference, ori
 // rendered test set fell from 0.90 to 0.88. The gate is not what should be
 // adapting — a threshold that chases the music finds notes in whatever the
 // music is quiet enough to leave behind.
+// ── The octave veto ──────────────────────────────────────────────────────────
+//
+// A note that begins at the same instant as the octave below it is the one
+// shape this transcriber invents, and the peeling cannot tell an invented one
+// from a played one — see the measurements in nmf.js. So where that shape
+// appears, and only there, a second opinion is asked for: the recording is
+// factorised against a dictionary learned from itself, and the doubled note is
+// kept only if it is carrying its own weight over the note below it.
+//
+// Asked for only where it is needed. A piece with no doubled onsets in it never
+// pays for the factorisation, and on one that has them it is the difference
+// between ten invented notes and none.
+export function vetoOctaveGhosts(notes, pcm) {
+  if (!(TUNING.octaveShare > 0)) return notes;   // switched off, and free
+  const doubles = notes.filter(n => octaveBelow(notes, n));
+  if (!doubles.length) return notes;
+
+  // Only the pitches in question and the octave under them need atoms
+  const wanted = new Set();
+  for (const n of doubles) { wanted.add(n.pitch); wanted.add(n.pitch - 12); }
+  const lowest = Math.max(LOWEST_PITCH, Math.min(...wanted) - OCTAVE_ATOM_MARGIN);
+  const highest = Math.min(HIGHEST_PITCH, Math.max(...wanted) + OCTAVE_ATOM_MARGIN);
+
+  const { V, frames, bins } = spectrogram(pcm);
+  const atoms = buildSupport(lowest, highest);
+  const H = factorise(V, frames, bins, atoms, {
+    iterations: TUNING.nmfIterations, settle: TUNING.nmfSettle, stride: TUNING.nmfStride,
+  });
+  const frameMs = (HOP / RATE) * 1000;
+  const level = (ms, pitch) => {
+    const k = pitch - lowest;
+    if (k < 0 || k >= atoms.length) return 0;
+    const f = Math.min(frames - 1, Math.max(0, Math.round(ms / frameMs)));
+    return H[f * atoms.length + k];
+  };
+
+  return notes.filter(n => {
+    const low = octaveBelow(notes, n);
+    if (!low) return true;
+    const share = level(n.startTime, n.pitch) / (level(n.startTime, n.pitch - 12) + 1e-12);
+    return share >= TUNING.octaveShare;
+  });
+}
+
+// The note an octave under this one, beginning at what is the same moment as
+// far as an onset is concerned
+function octaveBelow(notes, note) {
+  return notes.find(l => l.pitch === note.pitch - 12
+    && l.startTime <= note.startTime
+    && note.startTime - l.startTime <= TOGETHER_MS) || null;
+}
+
 export function referenceLevel(salience) {
   const sample = [];
   const stride = Math.max(1, Math.floor(salience.length / 40000));
@@ -473,6 +538,7 @@ export function transcribe(pcm, { onProgress } = {}) {
     return { notes: [], frames, reference: 0 };
   }
   const originMs = analyzer.frameTimeMs(0);
-  const notes = tracksToNotes(salience, frames, pitches, frameMs, reference, originMs);
+  const notes = vetoOctaveGhosts(
+    tracksToNotes(salience, frames, pitches, frameMs, reference, originMs), pcm);
   return { notes, frames, frameMs, reference, salience, pitches, analyzer };
 }
