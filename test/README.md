@@ -169,6 +169,24 @@ an octave the fundamental leaks into the "high" band and swamps the thing being
 asked about. It is the app's own FFT, so the measurement and the transcriber
 cannot come to disagree about what a spectrum is.
 
+### Grading the feet, and the four ways of getting it wrong
+
+Pedalling is shown in every mode and graded only in professional mode, and what
+is graded is the *changes* rather than whether the damper was down at each
+instant. That distinction is the whole design and it is what the checks are
+built around: the recording this was fitted to has its damper up for 60% of its
+length, so a rating of "was it down when it should have been" would give 60% to
+holding the pedal flat to the floor and 40% to never touching it.
+
+So there are four wrong runs beside the right one, and each is wrong in its own
+way: every change but consistently late, no pedal at all, the pedal held down
+throughout, and pedalling the passage plus changes it never asked for. The
+stuck-pedal one is the check that would catch a rating built the naive way.
+
+Runs take pedalling as `[when, down]` alongside their keypresses, sent on the
+same `midi:cc` the app has emitted from real pedals since there was MIDI at all
+and which nothing listened to until now.
+
 ### Calibration is checked by playing the piece correctly and badly at once
 
 The calibration screen listens to the same `midi:noteon` as everything else, so
@@ -197,6 +215,14 @@ anybody plays. Its presses are placed against the notes deliberately: the damper
 is up when some notes are released and down when others are, so "held until the
 pedal comes up" and "not stretched to meet the next press" are both real cases
 rather than the same case twice.
+
+Showing the pedals is checked the same way the falling notes' dynamics are: by
+drawing a frame and reading the pixels back. The wash is a few per cent of alpha
+over a dark ground, and whether that is visible is not a question the constants
+can answer — so the whole canvas is summed with the pedal and without it, and
+the gauge corner is summed on its own so the two are told apart. There is also a
+check that a window too short to hold the gauge simply has none, because the
+falling window is whatever height the layout leaves it.
 
 There is also a twenty-thousand-note export in here that asserts almost nothing
 about its output. `push(...bytes)` passes every element as an argument, and a

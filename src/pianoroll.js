@@ -10,6 +10,7 @@ import { beatOffsets } from './swing.js';
 import { suggestedFinger } from './autofinger.js';
 import { drawHands, forgetHands } from './hand-overlay.js';
 import { dynamicsIn } from './dynamics.js';
+import { pedalSlice, pedalAt, hasPedal, PEDAL_DOWN_AT } from './pedal.js';
 
 // Piano layout constants
 const MIDI_MIN = 21; // A0
@@ -668,6 +669,60 @@ export function fallingMsPerPixel() {
   return h > 0 ? lookaheadMs() / h : 0;
 }
 
+// ── The pedals, drawn ────────────────────────────────────────────────────────
+//
+// A wash over the stretches where the damper is off the strings, scrolling with
+// the notes. Pedalling has to be seen coming in exactly the way notes do — a
+// foot that goes down when the chord has already sounded is late — and this is
+// the only place in the app that can show what is still ahead.
+//
+// Drawn between consecutive pedal events rather than over whole presses, so a
+// pedal that is half down is a lighter wash than one pressed to the floor. That
+// is most of what a real performance holds: 72% of the sustain events kept from
+// the recording this was built against are neither fully up nor fully down.
+//
+// White, at a very low alpha, because every note colour in the app is a hue and
+// a fifth competing hue would say nothing. A wash reads as ground.
+const PEDAL_WASH_MAX = 0.075;
+const PEDAL_EDGE = 'rgba(255,255,255,0.30)';
+
+function drawPedalWash(ch, cw, currentTimeMs, pixelsPerMs, windowStart, windowEnd) {
+  const events = state.composition.pedal;
+  if (!state.ui.showPedal || !events?.length) return;
+  const slice = pedalSlice(events, windowStart, windowEnd, 'sustain');
+  if (!slice.length) return;
+
+  const yFor = (t) => ch - (t - currentTimeMs) * pixelsPerMs;
+
+  for (let i = 0; i < slice.length; i++) {
+    const from = slice[i];
+    const until = slice[i + 1]?.time ?? windowEnd;
+    if (from.value <= 0) continue;
+    // A later moment is further up the window, so the pair reads bottom-first
+    const top = Math.max(0, yFor(until));
+    const bottom = Math.min(ch, yFor(from.time));
+    if (bottom <= 0 || top >= ch || bottom <= top) continue;
+    fallingCtx.fillStyle = `rgba(255,255,255,${(from.value / 127) * PEDAL_WASH_MAX})`;
+    fallingCtx.fillRect(0, top, cw, bottom - top);
+  }
+
+  // The moment the foot goes down, picked out — the wash says where the pedal
+  // is held and this says where it is taken, which is the part being learned
+  for (let i = 0; i < slice.length; i++) {
+    const e = slice[i];
+    const was = i === 0 ? 0 : slice[i - 1].value;
+    if (!(was < PEDAL_DOWN_AT && e.value >= PEDAL_DOWN_AT)) continue;
+    const y = Math.round(yFor(e.time)) + 0.5;
+    if (y < 0 || y > ch) continue;
+    fallingCtx.strokeStyle = PEDAL_EDGE;
+    fallingCtx.lineWidth = 1;
+    fallingCtx.beginPath();
+    fallingCtx.moveTo(0, y);
+    fallingCtx.lineTo(cw, y);
+    fallingCtx.stroke();
+  }
+}
+
 // ── How hard, drawn ──────────────────────────────────────────────────────────
 //
 // Professional mode grades a target the player could not see. A note is drawn
@@ -753,6 +808,10 @@ export function drawFallingNotes(notes, composition, currentTimeMs, accuracyResu
   const pastWindow = 300; // show recently played notes briefly
   const windowStart = currentTimeMs - pastWindow;
   const windowEnd = currentTimeMs + lookahead;
+
+  // Under the notes rather than over them: it is the ground the passage is
+  // played on, and the notes have to stay the thing being read
+  drawPedalWash(ch, cw, currentTimeMs, pixelsPerMs, windowStart, windowEnd);
 
   const dimOthers = (state.ui.trainMode || state.ui.learnMode) && practiceHand() !== 'both';
 
@@ -874,6 +933,82 @@ export function drawFallingNotes(notes, composition, currentTimeMs, accuracyResu
   drawChordName(notes, composition, currentTimeMs, signal);
   drawBeatCount(composition, currentTimeMs, cw, signal);
   drawMetronome(composition, currentTimeMs, signal);
+  drawPedalGauge(currentTimeMs, ch, cw, signal);
+}
+
+// ── Where the feet are, now ──────────────────────────────────────────────────
+//
+// The wash says where the pedal is held over the passage; this says how far
+// down it is at this instant, which the wash cannot — a band of one shade is
+// still one shade whichever end of it the playhead is at.
+//
+// Down at the hit line rather than up with the falling notes, because it is
+// about this instant and the hit line is where this instant is. The right-hand
+// edge, under the crossing signal: the beat in the top corner, the feet in the
+// bottom one. Only on a piece that has any pedalling at all.
+const GAUGE_W = 13;
+const GAUGE_H = 38;
+
+function drawPedalGauge(currentTimeMs, ch, cw, signal) {
+  const events = state.composition.pedal;
+  if (!state.ui.showPedal || !hasPedal(events)) return;
+
+  const s = signal.s;
+  const shown = [
+    { key: 'sustain', label: 'Ped' },
+    // Only when the performance used it. A bar that is always empty says
+    // nothing and takes the room of something that would.
+    ...(hasPedal(events, 'soft') ? [{ key: 'soft', label: 'Una' }] : []),
+  ];
+
+  const w = GAUGE_W * s;
+  const gap = 8 * s;
+  const right = cw - 12;
+  // Whatever is left between the signal and the hit line, up to the size it
+  // wants — a short window gets a short gauge rather than one running off the
+  // bottom of it
+  const floor = ch - 10 * s;
+  const ceiling = signal.y + signal.height + 8 * s;
+  const h = Math.min(GAUGE_H * s, floor - ceiling - 12 * s);
+  if (h < 12) return;                       // nothing worth drawing in the room left
+  const top = floor - h;
+
+  shown.forEach((pedal, i) => {
+    const x = right - (shown.length - i) * (w + gap) + gap;
+    const value = pedalAt(events, currentTimeMs, pedal.key);
+    const depth = value / 127;
+
+    fallingCtx.fillStyle = 'rgba(0,0,0,0.35)';
+    fallingCtx.beginPath();
+    fallingCtx.roundRect(x, top, w, h, 3 * s);
+    fallingCtx.fill();
+
+    // Filled from the bottom, the way the pedal itself goes down. Bright once
+    // the damper is actually off the strings, dim while it is only on its way.
+    if (depth > 0) {
+      const lit = h * depth;
+      fallingCtx.fillStyle = value >= PEDAL_DOWN_AT ? '#5bc0eb' : 'rgba(91,192,235,0.4)';
+      fallingCtx.beginPath();
+      fallingCtx.roundRect(x, top + h - lit, w, lit, 3 * s);
+      fallingCtx.fill();
+    }
+
+    fallingCtx.strokeStyle = 'rgba(255,255,255,0.22)';
+    fallingCtx.lineWidth = 1;
+    fallingCtx.beginPath();
+    fallingCtx.roundRect(x + 0.5, top + 0.5, w - 1, h - 1, 3 * s);
+    fallingCtx.stroke();
+
+    // Above the bar, not below it: below, the label is the first thing the
+    // bottom of a short window cuts off
+    fallingCtx.fillStyle = 'rgba(255,255,255,0.5)';
+    fallingCtx.font = `${Math.round(8 * s)}px -apple-system, system-ui, sans-serif`;
+    fallingCtx.textAlign = 'center';
+    fallingCtx.textBaseline = 'bottom';
+    fallingCtx.fillText(pedal.label, x + w / 2, top - 2 * s);
+  });
+  fallingCtx.textAlign = 'left';
+  fallingCtx.textBaseline = 'alphabetic';
 }
 
 // ── Current chord ────────────────────────────────────────────────────────────
