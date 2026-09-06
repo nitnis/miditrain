@@ -15,9 +15,16 @@ Three harnesses, and they disagree with each other on purpose.
 **Rendered MIDI.** Render a known MIDI file with the app's own player,
 transcribe the rendering, score the notes against the file. Exact, and blind to
 anything that only happens with a real instrument — see the band-calibration bug
-below, which lived happily here for a long time. Eight cases; the per-case F1s
-at the time of writing are `1.000 / 1.000 / 1.000 / 0.874` (mvt1) `/ 0.940`
-(mvt3), mean ≈ 0.902.
+below, which lived happily here for a long time. Three cases as of this writing:
+K331 mvt1 `0.9576`, mvt3 `0.9501`, and a real Schubert performance `0.7005`,
+mean `0.8694`, over the first 25 seconds of each.
+
+This harness is **not in the repo**, because the MIDI files it runs on are not.
+It is a short Playwright script — import `midiToComposition`, `renderToPcm` and
+`transcribe`, match written notes to wanted ones by pitch within 100 ms, each
+written note claimed once — and it is the strongest check on this code, so it
+being reproducible only by whoever has the files is the largest gap in how any
+of this is measured.
 
 **The tempo suite.** Thirty-four synthetic cases — steady, rubato, swung,
 sparse, syncopated — each with a known tempo. Currently 30/34. Four of these
@@ -98,6 +105,56 @@ and `coverage` (the share of beat lines that actually have an attack on them,
 which argues it is too fast). `between` alone looked perfect on the test set
 until two counter-cases were added — `q100→150` and `chorale84→126`, both
 1.5× impostors. The test set was missing the case that mattered. It usually is.
+
+### The peeling ran out of rounds before it ran out of notes
+
+A frame got eight rounds of peeling, on the reasoning that ten fingers cannot
+play more than eight distinct pitches worth having. Both halves of that are
+wrong.
+
+The rounds are not notes. Nothing in the loop stops a pitch winning twice, and
+subtraction only takes 0.7 of what the template predicts, so a loud note is
+still standing after its own round and can take the next one too. And a frame
+under the pedal holds everything struck in the last several seconds, which is
+not what ten fingers are on.
+
+Measured, the count was almost never what stopped the peeling: across the three
+rendered files, between none and five percent of frames ever reached eight
+rounds. `voiceFloor` is the guard that actually binds, and it is the better one,
+because it asks what a candidate is worth against the loudest thing beside it
+instead of counting. The count only ever bit in the densest frames in the
+music — exactly where the missed notes are.
+
+Sixteen rounds, measured:
+
+| | 8 | 16 |
+|---|---|---|
+| rendered mean F1 | 0.8624 | **0.8694** |
+| K331 mvt1 | 0.9487 | **0.9576** |
+| K331 mvt3 | 0.9486 | 0.9501 |
+| Schubert (a real performance) | 0.6900 | **0.7005** |
+| bass recall, below MIDI 56 | 0.303 | **0.338** |
+| rendered, 3 x 25 s | 4119 ms | 4263 ms |
+
+On the real recording every measure held or improved, including the two that
+matter most for missed notes:
+
+| | before | after |
+|---|---|---|
+| `explained` | 0.769 | **0.771** |
+| `unexplainedAtFundamentals` | 0.134 | **0.131** |
+| chroma | 0.953 | 0.954 |
+| roundTripF1 | 0.924 | **0.939** |
+| detected tempo | 120 | **123** |
+| notes | 133 | 133 |
+| doubled onsets | 4 | 4 |
+
+The tempo is the incidental one worth noting: an independent autocorrelation of
+that file says 123.0, and the extra rounds moved the detector onto it without
+anything in the tempo code changing.
+
+Twenty-four rounds is worse than sixteen. Past the point where `voiceFloor`
+stops it, more rounds only add ghosts.
 
 ### The simultaneous-octave ghost (solved on the sixth attempt, by NMF)
 
@@ -232,6 +289,84 @@ factorisation's activation matrix has the same shape as the salience surface the
 peeling produces, so it drops in beside it, and it only has to be asked where
 the ambiguity actually arises. See above.
 
+### Three ways of finding the missed notes, all measured, all rejected
+
+First, where the missed notes are. Rendering three files with a score to compare
+against — two Mozart movements and one real performance — and sorting every note
+the transcriber walked past by what the salience surface was doing at that pitch
+at that moment:
+
+| | share of misses |
+|---|---|
+| under the gate — present, never reaches `gateHi` | 51% |
+| already on — loud enough, but the pitch was sounding and the re-strike test did not fire | 29% |
+| invisible — the peeling never gave the pitch anything | 18% |
+| too short | 1% |
+
+And they are overwhelmingly in the bass: 74% of the misses sit below MIDI 56
+against 8% of the hits, a factor of ten. By octave, 65% of octave-2 notes are
+missed and 4% of octave-4 ones.
+
+**A second reference for the bass band.** At the same played velocity a bass note
+reaches 0.44 of the reference where a treble note reaches 0.90, and the gate
+stands at 0.40 for both — so the bass is asked to be twice as loud as the treble
+to be written down. That looked exactly like the window-gain bug: a static,
+systematic imbalance between the two bands.
+
+It is not. Two experiments say so. Synthetic sines and sawtooths at equal
+amplitude at every pitch come out within one percent across the crossover, so
+the analyser itself is level. Repeat them with an exponential decay and the
+bands do come apart — the coarse band reads 0.84 of the fine one at a decay
+constant of 1.1 s and 0.63 at 0.3 s, because a 743 ms window averages four times
+more of the decay into every reading than a 186 ms one does. That effect is
+real, and it is much smaller than the gap in the music. The rest of the gap is
+simply that bass parts are played more quietly than melodies.
+
+Correcting for the first is right; correcting for the second is the rejected
+`localReference` again, in the register dimension instead of the time one. A
+percentile per band cannot tell them apart — a percentile is a near-maximum, and
+the loudest bass note in a piece is not quiet. Built, swept from a floor of 0.8
+down to 0.3: bass recall 0.338 to 0.352, mean F1 0.8694 to 0.8660. It finds bass
+notes and invents more than it finds.
+
+**Lowering the gate, again.** Worth re-testing because the situation changed: the
+octave veto now removes a class of false positive that used to punish any
+loosening. It does not change the answer. From 0.40 down to 0.22, bass recall
+climbs 0.338 to 0.434 and the mean falls the whole way, 0.8694 to 0.8593. The
+gate is at its optimum. So is every other number in `TUNING` — `minFrames`,
+`reattack`, `reattackFloor` and `voiceFloor` were all swept again here and all
+sit on their best value.
+
+**A second gate height, offered only where something was struck.** This is the
+"onset-conditioned note starts" idea from the list below, pointed the other way:
+not forbidding starts without an onset, but permitting quieter ones with one.
+The rationale was good — 91% of the missed notes are struck within 40 ms of at
+least two others, so they are inner voices in chords rather than lone whispers,
+and a chord being struck is visible without knowing which pitches are in it.
+
+The detector works. Summing how much of the salience surface rose since the
+previous frame — a held chord contributes nothing however loud, because a held
+note is not rising — separates frames containing a real onset from frames that
+do not by between 37x and 2288x at the median, and the busiest fifth of frames
+sweeps in 0–6% of the frames with no onset in them.
+
+It still does not help. Swept over both the second gate height (0.40 down to
+0.20) and how selective the detector is (the top 5% of frames to the top 20%),
+every combination scores below leaving it alone. The reason is the same one that
+defeated five attempts at the octave ghost: at the instant a chord is struck,
+the leakage from what was struck rises too, so a weak rise at some other pitch
+is as likely to be that leakage as a note.
+
+Pointing the same signal at the re-strike test instead — where the pitch is
+already known to be sounding, so a false positive splits a note rather than
+inventing one — was also swept and also negative, at 0.7, 0.5 and 0.3 of the
+usual bar.
+
+What is left after all this is the 29% that are re-strikes, which is the
+notebook's oldest open problem, and the fact that a real performance under the
+pedal scores 0.70 where a rendered Mozart movement scores 0.95. The gap is not
+in the tuning.
+
 ### Local reference level for the gate
 
 The gate is a share of the loudest thing in the whole piece, so a quiet passage
@@ -274,13 +409,21 @@ Net negative.
 
 In rough order of expected value:
 
-1. **Onset-conditioned note starts.** Even with the octave ambiguity unsolved, a
-   note whose start does not coincide with a broadband onset could be forbidden
-   from starting and forced to join the sustaining note instead. This addresses
-   the reported symptom (notes shown together) without solving the underlying
-   ambiguity.
+1. **Re-strikes.** Now the largest category of missed note (29%, and the share
+   rises as the others are dealt with), and the one thing above that neither the
+   sweeps nor the attack detector touched. A repeated note under a sustaining
+   chord has to be found from the salience curve alone, and the dip-then-recovery
+   test above is the best of several attempts. The activation matrix the octave
+   veto already builds is a second opinion that has never been asked this
+   question — it is per-note and learned from the recording, so a re-struck note
+   should show in it as a rise the peeling cannot see.
+2. **The gap between a rendering and a performance.** Two rendered Mozart
+   movements score 0.95; a real performance rendered the same way scores 0.70,
+   at 0.87 precision and 0.57 recall. Everything in this file was tuned against
+   music that is sparser and more evenly voiced than what people actually play.
+   More performance MIDI in the rendered set would be worth more than another
+   parameter sweep.
 3. **A gate that adapts without following the loud passages** — the
    `localReference` idea with an asymmetric response, falling quickly and rising
-   slowly.
-3. **Quiet re-strikes in mvt1**, the largest remaining loss in the rendered
-   suite.
+   slowly. The one form of adaptation not yet measured; note that both the
+   register form and the onset-conditioned form have now been tried and failed.

@@ -75,10 +75,28 @@ const TOGETHER_MS = 60;
 // one octave is not blind to what is sounding beside it
 const OCTAVE_ATOM_MARGIN = 12;
 
-// How many notes may sound at once before the rest is called noise. Ten fingers,
-// but a frame with eight distinct pitches in it is already a chord nobody voiced
-// deliberately, and every extra round is another chance to invent a note.
-const MAX_VOICES = 8;
+// How many rounds of peeling a frame gets.
+//
+// This was eight, for a reason that sounded right and measured wrong: ten
+// fingers, and a frame with eight distinct pitches in it is already a chord
+// nobody voiced deliberately. But the rounds are not notes. Nothing stops a
+// pitch winning twice — subtraction takes away 0.7 of what the template
+// predicts, so a loud note is still standing afterwards — and a frame under the
+// pedal holds everything struck in the last few seconds, not just what ten
+// fingers are on.
+//
+// Measured, the budget was almost never what stopped the peeling: across the
+// three rendered files, between none and five percent of frames ever reached
+// eight rounds. `voiceFloor` is the guard that actually binds, and it is the
+// right one, because it asks what a candidate is worth against the loudest
+// thing beside it rather than counting. The count only ever bit in the densest
+// frames in the music — which is exactly where the notes being missed are.
+//
+// Raised to sixteen, the rendered set goes 0.8624 to 0.8694 and bass recall
+// 0.303 to 0.338, for sixty milliseconds on a twenty-five second file. Twenty-
+// four is worse than sixteen: past the point where `voiceFloor` stops it, more
+// rounds only add ghosts.
+const MAX_VOICES = 16;
 
 // A peak has to be this much of the loudest thing in the piece to be a note at
 // all. Below it the peeling would start explaining the noise floor.
@@ -105,7 +123,7 @@ export const TUNING = {
   // believed. Swept on the fixture: below this the invented notes go and the
   // played octaves stay.
   octaveShare: 1.0, nmfIterations: 24, nmfSettle: 8, nmfStride: 3,
-  voiceFloor: VOICE_FLOOR, subtract: SUBTRACT_STRENGTH,
+  voiceFloor: VOICE_FLOOR, subtract: SUBTRACT_STRENGTH, maxVoices: MAX_VOICES,
   minFrames: 4, restrikeLag: 2, presence: 0.6, dip: 0.75, restrikeSpan: 4,
   reattackFloor: 0.14,
 };
@@ -233,7 +251,7 @@ export function computeSalience(pcm, onProgress) {
     const base = f * PITCHES;
 
     let loudest = 0;
-    for (let v = 0; v < MAX_VOICES; v++) {
+    for (let v = 0; v < TUNING.maxVoices; v++) {
       let best = -1;
       let bestScore = 0;
       for (let i = 0; i < PITCHES; i++) {
@@ -351,7 +369,8 @@ export function tracksToNotes(salience, frames, pitches, frameMs, reference, ori
   let id = 0;
 
   for (let p = 0; p < pitches; p++) {
-    const ramp = rampFrames(p + LOWEST_PITCH);
+    const pitch = p + LOWEST_PITCH;
+    const ramp = rampFrames(pitch);
     let start = -1;
     let peak = 0;
     let trough = 0;
@@ -373,7 +392,7 @@ export function tracksToNotes(salience, frames, pitches, frameMs, reference, ori
         const began = restruck ? Math.max(0, start - TUNING.restrikeLag) : onsetOf(p, start, ramp);
         notes.push({
           id: `tr-${id++}`,
-          pitch: p + LOWEST_PITCH,
+          pitch,
           startTime: Math.max(0, began * frameMs + originMs),
           duration: Math.max(frameMs, (endFrame - began) * frameMs),
           velocity: Math.max(1, Math.min(127, Math.round(20 + 107 * Math.min(1, peak / (reference * 0.6))))),

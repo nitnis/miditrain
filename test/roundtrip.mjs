@@ -44,11 +44,11 @@ const ORIGIN = process.env.ORIGIN || 'http://localhost:7700';
 // moving them is only meaningful alongside the rendered-MIDI tests.
 const BASELINE = {
   notes: 133,
-  chroma: 0.953,
+  chroma: 0.954,
   onsetF1: 0.897,
-  explained: 0.769,
-  unexplainedAtFundamentals: 0.134,
-  roundTripF1: 0.924,
+  explained: 0.771,
+  unexplainedAtFundamentals: 0.131,
+  roundTripF1: 0.939,
 };
 
 // The shape this transcriber used to invent: a note beginning at the same
