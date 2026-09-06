@@ -99,11 +99,90 @@ which argues it is too fast). `between` alone looked perfect on the test set
 until two counter-cases were added — `q100→150` and `chorale84→126`, both
 1.5× impostors. The test set was missing the case that mattered. It usually is.
 
+### The simultaneous-octave ghost (solved on the sixth attempt, by NMF)
+
+**Resolved.** Five attempts failed and are kept below because the reasons they
+failed are the reasons the sixth worked. The fix is `src/nmf.js` and
+`vetoOctaveGhosts` in `src/transcribe.js`.
+
+Non-negative matrix factorisation with a per-note dictionary, learned from the
+recording being transcribed. The atoms are pitches, their support is fixed to
+where that pitch's partials can be, and their *ratios* are learned. A pitch's
+odd partials are bins the octave above cannot touch, so they pin its level;
+given that level and a learned second-partial ratio, what belongs at the octave
+is predicted rather than assumed.
+
+What it is worth, as the upper note's strength over the lower one's at the
+moment of a doubled onset:
+
+|                      | the known ghost | a real entry | the next one |
+|---|---|---|---|
+| peeling              | 0.93 | 0.93 | 1.29 |
+| NMF                  | 0.51 | 1.76 | 2.45 |
+
+**The peeling gives the same number for the invented note and the real one.** It
+is not that it weighs the evidence badly — it does not have any. Across every
+doubled onset in the fixture against every solo entry of the same pitch, the
+peeling separates the two groups by 1.03x and the factorisation by 1.79x.
+
+It is used as a veto rather than a replacement. The peeling still writes the
+notes; where one begins within 60 ms of the octave below it — the one shape this
+transcriber invents — the factorisation is asked, and the note is kept only if
+it is carrying its own weight. A piece with no doubled onsets never pays for it.
+
+Measured end to end on the fixture:
+
+|  | before | after |
+|---|---|---|
+| notes | 143 | 133 |
+| doubled onsets | 15 | 4 |
+| `explained` | 0.770 | 0.769 |
+| `unexplainedAtFundamentals` | 0.134 | **0.134** |
+| chroma | 0.958 | 0.953 |
+| onsetF1 | 0.891 | 0.897 |
+| roundTripF1 | 0.948 | 0.924 |
+| transcription time | 900 ms | 2300 ms |
+
+`unexplainedAtFundamentals` is the one to read: removing eleven notes left the
+unaccounted-for energy **exactly** where it was, which is only possible if those
+notes were accounting for nothing. `explained` says the same thing. Two
+independent checks that they were never there.
+
+Chroma and roundTripF1 fell slightly, and that is expected rather than
+worrying — this file already records that three of the four measures can be
+improved by *emitting more notes*, and the converse holds: removing notes lowers
+them whether or not the notes were real. What settles it is the rendered-MIDI
+control, which has a right answer. On two Mozart movements the scores are
+identical to four decimal places with the veto on and off — and it was not a
+no-op there: it was asked about seven doubled onsets in the rendered K331 and
+kept every one.
+
+The four survivors on the fixture are the four with independent evidence of
+being real, including both pairs whose onsets land in the *same* frame rather
+than one or two frames apart.
+
+Two things that mattered and were not obvious:
+
+- **Sparsity on the activations does nothing.** An L1 penalty cannot break an
+  octave tie at all: with the dictionary columns normalised, splitting one
+  note's energy between two atoms costs exactly what putting it in one does. A
+  concave penalty was implemented and swept; it made things worse at every
+  setting, chopping sustains into fragments. The dictionary is the part that
+  carries the answer, and it is enough on its own.
+- **The settling phase is not optional.** Learning the dictionary from every
+  third frame costs nothing in the answer and most of the time — but the
+  activations must then be settled over *every* frame with the dictionary held
+  still. Without that phase, 60 full iterations left six doubled onsets where 24
+  strided ones plus 8 settling left four, at a third of the cost.
+
 ## What did not work
 
-### The simultaneous-octave ghost (five attempts, all failed)
+### The five attempts at the octave ghost that failed first
 
-This is the open bug, and the reported symptom is real: the opening of the
+Kept because the reasons they failed are the reasons the sixth worked — every
+one of them tried to find the answer inside a single frame, and it is not there.
+
+The reported symptom was real: the opening of the
 fixture is a bass F and a treble A held together, joined about 1.4 s later by a
 treble F and later still by a treble C, and the transcription writes bass F,
 treble F and treble A all at the downbeat.
@@ -137,18 +216,21 @@ Attempts, in order:
    the octave. The residual did not separate the ghost moment from the real
    entry moment well enough to act on.
 
-`scratchpad/tracef4.mjs` shows why no threshold can work: at the ghost moment
-the F4 salience stands at **1.98×** the gate, while the two genuine F4 entries a
-second and two seconds later peak at **1.49×** and **1.85×**. The invented note
-is the stronger signal.
+No threshold can work: at the ghost moment the F4 salience stands at **1.98×**
+the gate, while the two genuine F4 entries a second and two seconds later peak
+at **1.49×** and **1.85×**. The invented note is the stronger signal.
 
 The structural reason: for an exact octave, every partial of the upper note lies
 on an even partial of the lower one. A single frame contains no evidence that
 could distinguish a real octave from an invented one. Only a per-instrument
 partial envelope, or watching the two notes decay at their own rates across
 time, can — and both are a different architecture from frame-wise peeling.
-NMF with a learned per-note dictionary is the standard answer and does not
-require a trained model, but it is a rewrite, not a patch.
+
+That last paragraph was written as a note to whoever came next, and it was
+right about the diagnosis and wrong about the cost. It is not a rewrite: the
+factorisation's activation matrix has the same shape as the salience surface the
+peeling produces, so it drops in beside it, and it only has to be asked where
+the ambiguity actually arises. See above.
 
 ### Local reference level for the gate
 
@@ -192,10 +274,7 @@ Net negative.
 
 In rough order of expected value:
 
-1. **Per-note dictionary decomposition** (NMF or similar) for the octave
-   problem. No trained model needed; the dictionary can be learned from the
-   recording being transcribed. It replaces peeling rather than augmenting it.
-2. **Onset-conditioned note starts.** Even with the octave ambiguity unsolved, a
+1. **Onset-conditioned note starts.** Even with the octave ambiguity unsolved, a
    note whose start does not coincide with a broadband onset could be forbidden
    from starting and forced to join the sustaining note instead. This addresses
    the reported symptom (notes shown together) without solving the underlying
@@ -203,5 +282,5 @@ In rough order of expected value:
 3. **A gate that adapts without following the loud passages** — the
    `localReference` idea with an asymmetric response, falling quickly and rising
    slowly.
-4. **Quiet re-strikes in mvt1**, the largest remaining loss in the rendered
+3. **Quiet re-strikes in mvt1**, the largest remaining loss in the rendered
    suite.
