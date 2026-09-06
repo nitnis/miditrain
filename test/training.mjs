@@ -113,6 +113,32 @@ await page.evaluate(async () => {
     for (const v of velocities) emit('midi:noteon', { pitch: 60, velocity: v });
   };
 
+  // A piece of chords: three notes struck together on each beat, voiced the way
+  // a pianist voices them — the melody on top, the inner parts under it.
+  // `spread` is how far the top note sits above the bottom one. It is the whole
+  // variable: a chord spread wider than its own bands is caught by the per-note
+  // rating anyway, and a chord spread narrower than them is the case that used
+  // to walk straight through — on the reference recording, over half of them.
+  T.setupChords = async (bars, spread = 24) => {
+    const notes = [];
+    for (let bar = 0; bar < bars; bar++) {
+      for (let beat = 1; beat <= 3; beat++) {
+        const at = bar * 2000 + beat * 500;
+        const mid = 62 + ((bar * 3 + beat) % 7) * 2;
+        [[72, spread / 2], [64, 0], [55, -spread / 2]].forEach(([pitch, offset]) => {
+          notes.push({ id: crypto.randomUUID(), pitch: pitch + (bar + beat) % 5,
+                       velocity: Math.round(mid + offset),
+                       startTime: at, duration: 400 });
+        });
+      }
+    }
+    state.composition.notes = notes;
+    state.composition.tracks = [];
+    state.composition.pedal = [];
+    emit('transport:noteschanged', notes);
+    return notes.map(n => [n.startTime, n.pitch, n.velocity]);
+  };
+
   // Give the piece a dynamic shape without giving it different notes. Whether
   // professional mode will grade a file at all is decided from its velocities
   // alone, so the three cases it has to tell apart — a flat export, two levels,
@@ -1154,7 +1180,8 @@ const both = await page.evaluate(async () =>
   (await import('/src/profiles.js')).current().bests);
 check('only the professional one carries a dynamics rating',
   [both[filed[0]].level, both[filed[1]].level !== null], [null, true]);
-check('...and it records which rules judged it', both[filed[1]].level.bandsVersion, 1);
+check('...and it records which rules judged it', both[filed[1]].level.bandsVersion,
+  await page.evaluate(async () => (await import('/src/dynamics.js')).BANDS_VERSION));
 
 // ── which run is the better one ──────────────────────────────────────────────
 //
@@ -1206,7 +1233,9 @@ check('a dynamics rating written out and read back is the same rating',
     return back.bests[Object.keys(back.bests).find(k => k.endsWith('|pro'))].level;
   }),
   { bandsVersion: 1, stars: 7, perfect: 6, good: 0, almost: 0, off: 0, graded: 6,
-    total: 6, meanAbsDelta: 2, bias: 0, floorDelta: 5, calibrated: true });
+    total: 6, meanAbsDelta: 2, noteStars: null, balanceStars: null,
+    balancePerfect: 0, balanceOff: 0, balanceGraded: 0,
+    bias: 0, floorDelta: 5, calibrated: true });
 check('...and one with no rules recorded is not trusted as one',
   await page.evaluate(async () => {
     const { bundleToJSON, current, adoptProfile } = await import('/src/profiles.js');
@@ -1370,6 +1399,94 @@ check('and a note dies away rather than holding, the way a string does',
   rings <= -10, true);
 
 await page.evaluate(() => window.__t.update('ui.professional', false));
+
+// ── balance: the hole a per-note rating leaves ───────────────────────────────
+//
+// Judging every note of a chord against its own band alone lets a flat chord
+// through. The perfect band at the reference recording's median velocity is
+// ±7.6 and its chords spread their notes a median of 14 apart, so two windows
+// overlap in the middle and playing both notes at the midpoint passes both:
+// 2,509 of its 4,604 chords could be played completely flat, every note at one
+// velocity, and every note would grade perfect. Chords are 54% of its attacks.
+//
+// These are that hole, from both sides.
+await closeResults();
+const setupChords = (bars, spread) =>
+  page.evaluate(([n, s]) => window.__t.setupChords(n, s), [bars, spread]);
+
+await setup();
+const chordGrid = await setupChords(6, 30);
+await section(1, 2);
+const chordNotes = chordGrid.filter(([at]) => at < 4000);
+await setPro(true);
+
+const voiced = await run('the chords voiced as they were written',
+  chordNotes.map(([at, pitch, v]) => [at, pitch, v]));
+check('a chord played as it was written is balanced', voiced.level.balanceOff, 0);
+check('...and every chord in the passage is asked about',
+  voiced.level.balanceGraded, chordNotes.length / 3);
+
+// Every note at the mean of its own chord: inside the band for each note taken
+// alone, and no voicing at all
+const flattened = chordNotes.map(([at, pitch], i, all) => {
+  const chord = all.filter(([t]) => t === at);
+  const mean = Math.round(chord.reduce((s, [, , v]) => s + v, 0) / chord.length);
+  return [at, pitch, mean];
+});
+const levelled = await run('the same chords played completely flat', flattened);
+check('a chord played flat is not balanced', levelled.level.balanceOff > 0, true);
+check('...and it costs the dynamics rating', levelled.level.stars < voiced.level.stars, true);
+// The point of the whole change: the per-note half cannot tell the two apart
+// The claim is comparative, and has to be: the per-note half does move on a
+// chord spread wider than its own bands. What it cannot do is move as far.
+const fell = (a, b) => (a.level.balanceStars - b.level.balanceStars)
+  > (a.level.noteStars - b.level.noteStars);
+check('...and the balance half falls further than the per-note half does',
+  [levelled.level.balanceStars, fell(voiced, levelled)], [0, true]);
+
+// The case the whole thing exists for: a chord spread narrower than its own
+// bands. Flat, every note is still inside its band and the per-note half sees
+// nothing at all. On the reference recording that is 2,509 chords of 4,604.
+await setup();
+const narrowGrid = await setupChords(6, 14);
+await section(1, 2);
+const tightNotes = narrowGrid.filter(([at]) => at < 4000);
+const tightVoiced = await run('narrow chords, voiced as written', tightNotes);
+const tightFlat = await run('narrow chords, played flat',
+  tightNotes.map(([at, pitch], i, all) => {
+    const chord = all.filter(([t]) => t === at);
+    return [at, pitch, Math.round(chord.reduce((s2, [, , v]) => s2 + v, 0) / chord.length)];
+  }));
+check('a chord narrower than its own bands barely troubles the per-note half',
+  tightVoiced.level.noteStars - tightFlat.level.noteStars <= 0.5, true);
+check('...while balance falls away under it',
+  tightVoiced.level.balanceStars - tightFlat.level.balanceStars >= 2, true);
+check('...so the rating as a whole comes down', tightFlat.level.stars < tightVoiced.level.stars, true);
+
+// Balance is a shape, not a level. Voiced correctly but played softer
+// throughout is right, and that is what "balance" means.
+const softer = await run('voiced correctly, but the whole passage softer',
+  chordNotes.map(([at, pitch, v]) => [at, pitch, Math.max(1, v - 18)]));
+check('a chord voiced right but played softer is still balanced',
+  softer.level.balanceOff, 0);
+check('...though fewer of its notes sit on their own marks',
+  softer.level.perfect < voiced.level.perfect, true);
+
+// A single line has no balance to judge, and its rating is what it always was
+await setup();
+await setupBars(6);
+await revelocity(SHAPED);
+await section(1, 2);
+const single = await run('a single line, where there is nothing to balance',
+  (await page.evaluate(async () => (await import('/src/state.js')).state.composition.notes
+    .filter(n => n.startTime < 4000).map(n => [n.startTime, n.pitch, n.velocity]))));
+check('a passage with no chords has no balance to grade',
+  [single.level.balanceGraded, single.level.balanceStars], [0, null]);
+check('...and its rating is exactly the per-note one',
+  single.level.stars, single.level.noteStars);
+
+await setPro(false);
+await closeResults();
 
 // ── the feet, graded — and only in professional mode ─────────────────────────
 //
