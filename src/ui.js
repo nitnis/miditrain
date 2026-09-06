@@ -4372,6 +4372,12 @@ function showLevelLine(level) {
     `dynamics · ${level.perfect} on the mark, ${level.off} well off`,
     lean,
   ];
+  // Said separately from the blended rating above it. Playing every note at the
+  // right level and every chord flat is a particular thing to be told, and one
+  // number cannot tell it.
+  if (level.balanceGraded) {
+    parts.push(`${level.balancePerfect} of ${level.balanceGraded} chords balanced`);
+  }
   // Worth saying, because it is the difference between a rating of this player
   // and a rating of whatever keyboard they happen to be sitting at
   if (!level.calibrated) parts.push('not calibrated to this keyboard');
@@ -4436,6 +4442,38 @@ function drawLevelStrip(level) {
     // Up for harder than was asked, down for softer
     ctx.fillRect(x, n.levelDelta >= 0 ? mid - tall : mid, barW, tall);
   });
+
+  drawContour(ctx, notes, w, mid, perUnit, slot);
+}
+
+// The shape of the error, over the top of the errors themselves.
+//
+// The bars say how far each note was out; smoothed, they say something the
+// tally cannot. A run whose lean is near zero and whose notes are half of them
+// wrong may have played the passage perfectly well and put its crescendo a bar
+// late — over first and under afterwards, averaging to nothing. That is one
+// thing to fix and it looks like forty until it is drawn.
+//
+// A diagnosis rather than a rating: everything under this line is already
+// scored above it. What is added is which shape the misses had.
+const CONTOUR_WINDOW = 4;   // notes either side
+
+function drawContour(ctx, notes, w, mid, perUnit, slot) {
+  if (notes.length < CONTOUR_WINDOW * 2 + 2) return;
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.62)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  notes.forEach((_, i) => {
+    const from = Math.max(0, i - CONTOUR_WINDOW);
+    const to = Math.min(notes.length, i + CONTOUR_WINDOW + 1);
+    let sum = 0;
+    for (let j = from; j < to; j++) sum += notes[j].levelDelta;
+    const y = mid - (sum / (to - from)) * perUnit;
+    const x = i * slot + slot / 2;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
 }
 
 // What the feet were worth. The lean is the coaching number again: a player

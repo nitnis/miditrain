@@ -14,7 +14,103 @@ import { handOf } from './hands.js';
 // stay comparable with one set tomorrow, and it cannot be if the bands moved
 // underneath it — so a run records which rules it was judged by, and a change
 // here means a change of number, not a silent re-grading of everybody's past.
-export const BANDS_VERSION = 1;
+// Two, since balance joined the rating. What a ♪ rating means changed, so what
+// it is comparable with changed with it.
+export const BANDS_VERSION = 2;
+
+// ── Balance ──────────────────────────────────────────────────────────────────
+//
+// Judging every note of a chord against its own band alone leaves a hole big
+// enough to walk through. The perfect band at the reference recording's median
+// velocity is ±7.6 and its chords spread their notes a median of 14 apart —
+// two windows 14 apart overlap in the middle, so playing both notes at the
+// midpoint passes both. Measured on that recording: **2,509 of its 4,604 chords
+// could be played completely flat, every note at one identical velocity, and
+// every note would grade perfect.** Chords are 54% of its attacks.
+//
+// So the melody and the accompaniment could be played at exactly the same
+// volume through half the piece and the rating would call the dynamics
+// flawless. Balance is that hole closed.
+//
+// What is compared is the shape of the chord rather than its level: each side
+// has its own mean taken out first, so a player who voices the chord correctly
+// but plays the whole of it softer is right, which is what "balance" means.
+//
+// Not "was the top note loudest" — in that recording the top note is the
+// loudest only 76% of the time, so a rule would be wrong a quarter of the time.
+// The reference's own spread is the target, by definition.
+const CHORD_MS = 40;
+
+// The tiers sit between two things, and have to, because a fixed tolerance
+// cannot be right for both ends of the music.
+//
+// Below: the player's own reproducibility. Balance is a difference of
+// differences and their wobble is what limits it — no band can be tighter than
+// what they can physically repeat.
+//
+// Above: how much the chord was voiced in the first place. A chord whose notes
+// are 24 apart, played flat, is a plain failure; a chord whose notes are 6
+// apart, played flat, is barely distinguishable from an unsteady hand. The
+// natural scale for both is the error a completely flat performance would
+// produce, which is exactly the reference chord's own mean spread about its
+// middle — so the thresholds are stated as fractions of "how wrong flat would
+// be". A quarter of the way to flat is on the mark; three-quarters of the way
+// is off.
+//
+// It is also, quietly, another reason to calibrate. Uncalibrated, the floor is
+// a guess of five and a lightly voiced chord played flat cannot be told from
+// wobble; measured, the floor drops and it can.
+const BALANCE_TIERS = { perfect: 0.8, good: 1.2, almost: 1.6 };
+const BALANCE_OF_VOICING = { perfect: 0.25, good: 0.45, almost: 0.7 };
+
+// How much of a chord's rating is its balance. The rest is what it always was:
+// whether the notes were at the level they were written at. A passage with no
+// chords in it has no balance to judge and is all level.
+export const BALANCE_WEIGHT = 0.5;
+
+// Notes struck together, as chords. Anything alone is not one.
+export function chordsOf(notes, at = (n) => n.startTimeMs) {
+  const sorted = [...notes].sort((a, b) => at(a) - at(b));
+  const out = [];
+  let group = [];
+  for (const n of sorted) {
+    if (group.length && at(n) - at(group[0]) > CHORD_MS) {
+      if (group.length > 1) out.push(group);
+      group = [];
+    }
+    group.push(n);
+  }
+  if (group.length > 1) out.push(group);
+  return out;
+}
+
+// One chord's balance: how far the shape the player made is from the shape the
+// piece asked for, once the level of each is taken out.
+export function balanceErrorOf(chord) {
+  const want = chord.map(n => n.target);
+  const got = chord.map(n => n.target + n.delta);
+  const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
+  const wantMid = mean(want);
+  const gotMid = mean(got);
+  return mean(chord.map((_, i) => Math.abs((got[i] - gotMid) - (want[i] - wantMid))));
+}
+
+// How much this chord was voiced at all: its notes' mean distance from their
+// own middle, which is the error a completely flat performance would produce.
+export function voicingOf(chord) {
+  const want = chord.map(n => n.target);
+  const mid = want.reduce((a, b) => a + b, 0) / want.length;
+  return want.reduce((a, v) => a + Math.abs(v - mid), 0) / want.length;
+}
+
+export function balanceGradeFor(error, floor, voicing = 0) {
+  const at = (tier) =>
+    Math.max(floor * BALANCE_TIERS[tier], voicing * BALANCE_OF_VOICING[tier]);
+  if (error <= at('perfect')) return 'perfect';
+  if (error <= at('good')) return 'good';
+  if (error <= at('almost')) return 'almost';
+  return 'off';
+}
 
 // ── Whether the file carries dynamics at all ─────────────────────────────────
 //
@@ -244,9 +340,17 @@ let memo = null;
 // keeps its own band but changes whose neighbour it is, and the local spread
 // that widens the bands around it moves with it. The calibration is in it
 // because every band in the piece rests on the floor it sets.
+// Weighted by position, not a plain sum. A plain one collides whenever two
+// pieces move the same total between their notes — swap a chord's top and
+// bottom velocities and the sum is unchanged — and the bands that come back
+// are keyed by the *other* piece's note ids, so not one note gets a band and
+// the whole rating quietly reads zero. Caught by two test fixtures that
+// differed only in how far their chords were spread.
 const keyFor = (notes, calibration) => {
   let sum = 0;
-  for (const n of notes) sum += (n.velocity ?? 90) + n.startTime;
+  for (let i = 0; i < notes.length; i++) {
+    sum += ((notes[i].velocity ?? 90) + notes[i].startTime) * (i + 1);
+  }
   return `${notes.length}:${sum}:${calibration?.at ?? 'raw'}`;
 };
 

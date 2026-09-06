@@ -4,6 +4,7 @@ import { atOrPast } from './quantizer.js';
 import { isPractised } from './hands.js';
 import {
   analyseDynamics, dynamicsIn, levelGradeFor, BANDS_VERSION, DEFAULT_FLOOR,
+  chordsOf, balanceErrorOf, balanceGradeFor, voicingOf, BALANCE_WEIGHT,
 } from './dynamics.js';
 import {
   pedalChanges, gradePedalChanges, heldShare, hasPedal,
@@ -546,6 +547,32 @@ function levelResults() {
   const deltas = struck.map(n => n.levelDelta);
   const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 
+  // Chords whose notes were struck. One note of a chord tells nothing about how
+  // it was balanced, so a chord needs at least two before it is asked about.
+  const chords = chordsOf(struck)
+    .map(chord => chord.map(n => ({ target: n.velocity, delta: n.levelDelta })))
+    .filter(chord => chord.length > 1);
+  const balances = chords.map(chord =>
+    balanceGradeFor(balanceErrorOf(chord), sessionFloor, voicingOf(chord)));
+  const balCount = (grade) => balances.filter(g => g === grade).length;
+  const inChords = chords.reduce((n, c) => n + c.length, 0);
+
+  const noteStars = starsFromCounts({ perfect, good, almost, total: struck.length });
+  const balanceStars = balances.length
+    ? starsFromCounts({
+        perfect: balCount('perfect'), good: balCount('good'),
+        almost: balCount('almost'), total: balances.length,
+      })
+    : null;
+
+  // How much of the rating balance carries: half of whatever share of the
+  // playing was chords. A single line has no balance to judge and is all level;
+  // a passage of nothing but chords is half one and half the other.
+  const share = struck.length ? (inChords / struck.length) * BALANCE_WEIGHT : 0;
+  const blended = balanceStars === null
+    ? noteStars
+    : noteStars * (1 - share) + balanceStars * share;
+
   return {
     bandsVersion: BANDS_VERSION,
     floorDelta: Math.round(sessionFloor * 10) / 10,
@@ -556,7 +583,16 @@ function levelResults() {
     graded: struck.length,
     total: expectedNotes.length,
     coverage: expectedNotes.length ? struck.length / expectedNotes.length : 0,
-    stars: starsFromCounts({ perfect, good, almost, total: struck.length }),
+    // Rounded to the same quarter the rating is always read in, so a blend of
+    // two ratings is still a number that can be shown as stars
+    stars: Math.max(0, Math.floor(blended * 4 + 1e-9) / 4),
+    // Kept apart as well as blended, because "your notes were right and your
+    // chords were flat" is the useful sentence and one number cannot say it
+    noteStars,
+    balanceStars,
+    balancePerfect: balCount('perfect'),
+    balanceOff: balCount('off'),
+    balanceGraded: balances.length,
     // How far off, and — the more useful of the two for practising — which way.
     // A player whose bias is +14 is leaning on everything, which is one habit
     // to fix rather than a hundred separate notes to correct.

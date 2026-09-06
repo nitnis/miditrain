@@ -189,6 +189,17 @@ function sanitiseLevel(raw) {
     graded: int(raw.graded, 0, 1e6, 0),
     total: int(raw.total, 0, 1e6, 0),
     meanAbsDelta: int(raw.meanAbsDelta, 0, 127, 0),
+    // The two halves the rating was blended from, kept apart as well as
+    // together: "your notes were right and your chords were flat" is the useful
+    // sentence, and the blended number cannot say it. Absent on a rating set
+    // before balance was graded, which is what the version is for.
+    noteStars: Number.isFinite(raw.noteStars)
+      ? Math.min(10, Math.max(0, Math.round(raw.noteStars * 4) / 4)) : null,
+    balanceStars: Number.isFinite(raw.balanceStars)
+      ? Math.min(10, Math.max(0, Math.round(raw.balanceStars * 4) / 4)) : null,
+    balancePerfect: int(raw.balancePerfect, 0, 1e6, 0),
+    balanceOff: int(raw.balanceOff, 0, 1e6, 0),
+    balanceGraded: int(raw.balanceGraded, 0, 1e6, 0),
     // Signed: which way they leaned, not only how far
     bias: int(raw.bias, -127, 127, 0),
     floorDelta: Number.isFinite(raw.floorDelta)
