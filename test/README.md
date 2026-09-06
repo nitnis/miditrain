@@ -169,6 +169,28 @@ an octave the fundamental leaks into the "high" band and swamps the thing being
 asked about. It is the app's own FFT, so the measurement and the transcriber
 cannot come to disagree about what a spectrum is.
 
+### Balance needs two chords, not one
+
+Whether a chord was voiced is checked at two spreads, and the pair is the point.
+
+A chord spread **wider** than its own bands is caught by the per-note rating
+anyway — flatten it and some notes fall outside their windows regardless. A
+chord spread **narrower** than its bands is the case the whole thing exists for:
+flat, every note is still inside its window and the per-note half sees almost
+nothing. On the reference recording that is 2,509 chords of 4,604.
+
+So the claim these check is comparative rather than absolute — the balance half
+falls further than the per-note half does — because the absolute version is only
+true at one of the two spreads, and pinning it there would have been a check
+that passed for the wrong reason.
+
+The fixtures for it found a real defect. Two pieces with the same note count,
+the same start times and the same per-chord velocity *sums* — which is what two
+chord fixtures differing only in spread are — collided in the dynamics memo,
+and the second got the first's bands, keyed by note ids that no longer existed.
+Every note came back ungraded and the rating read zero. The key is weighted by
+position now.
+
 ### Grading the feet, and the four ways of getting it wrong
 
 Pedalling is shown in every mode and graded only in professional mode, and what
