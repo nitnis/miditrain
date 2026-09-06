@@ -276,6 +276,13 @@ do not:
 | `explained` | how much of the **original's** energy sits where the transcribed notes predict their partials. Nothing of the synth is in this one. |
 | `roundTripF1` | transcribe the playback and score it against the first pass. Self-consistency, not truth — but a note that cannot survive being played and heard again was never solid. |
 
+There is a fifth number, and it counts one specific wrong shape: notes that
+begin at the same instant as the octave below them. That is what this
+transcriber used to invent — fifteen of them on this recording — and the four
+that are left are the four with independent evidence of being real. It is
+counted rather than eyeballed because the bug survived five attempts at it, and
+nothing but a number was ever able to say whether an attempt had worked.
+
 `unexplainedAtFundamentals` is the sharpest of them: energy below 1100 Hz, where
 fundamentals live rather than overtones, that no transcribed note accounts for.
 That is the number to watch when hunting for notes the transcriber walks past.
