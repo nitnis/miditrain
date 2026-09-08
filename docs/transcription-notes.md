@@ -13,11 +13,15 @@ from an estimate.
 Three harnesses, and they disagree with each other on purpose.
 
 **Rendered MIDI.** Render a known MIDI file with the app's own player,
-transcribe the rendering, score the notes against the file. Exact, and blind to
-anything that only happens with a real instrument — see the band-calibration bug
-below, which lived happily here for a long time. Three cases as of this writing:
-K331 mvt1 `0.9576`, mvt3 `0.9501`, and a real Schubert performance `0.7005`,
-mean `0.8694`, over the first 25 seconds of each.
+transcribe the rendering, score the notes against the file. Exact. Three cases as
+of this writing: K331 mvt1 `0.8451`, mvt3 `0.7831`, and a real Schubert
+performance `0.5612`, mean `0.7298`, over the first 25 seconds of each.
+
+Those numbers were `0.9576 / 0.9501 / 0.7005`, mean `0.8694`, until the player
+stopped being an oscillator — see below. Nothing about the transcriber changed.
+This harness was for a long time blind to anything that only happens with a real
+instrument, which is how the band-calibration bug lived here undetected, and it
+is much less blind now.
 
 It is `test/rendered.mjs`. **The fixtures are not in the repo and it skips
 without them** — a MIDI file carries its own licence whatever the age of the
@@ -123,6 +127,74 @@ and `coverage` (the share of beat lines that actually have an attack on them,
 which argues it is too fast). `between` alone looked perfect on the test set
 until two counter-cases were added — `q100→150` and `chorale84→126`, both
 1.5× impostors. The test set was missing the case that mattered. It usually is.
+
+### Rendering through a recorded piano instead of an oscillator
+
+The app's voice was a triangle plus a sawtooth through a lowpass. A triangle has
+only ODD harmonics. A struck string has all of them. Measured on the same note at
+the same velocity against a recording of a real piano:
+
+| partial | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|
+| recorded | 0.379 | 0.063 | 0.199 | 0.131 | 0.107 | 0.121 | 0.040 |
+| the synth | 0.057 | 0.060 | 0.035 | 0.072 | 0.021 | 0.001 | 0.009 |
+
+Summed over the even partials the recording carries **six times** what the synth
+does at C4 and **twelve times** at C2. The recording's partials also run sharp of
+exact multiples — up to +14 cents by the eighth — because a real string is stiff,
+and an oscillator's never do.
+
+This matters far more to the tests than to the sound. **The octave ambiguity that
+took six attempts and `nmf.js` to solve only exists when a note has strong even
+partials**, because every partial of the upper note has to land on one of the
+lower one's. The synth has almost none. So for the entire history of this file,
+the rendered suite could not produce the single hardest failure the real
+recording produces, and every number it reported was partly a measure of how well
+this reads a triangle wave.
+
+`src/piano.js` plays eighty-eight recordings instead, and `render-offline.js`
+renders through them, so the tests now contain the bug. What that cost:
+
+| | oscillator | recorded |
+|---|---|---|
+| K331 mvt1 | 0.9576 | 0.8451 |
+| K331 mvt3 | 0.9501 | 0.7831 |
+| Schubert | 0.7005 | 0.5612 |
+| mean | 0.8694 | **0.7298** |
+
+Nothing about the transcriber changed between those columns. That fall is not a
+regression, it is the previous number having been wrong about the difficulty.
+
+The real recording says the same thing from the other side. `roundtrip.mjs`
+measures the actual audio, so the numbers that never touch the player did not
+move at all — `explained` 0.771 and `unexplainedAtFundamentals` 0.131, both
+identical to four figures. Two that do touch it moved, in opposite directions and
+both correctly:
+
+| | before | after |
+|---|---|---|
+| `chroma` | 0.954 | **0.966** |
+| `roundTripF1` | 0.939 | 0.824 |
+
+`chroma` compares the recording's pitch-class energy against the playback's, and
+it rose because the playback now resembles a piano. `roundTripF1` transcribes the
+playback and scores it against the first pass, and it fell because doing that is
+now genuinely hard — the playback has the even partials that make octaves
+ambiguous. One measure got better and one got harder, which is exactly the shape
+you would predict, and neither could have been faked by the other.
+
+**Every number in `TUNING` survived untouched.** `gateHi`, `presence`,
+`subtract`, `voiceFloor` and `maxVoices` were all re-swept against the new audio
+on the suspicion that they had been fitted to the synth. Every one of them sat on
+the same value it already had. The single exception was `voiceFloor` at 0.12,
+worth +0.005 mean on the rendered set and exactly nothing on the real recording —
+identical note count, identical octave doubles — so by this file's own rule it
+was not taken.
+
+What it is not: one velocity layer, so how hard a note was struck is carried by
+loudness and a lowpass rather than by a different recording; and 3.13 seconds
+long, so a pedalled bass note stops before a real one would. `assets/piano/`
+has the details and how to swap the set.
 
 ### The peeling ran out of rounds before it ran out of notes
 
@@ -436,8 +508,8 @@ In rough order of expected value:
    question — it is per-note and learned from the recording, so a re-struck note
    should show in it as a rise the peeling cannot see.
 2. **The gap between a rendering and a performance.** Two rendered Mozart
-   movements score 0.95; a real performance rendered the same way scores 0.70,
-   at 0.84 precision and 0.60 recall. Everything in this file was tuned against
+   movements score around 0.8; a real performance rendered the same way scores
+   0.56, at 0.61 precision and 0.52 recall. Everything in this file was tuned against
    music that is sparser and more evenly voiced than what people actually play.
    One more real performance in `test/fixtures/rendered/` is worth more than
    another parameter sweep.

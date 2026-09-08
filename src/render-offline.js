@@ -8,6 +8,7 @@
 //
 // It is also most of an audio export: a buffer plus a wav header is a file.
 import { makeVoice, playNoteAt } from './audio.js';
+import { loadPiano } from './piano.js';
 import { sustainSpans, soundingEnd } from './pedal.js';
 
 // Transcription works at 22.05 kHz, and rendering straight to that rate saves
@@ -50,6 +51,11 @@ export async function renderToBuffer(notes, { sampleRate = RENDER_RATE, pedal = 
   // No compressor and no master gain: those shape what a listener hears, and
   // what this is for is measuring what was played. A fixed headroom gain keeps
   // a dense chord off the ceiling without moving anything relative to anything.
+  // Unlike the speakers, this one waits. A rendering is what the transcription
+  // tests are scored against, so it has to be the same audio every time rather
+  // than oscillators or recordings depending on what had finished loading.
+  await loadPiano(sampleRate);
+
   const bus = ctx.createGain();
   bus.gain.value = 0.6;
   bus.connect(ctx.destination);

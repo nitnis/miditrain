@@ -32,23 +32,29 @@ files you have:
 
 | | F1 |
 |---|---|
-| K331 mvt1 | 0.9576 |
-| K331 mvt3 | 0.9501 |
-| Schubert, a real performance | 0.7005 |
+| K331 mvt1 | 0.8451 |
+| K331 mvt3 | 0.7831 |
+| Schubert, a real performance | 0.5612 |
 
-Two rendered sequences score 0.95; a real performance rendered exactly the same
-way scores 0.70, at 0.87 precision and 0.57 recall. Every number in
-`TUNING` was settled against music sparser and more evenly voiced than what
-people actually play, and that gap is the largest known weakness in
-`src/transcribe.js`. **At least one real performance here is worth more than
-three more sequences.**
+Two rendered sequences score around 0.8; a real performance rendered exactly the
+same way scores 0.56, at 0.61 precision and 0.52 recall. Every number in `TUNING`
+was settled against music sparser and more evenly voiced than what people
+actually play, and that gap is the largest known weakness in `src/transcribe.js`.
+**At least one real performance here is worth more than three more sequences.**
+
+All three numbers used to be far higher — 0.9576, 0.9501, 0.7005 — and they fell
+when the renderer stopped using oscillators and started using recordings of a
+piano. Nothing about the transcriber changed. What changed is that the audio
+being rendered now has the even partials a struck string has, and those are what
+make an octave ambiguous. The old scores were measuring how well this reads a
+triangle wave. See `docs/transcription-notes.md`.
 
 ## Baselines
 
 Put a `baselines.json` beside the fixtures:
 
 ```json
-{ "mz_331_1": 0.9576, "mz_331_3": 0.9501, "schubert": 0.7005 }
+{ "mz_331_1": 0.8451, "mz_331_3": 0.7831, "schubert": 0.5612 }
 ```
 
 Keyed by filename without the extension, valued at the F1 the fixture scores
