@@ -44,7 +44,14 @@ the PRNG was seeded (`mkRnd(777)`, `mkRnd(31337)`). Seed before sweeping
 anything.
 
 **`test/roundtrip.mjs`.** A real recording with no score, compared against
-itself. See `test/README.md`. This is the only check with a real piano in it.
+itself. See `test/README.md`. This is the only check with a real piano in it,
+and the only one that has ever caught a fault the app's own voice cannot
+produce — the band-calibration bug below is the case in point.
+
+Its recording is not in the repository either, and for a plainer reason than the
+MIDI: it came off a video and is not licensed at all. The baselines quoted
+throughout this file belong to that one recording and mean nothing against
+another.
 
 A change is only worth having if it moves the real-audio numbers *and* leaves
 the rendered scores alone. Three of the four round-trip measures can be improved

@@ -364,11 +364,25 @@ the audio independently rather than acting on the ranking:
 
 Anything this points at is worth confirming in the samples before believing.
 
-## `fixtures/piano-30s.wav`
+## `fixtures/`
 
-Thirty seconds of solo piano, mono, 16-bit, at 22.05 kHz — which is the rate the
-transcriber resamples everything to, so nothing it would have used was thrown
-away. 1.3 MB.
+Nothing in this directory is in the repository, and both tests that need
+something from it skip and say so when it is absent.
 
-It is real playing, with pedal and rubato and a room, and it has no score, which
-is the point of it.
+The recording `roundtrip.mjs` was developed against came off a video and is not
+licensed for redistribution; the MIDI files `rendered.mjs` was developed against
+each carry their own terms whatever the age of the music. MidiTrain is MIT. The
+harnesses are the part that was written here and the part worth keeping, so
+those are committed and the material is not.
+
+`fixtures/README.md` says what to supply in place of the recording — solo piano,
+thirty seconds, mono 16-bit at 22050 Hz, with pedal and rubato, and no score,
+which is the whole point of it. `fixtures/rendered/README.md` does the same for
+the MIDI.
+
+One warning that applies to both: the baselines in `roundtrip.mjs` belong to one
+specific recording. Every measure it takes is a share or a similarity rather than
+an absolute, but a different pianist in a different room is a different problem,
+not the same problem measured again. Against your own audio those numbers will
+report failures that are not failures — take a reading you trust, write it down,
+and keep it local.
