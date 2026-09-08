@@ -1,0 +1,8 @@
+# Recordings are not licensed for redistribution, whatever the age of the music.
+# The harnesses are in the repository; the material they run on is not.
+# See README.md.
+*.wav
+*.mp3
+*.m4a
+*.flac
+*.ogg

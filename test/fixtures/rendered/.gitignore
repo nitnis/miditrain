@@ -1,0 +1,5 @@
+# The fixtures are yours to supply and must not be committed — a MIDI file
+# carries its own licence whatever the age of the music. See README.md.
+*
+!.gitignore
+!README.md

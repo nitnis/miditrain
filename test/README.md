@@ -9,6 +9,10 @@ python3 -m http.server 7700          # from the repository root
 node test/roundtrip.mjs              # in another shell
 ```
 
+Four scripts: `training.mjs`, `tracks.mjs`, `roundtrip.mjs` and `rendered.mjs`.
+The last needs MIDI files that are not in the repository and skips without
+them — see below.
+
 `ORIGIN` and `CHROME` override the server address and the browser binary.
 
 ## `training.mjs` — what a run gets charged, and what it leaves behind
@@ -251,6 +255,60 @@ about its output. `push(...bytes)` passes every element as an argument, and a
 piece this size overflowed the stack before a byte reached the disk — so what it
 checks is that a file comes out at all.
 
+## `rendered.mjs` — transcription against music with a right answer
+
+Render a known MIDI file through the app's own player, transcribe the rendering,
+score the notes against the file that went in. A hit is the same pitch within
+100 ms of where it was written, and each note the transcriber produced may be
+claimed only once — otherwise one long note under a repeated one scores as all
+of them.
+
+This is the strongest check on `src/transcribe.js`, and `roundtrip.mjs` exists
+anyway because it is also blind. The app's own voice gives every note a clean
+strong fundamental, so a two-fold imbalance between the two analysis bands once
+lived here undetected for a long time. Neither harness is enough alone: a change
+is worth having when it moves both.
+
+**The fixtures are not in the repository and this test skips without them.** A
+MIDI file is somebody's sequencing or somebody's recorded performance, with its
+own licence, whatever the age of the music — and MidiTrain is MIT. So the
+harness is here and the data is yours to supply; `fixtures/rendered/README.md`
+says what to drop in, where to get it, and how to write the baselines that turn
+a report into a regression test. Baselines live beside the fixtures for the same
+reason the fixtures are absent: a recorded number for a file nobody has is not
+something anyone can check.
+
+Two flags, both rebuilt from scratch more than once before they lived anywhere:
+
+```bash
+node test/rendered.mjs --why
+node test/rendered.mjs --sweep maxVoices=8,16 --sweep gateHi=0.40,0.34
+```
+
+`--why` sorts every missed note into why it was missed, by reading what the
+salience surface was doing at that pitch at that moment:
+
+| | |
+|---|---|
+| `invisible` | the peeling never gave the pitch anything |
+| `under the gate` | it is there, and never reaches `gateHi` |
+| `already on` | loud enough, but the pitch was sounding and the re-strike test did not fire |
+| `too short` | the gate opened and the segment was under `minFrames` |
+
+Four faults wearing one symptom, calling for entirely different work. This is
+the first thing to run when recall moves, and it is what turned "the bass is
+bad" into a specific constant being wrong — see `docs/transcription-notes.md`.
+
+`--sweep` runs every combination of any keys in `TUNING`. Rendering is done once
+per fixture and reused across combinations, so a sweep costs about one pass plus
+the transcriptions. Every number in `TUNING` was settled this way, and most of
+them have been re-swept since and are sitting on their best value; read the
+notes before assuming a knob has slack in it.
+
+Neither number here is a target. F1 on these files can be improved by tuning
+against these files, exactly as three of the four round-trip measures can be
+improved by emitting more notes.
+
 ## `roundtrip.mjs` — transcription against a real recording
 
 The transcriber's other checks render a MIDI file, transcribe the rendering, and
@@ -306,11 +364,25 @@ the audio independently rather than acting on the ranking:
 
 Anything this points at is worth confirming in the samples before believing.
 
-## `fixtures/piano-30s.wav`
+## `fixtures/`
 
-Thirty seconds of solo piano, mono, 16-bit, at 22.05 kHz — which is the rate the
-transcriber resamples everything to, so nothing it would have used was thrown
-away. 1.3 MB.
+Nothing in this directory is in the repository, and both tests that need
+something from it skip and say so when it is absent.
 
-It is real playing, with pedal and rubato and a room, and it has no score, which
-is the point of it.
+The recording `roundtrip.mjs` was developed against came off a video and is not
+licensed for redistribution; the MIDI files `rendered.mjs` was developed against
+each carry their own terms whatever the age of the music. MidiTrain is MIT. The
+harnesses are the part that was written here and the part worth keeping, so
+those are committed and the material is not.
+
+`fixtures/README.md` says what to supply in place of the recording — solo piano,
+thirty seconds, mono 16-bit at 22050 Hz, with pedal and rubato, and no score,
+which is the whole point of it. `fixtures/rendered/README.md` does the same for
+the MIDI.
+
+One warning that applies to both: the baselines in `roundtrip.mjs` belong to one
+specific recording. Every measure it takes is a share or a similarity rather than
+an absolute, but a different pianist in a different room is a different problem,
+not the same problem measured again. Against your own audio those numbers will
+report failures that are not failures — take a reading you trust, write it down,
+and keep it local.

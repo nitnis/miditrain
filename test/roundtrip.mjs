@@ -30,7 +30,7 @@
 // Run it with a local server on port 7700 and:
 //   node test/roundtrip.mjs [seconds]
 import { chromium } from '/opt/node22/lib/node_modules/playwright/index.mjs';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -42,13 +42,19 @@ const ORIGIN = process.env.ORIGIN || 'http://localhost:7700';
 // What the fixture scored when this was written. A regression suite needs a
 // number to have regressed from; these are not targets to tune towards, and
 // moving them is only meaningful alongside the rendered-MIDI tests.
+//
+// They belong to ONE recording and say nothing about any other. Everything here
+// is a share or a similarity rather than an absolute, but a different pianist in
+// a different room is a different problem, not the same problem measured again.
+// Against your own recording these numbers are noise — record your own once you
+// trust the run, and keep them out of the repository along with the audio.
 const BASELINE = {
   notes: 133,
-  chroma: 0.953,
+  chroma: 0.954,
   onsetF1: 0.897,
-  explained: 0.769,
-  unexplainedAtFundamentals: 0.134,
-  roundTripF1: 0.924,
+  explained: 0.771,
+  unexplainedAtFundamentals: 0.131,
+  roundTripF1: 0.939,
 };
 
 // The shape this transcriber used to invent: a note beginning at the same
@@ -58,6 +64,16 @@ const BASELINE = {
 // wrong for five attempts in a row and nothing but a number was ever able to
 // say so.
 const MAX_OCTAVE_DOUBLES = 4;
+
+// The recording is not in the repository. It is a real piano taken from a
+// video, which makes it the right thing to test against and nothing anyone can
+// redistribute — see `fixtures/README.md` for what to put in its place.
+if (!existsSync(FIXTURE)) {
+  console.log(`\n  No recording at ${FIXTURE.replace(HERE, 'test')} — skipping.`);
+  console.log('  This test needs a piano recording, which is not in the repository.');
+  console.log('  See test/fixtures/README.md.\n');
+  process.exit(0);
+}
 
 const browser = await chromium.launch({
   executablePath: process.env.CHROME || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
