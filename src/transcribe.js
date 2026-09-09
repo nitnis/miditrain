@@ -126,6 +126,10 @@ export const TUNING = {
   voiceFloor: VOICE_FLOOR, subtract: SUBTRACT_STRENGTH, maxVoices: MAX_VOICES,
   minFrames: 4, restrikeLag: 2, presence: 0.6, dip: 0.75, restrikeSpan: 4,
   reattackFloor: 0.14,
+  // How much more a bass re-strike has to move than a treble one. Its timing
+  // comes from partials it shares with whatever is playing above it, so the
+  // evidence is noisier — see `buildAttackTable`
+  bassReattack: 1,
 };
 
 // ── Where each pitch's partials live ─────────────────────────────────────────
@@ -234,6 +238,74 @@ function subtractPitch(entry, fine, coarse, level) {
   }
 }
 
+// ── Where a bass note is struck ──────────────────────────────────────────────
+//
+// A repeated note is found by the level falling between the strikes and coming
+// back. Below the crossover that cannot work, and no threshold can make it:
+// those pitches are heard through a 743 ms window, so two strikes closer
+// together than that are both inside the window at once and the level between
+// them never falls at all.
+//
+// Measured, C3 struck six times with nothing else sounding. Recall against the
+// gap between strikes:
+//
+//   gap        200   300   400   500   600   750   900  1100  1400
+//   MIDI 48    17%   17%   17%   17%   17%   17%  100%  100%  100%
+//   MIDI 72   100%  100%  100%  100%  100%  100%  100%  100%  100%
+//
+// 17% is one strike in six — the first one. The cliff sits exactly at the
+// window length, and above the crossover, where the window is 186 ms, there is
+// no problem to solve.
+//
+// But the note's own upper partials are not down there. C3 is 131 Hz and its
+// second partial is 262 Hz, well above the crossover, in the fine spectrum
+// where the window is 186 ms. Between those same six strikes, the level at
+// partials 2-5 falls 42% every time where the coarse salience falls 1% — nearly
+// six times deeper, and consistent rather than collapsing after the first
+// strike. The evidence was never missing; it was being read in the one band
+// that cannot see it.
+//
+// So a bass pitch gets a second envelope, built from its partials in the fine
+// spectrum, and the re-strike test reads that instead. Only the timing comes
+// from it. Whether the pitch is sounding at all is still the salience's
+// question, because the fundamental is the thing that says a note is that note
+// rather than the octave below it.
+//
+// Which partials: everything from the second up to the eighth that lands above
+// the crossover frequency. Below that the fine spectrum's 5.4 Hz bins cannot
+// keep a partial apart from its neighbour a semitone away, and including one
+// there would measure the neighbour.
+const ATTACK_PARTIALS = 8;
+const COARSE_PITCHES = CROSSOVER_MIDI - LOWEST_PITCH;
+
+function buildAttackTable() {
+  const binHz = RATE / FINE_WINDOW;
+  const bins = FINE_WINDOW / 2 + 1;
+  const floor = midiToFreq(CROSSOVER_MIDI);
+  const table = [];
+  for (let pitch = LOWEST_PITCH; pitch < CROSSOVER_MIDI; pitch++) {
+    const f0 = midiToFreq(pitch);
+    const ranges = [];
+    for (let h = 2; h <= ATTACK_PARTIALS; h++) {
+      const f = f0 * h;
+      if (f < floor || f > (RATE / 2) * 0.9) continue;
+      const lo = Math.max(1, Math.round((f * Math.pow(2, -PARTIAL_TOLERANCE / 12)) / binHz));
+      const hi = Math.min(bins - 1, Math.round((f * Math.pow(2, PARTIAL_TOLERANCE / 12)) / binHz));
+      if (hi >= lo) ranges.push({ lo, hi });
+    }
+    table.push(ranges);
+  }
+  return table;
+}
+
+
+// How the partials are combined into one number.
+//
+// Summing them treats a note landing on one partial as if this note had been
+// struck: the sixth partial of C2 is 392 Hz, which is G4. Taking the middle one
+// instead is robust to that — a re-strike lifts every partial of the note at
+// once, and a colliding note lifts one.
+
 // ── The salience surface ─────────────────────────────────────────────────────
 
 // For every frame, how strongly each pitch is sounding. This is the only thing
@@ -242,13 +314,32 @@ function subtractPitch(entry, fine, coarse, level) {
 export function computeSalience(pcm, onProgress) {
   const analyzer = makeAnalyzer(pcm);
   const table = buildPitchTable();
+  const attackTable = buildAttackTable();
   const frames = analyzer.frames;
   const salience = new Float32Array(frames * PITCHES);
+  // Only the pitches below the crossover need one, so this is a little under
+  // half the size of the salience surface rather than another copy of it
+  const attack = new Float32Array(frames * COARSE_PITCHES);
   const scores = new Float32Array(PITCHES);
+  const buf = new Float64Array(ATTACK_PARTIALS + 1);
+  const levels = new Float64Array(COARSE_PITCHES * (ATTACK_PARTIALS + 1));
 
   for (let f = 0; f < frames; f++) {
     const { fine, coarse } = analyzer.at(f);
     const base = f * PITCHES;
+    // The levels come from the spectrum before anything is peeled out of it,
+    // which is what actually arrived at each partial
+    for (let i = 0; i < COARSE_PITCHES; i++) {
+      const ranges = attackTable[i];
+      const at = i * (ATTACK_PARTIALS + 1);
+      for (let h = 0; h < ranges.length; h++) {
+        const r = ranges[h];
+        let best = 0;
+        for (let k = r.lo; k <= r.hi; k++) if (fine[k] > best) best = fine[k];
+        levels[at + h] = best;
+      }
+    }
+
 
     let loudest = 0;
     for (let v = 0; v < TUNING.maxVoices; v++) {
@@ -271,10 +362,58 @@ export function computeSalience(pcm, onProgress) {
       subtractPitch(table[best], fine, coarse, fundamentalLevel(table[best], fine, coarse));
     }
 
+    // Read AFTER the peeling, from what it left behind.
+    //
+    // A bass note's upper partials are not private to it: the sixth partial of
+    // C2 is 392 Hz, which is also G4, so a right hand playing G4 makes the bass
+    // note look struck again. Measured, that split one held bass note into as
+    // many as five.
+    //
+    // Peeling is what settles it, and it settles it for free. A pitch below the
+    // crossover subtracts from the COARSE spectrum only — `subtractPitch` picks
+    // the spectrum from the pitch's own band — so nothing here removes the bass
+    // note's own partials. Everything above the crossover subtracts from this
+    // one, so the right hand's G4 is taken out of 392 Hz before this reads it.
+    // What is left at a bass note's partials is the part of them the peeling
+    // could not account for any other way.
+    // The middle partial, not the sum of them. A bass note's partials are not
+    // private to it — the sixth partial of C2 is 392 Hz, which is G4 — and in
+    // tonal music the notes above a bass note sit on its partials by
+    // definition. A real re-strike lifts every partial of the note at once; a
+    // note landing on one lifts one, and the middle of the distribution does
+    // not move. Summing them instead split a held bass note into five.
+    const aBase = f * COARSE_PITCHES;
+    for (let i = 0; i < COARSE_PITCHES; i++) {
+      const n = attackTable[i].length;
+      const at = i * (ATTACK_PARTIALS + 1);
+      for (let h = 0; h < n; h++) buf[h] = levels[at + h];
+      const slice = Array.prototype.slice.call(buf, 0, n).sort((a, b) => a - b);
+      attack[aBase + i] = n ? slice[n >> 1] : 0;
+    }
+
     if (onProgress && (f & 63) === 0) onProgress(f / frames);
   }
 
-  return { salience, frames, pitches: PITCHES, analyzer };
+  // The attack envelope is in the fine spectrum's units and the salience is an
+  // average over a weighted partial series, so the two do not share a scale.
+  // Rather than give the re-strike test a second set of thresholds, each bass
+  // pitch's envelope is scaled to its own salience: same peak, same units, and
+  // every constant that was swept against the salience still means what it
+  // meant. A pitch that never sounds is left at zero, where the gate keeps it.
+  for (let i = 0; i < COARSE_PITCHES; i++) {
+    let sPeak = 0, aPeak = 0;
+    for (let f = 0; f < frames; f++) {
+      const sv = salience[f * PITCHES + i];
+      const av = attack[f * COARSE_PITCHES + i];
+      if (sv > sPeak) sPeak = sv;
+      if (av > aPeak) aPeak = av;
+    }
+    if (!(aPeak > 0) || !(sPeak > 0)) continue;
+    const k = sPeak / aPeak;
+    for (let f = 0; f < frames; f++) attack[f * COARSE_PITCHES + i] *= k;
+  }
+
+  return { salience, attack, frames, pitches: PITCHES, analyzer };
 }
 
 // ── Salience into notes ──────────────────────────────────────────────────────
@@ -360,7 +499,7 @@ function onsetFrame(salience, frames, pitches, p, gateFrame, ramp) {
 // `frameMs` is the step between frames; `originMs` is where frame zero actually
 // sits in the recording, which is the middle of its window rather than its
 // start. Leaving that out reports every onset most of a window early.
-export function tracksToNotes(salience, frames, pitches, frameMs, reference, originMs = 0) {
+export function tracksToNotes(salience, frames, pitches, frameMs, reference, originMs = 0, attack = null) {
   const onsetOf = (p, gateFrame, ramp) => onsetFrame(salience, frames, pitches, p, gateFrame, ramp);
   const hi = reference * TUNING.gateHi;
   const lo = reference * TUNING.gateLo;
@@ -371,9 +510,18 @@ export function tracksToNotes(salience, frames, pitches, frameMs, reference, ori
   for (let p = 0; p < pitches; p++) {
     const pitch = p + LOWEST_PITCH;
     const ramp = rampFrames(pitch);
+    // Which envelope times a second strike. Above the crossover the salience is
+    // the only thing there is and this is the identity; below it, the note's own
+    // upper partials, which are heard through a window four times shorter — see
+    // `buildAttackTable`. Scaled to the salience, so every constant below still
+    // means what it meant.
+    const timing = (attack && pitch < CROSSOVER_MIDI)
+      ? (f) => attack[f * COARSE_PITCHES + p]
+      : (f) => salience[f * pitches + p];
     let start = -1;
-    let peak = 0;
+    let peak = 0;      // of the timing envelope, which is what `bar` is measured on
     let trough = 0;
+    let loudest = 0;   // ...and of the salience, which is what velocity is read from
     let quiet = 0;
     // Whether this segment began from silence or from the note being struck
     // again while it was still sounding. The two need different answers about
@@ -395,19 +543,23 @@ export function tracksToNotes(salience, frames, pitches, frameMs, reference, ori
           pitch,
           startTime: Math.max(0, began * frameMs + originMs),
           duration: Math.max(frameMs, (endFrame - began) * frameMs),
-          velocity: Math.max(1, Math.min(127, Math.round(20 + 107 * Math.min(1, peak / (reference * 0.6))))),
+          velocity: Math.max(1, Math.min(127, Math.round(20 + 107 * Math.min(1, loudest / (reference * 0.6))))),
         });
       }
       start = -1;
       peak = 0;
+      loudest = 0;
     };
 
     for (let f = 0; f < frames; f++) {
       const v = salience[f * pitches + p];
-      const prev = f > 0 ? salience[(f - 1) * pitches + p] : 0;
 
       if (start < 0) {
-        if (v >= hi) { start = f; peak = v; trough = v; quiet = 0; restruck = false; }
+        if (v >= hi) {
+          start = f; quiet = 0; restruck = false;
+          peak = trough = timing(f);
+          loudest = v;
+        }
         continue;
       }
 
@@ -434,7 +586,9 @@ export function tracksToNotes(salience, frames, pitches, frameMs, reference, ori
       // satisfied the moment the level clears its low point, and a note struck
       // again does not start there. Timed by the trough alone, every re-strike
       // was reported early enough to miss the note it belonged to.
-      const back = salience[Math.max(0, f - TUNING.restrikeSpan) * pitches + p];
+      const e = timing(f);
+      const ePrev = f > 0 ? timing(f - 1) : 0;
+      const back = timing(Math.max(0, f - TUNING.restrikeSpan));
       // How big the rise has to be: a proportion of this note's own peak, or an
       // absolute share of the recording's loudest, whichever is larger.
       //
@@ -446,12 +600,16 @@ export function tracksToNotes(salience, frames, pitches, frameMs, reference, ori
       // to let a quiet inner voice be struck again and too loose to stop a loud
       // one wobbling into two. Scaling the bar with the note stops the second
       // without giving up the first.
-      const bar = Math.max(peak * TUNING.reattack, jump);
-      const again = v >= hi && v >= prev
-                    && (v - trough) >= bar && (peak - trough) >= bar * TUNING.dip
-                    && (v - back) >= bar;
+      const bar = Math.max(peak * TUNING.reattack, jump)
+                  * (pitch < CROSSOVER_MIDI ? TUNING.bassReattack : 1);
+      // Whether the pitch is sounding is the salience's question — the
+      // fundamental is what says this note rather than the octave below it.
+      // Whether it was struck again is the timing envelope's.
+      const again = v >= hi && e >= ePrev
+                    && (e - trough) >= bar && (peak - trough) >= bar * TUNING.dip
+                    && (e - back) >= bar;
       if (again && f - start >= TUNING.minFrames) {
-        close(f); start = f; peak = v; trough = v; quiet = 0; restruck = true; continue;
+        close(f); start = f; peak = trough = e; loudest = v; quiet = 0; restruck = true; continue;
       }
 
       if (v < lo) {
@@ -459,8 +617,9 @@ export function tracksToNotes(salience, frames, pitches, frameMs, reference, ori
         if (quiet > MAX_GAP_FRAMES) { close(f - quiet + 1); quiet = 0; }
       } else {
         quiet = 0;
-        if (v > peak) { peak = v; trough = v; }
-        else if (v < trough) trough = v;
+        if (v > loudest) loudest = v;
+        if (e > peak) { peak = e; trough = e; }
+        else if (e < trough) trough = e;
       }
     }
     close(frames);
@@ -550,7 +709,7 @@ export function referenceLevel(salience) {
 // ── The whole of it ──────────────────────────────────────────────────────────
 
 export function transcribe(pcm, { onProgress } = {}) {
-  const { salience, frames, pitches, analyzer } = computeSalience(pcm, onProgress);
+  const { salience, attack, frames, pitches, analyzer } = computeSalience(pcm, onProgress);
   const frameMs = (HOP / RATE) * 1000;
   const reference = referenceLevel(salience);
   if (!reference || reference < SILENCE_FLOOR * 0.001) {
@@ -558,6 +717,6 @@ export function transcribe(pcm, { onProgress } = {}) {
   }
   const originMs = analyzer.frameTimeMs(0);
   const notes = vetoOctaveGhosts(
-    tracksToNotes(salience, frames, pitches, frameMs, reference, originMs), pcm);
+    tracksToNotes(salience, frames, pitches, frameMs, reference, originMs, attack), pcm);
   return { notes, frames, frameMs, reference, salience, pitches, analyzer };
 }
