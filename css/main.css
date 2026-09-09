@@ -611,6 +611,35 @@ select:focus { outline: 1px solid var(--accent); }
    a different ink, the way an editorial addition has always been marked. */
 #vexflow-output svg g.vf-annotation[id^="vf-fingerguess-"] text { fill: #8f83c9; }
 
+/* A note on its way down, and the same note as it lands.
+   The falling view already shows both moments; these say the same thing on the
+   staff, so a reader following the notation gets the warning the other view
+   gives instead of a playhead sweeping between notes.
+   One hue at two brightnesses, because what is being shown is one thing
+   getting nearer — a second colour would read as a second meaning.
+   The selectors carry two classes so they outrank the blanket
+   `#vexflow-output svg path` fill above without needing !important. */
+#vexflow-output svg g.vf-notehead.sheet-note-falling path {
+  fill: #5b83b8;
+  stroke: #5b83b8;
+}
+#vexflow-output svg g.vf-notehead.sheet-note-lit path {
+  fill: #9ad4ff;
+  stroke: #9ad4ff;
+}
+/* The glow is what makes landing read as an event rather than a shade change */
+#vexflow-output svg g.vf-notehead.sheet-note-lit {
+  filter: drop-shadow(0 0 3px rgba(93, 169, 255, 0.85));
+}
+/* Long enough to read as lighting up, short enough that a run of semiquavers
+   does not smear into one continuous glow */
+#vexflow-output svg g.vf-notehead path {
+  transition: fill 90ms linear, stroke 90ms linear;
+}
+@media (prefers-reduced-motion: reduce) {
+  #vexflow-output svg g.vf-notehead path { transition: none; }
+}
+
 /* Says in words what the italics say in convention. Sits above the score
    rather than inside the drawing, so re-rendering never has to redraw it. */
 .sheet-guess-note {

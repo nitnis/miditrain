@@ -1897,6 +1897,101 @@ const bests = await page.evaluate(async () => {
 }
 
 
+// ── Lighting the notation as the notes arrive ───────────────────────────────
+//
+// Dim while a note is on its way down, bright from the moment it lands until it
+// stops sounding. The window the staff dims over is the falling view's own, so
+// the two views agree about what is coming.
+//
+// Counted over noteheads rather than notes: a note tied across a barline is
+// written twice and lights in both places. The drawing can be asked which is
+// which, because every notehead is named for the note it belongs to.
+{
+  await page.evaluate(async () => {
+    const { update } = await import('/src/state.js');
+    const notes = [];
+    for (let i = 0; i < 12; i++) {
+      notes.push({ id: `LIT${i}`, pitch: 60 + (i % 8), hand: 'right',
+                   startTime: i * 800, duration: 600, velocity: 90 });
+    }
+    update('composition.notes', notes);
+    update('composition.tempo', 120);
+    update('transport.currentTime', 0);
+  });
+  await page.waitForTimeout(800);
+
+  const litState = () => page.evaluate(async () => {
+    const { state } = await import('/src/state.js');
+    const { fallingWindowMs } = await import('/src/pianoroll.js');
+    const now = state.transport.currentTime;
+    const win = fallingWindowMs();
+    const byNote = new Map();
+    for (const el of document.querySelectorAll('#vexflow-output [id^="vf-lit-"]')) {
+      const name = el.id.slice('vf-lit-'.length);
+      const id = name.slice(0, name.lastIndexOf('--'));
+      byNote.set(id, (byNote.get(id) || 0) + 1);
+    }
+    const heads = (pred) => state.composition.notes
+      .filter(pred).reduce((t, n) => t + (byNote.get(n.id) || 0), 0);
+    const count = (cls) => document.querySelectorAll(`#vexflow-output g.vf-notehead.${cls}`).length;
+    return {
+      tagged: byNote.size,
+      lit: count('sheet-note-lit'),
+      falling: count('sheet-note-falling'),
+      wantLit: heads(n => now >= n.startTime && now < n.startTime + Math.max(n.duration, 120)),
+      wantFalling: heads(n => n.startTime > now && n.startTime <= now + win),
+    };
+  });
+  const seekTo = async (ms) => {
+    await page.evaluate(async (ms) => {
+      const { update } = await import('/src/state.js');
+      update('transport.currentTime', ms);
+    }, ms);
+    await page.waitForTimeout(200);
+  };
+
+  check('every note on the staff is named so it can be lit',
+    (await litState()).tagged, 12);
+
+  let agreed = 0;
+  const times = [0, 400, 700, 800, 1500, 2400, 4000, 6000];
+  for (const t of times) {
+    await seekTo(t);
+    const s = await litState();
+    if (s.lit === s.wantLit && s.falling === s.wantFalling) agreed++;
+  }
+  check('the lit and dim noteheads match the notes sounding and falling, at every moment',
+    agreed, times.length);
+
+  // The states have to be distinguishable, or none of the above is visible
+  await seekTo(800);
+  const inks = await page.evaluate(() => {
+    const ink = (sel) => {
+      const g = document.querySelector(sel);
+      const path = g && g.querySelector('path');
+      return path ? getComputedStyle(path).fill : null;
+    };
+    const plain = [...document.querySelectorAll('#vexflow-output g.vf-notehead')]
+      .find(g => !g.classList.contains('sheet-note-lit')
+              && !g.classList.contains('sheet-note-falling'));
+    return {
+      lit: ink('#vexflow-output g.vf-notehead.sheet-note-lit'),
+      falling: ink('#vexflow-output g.vf-notehead.sheet-note-falling'),
+      plain: plain ? getComputedStyle(plain.querySelector('path')).fill : null,
+    };
+  });
+  check('a landed note, a falling one and an untouched one are three different inks',
+    new Set([inks.lit, inks.falling, inks.plain]).size, 3);
+  check('...and none of them failed to apply',
+    [inks.lit, inks.falling, inks.plain].every(Boolean), true);
+
+  // Past the end of the piece nothing is coming and nothing is sounding
+  await seekTo(20000);
+  const done = await litState();
+  check('past the last note, nothing is lit', [done.lit, done.falling], [0, 0]);
+}
+
+
 await browser.close();
 
 const failed = checks.filter(c => !c.ok);
