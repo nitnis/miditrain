@@ -9,9 +9,9 @@ python3 -m http.server 7700          # from the repository root
 node test/roundtrip.mjs              # in another shell
 ```
 
-Four scripts: `training.mjs`, `tracks.mjs`, `roundtrip.mjs` and `rendered.mjs`.
-The last needs MIDI files that are not in the repository and skips without
-them — see below.
+Five scripts: `training.mjs`, `tracks.mjs`, `restrikes.mjs`, `roundtrip.mjs` and
+`rendered.mjs`. The last two need material that is not in the repository and
+skip without it — see below. The first three run from a clean clone.
 
 `ORIGIN` and `CHROME` override the server address and the browser binary.
 
@@ -308,6 +308,26 @@ notes before assuming a knob has slack in it.
 Neither number here is a target. F1 on these files can be improved by tuning
 against these files, exactly as three of the four round-trip measures can be
 improved by emitting more notes.
+
+## `restrikes.mjs` — repeated notes, and notes that only look repeated
+
+A note struck again while it is still sounding has to be found from the salience
+curve alone; there is no onset detector. That gives the mechanism two failure
+modes that pull against each other, and fixing either one usually makes the
+other worse:
+
+| | |
+|---|---|
+| too deaf | a repeated note comes out as one long note |
+| too eager | one held note comes out as several |
+
+Both are measured together and **neither number means anything on its own**. A
+change that improves one has to show what it did to the other.
+
+Needs no fixtures — every case is built in the script, so the ground truth is
+exact and it runs from a clean clone. That also bounds what it can tell you:
+these are single mechanisms with every other variable held still, and a change
+checked only against this has not been checked against music.
 
 ## `roundtrip.mjs` — transcription against a real recording
 

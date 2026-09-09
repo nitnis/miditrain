@@ -128,6 +128,80 @@ which argues it is too fast). `between` alone looked perfect on the test set
 until two counter-cases were added — `q100→150` and `chorale84→126`, both
 1.5× impostors. The test set was missing the case that mattered. It usually is.
 
+### Timing a bass re-strike from the note's upper partials
+
+**Half solved, and not merged.** The gain is large and the cost is real; the
+check that would settle it needs fixtures this repository does not carry.
+
+A repeated note is found by the level falling between the strikes and coming
+back. Below the crossover that cannot work, and no threshold can make it: those
+pitches are heard through a 743 ms window, so two strikes closer together than
+that are both inside it and the level between them never falls. Measured, C3
+struck six times with nothing else sounding:
+
+| gap | 200 | 300 | 400 | 500 | 600 | 750 | 900 | 1100 | 1400 |
+|---|---|---|---|---|---|---|---|---|---|
+| MIDI 48 | 17% | 17% | 17% | 17% | 17% | 17% | 100% | 100% | 100% |
+| MIDI 72 | 100% | 100% | 100% | 100% | 100% | 100% | 100% | 100% | 100% |
+
+17% is one strike in six — the first. **The cliff is exactly at the window
+length**, and above the crossover there is no problem at all.
+
+But the note's upper partials are not down there. C3 is 131 Hz and its second
+partial is 262 Hz, in the fine spectrum where the window is 186 ms. Between
+those same six strikes the level at partials 2–5 falls 42% every time where the
+coarse salience falls 1% — six times deeper, and consistent rather than
+collapsing after the first strike. The evidence was never missing; it was being
+read in the one band that cannot see it.
+
+So a bass pitch gets a second envelope, built from its partials in the fine
+spectrum, and the re-strike test reads that for timing while the salience keeps
+deciding whether the pitch is sounding at all. MIDI 48 alone goes from 17% to
+**100% at every gap down to 200 ms**.
+
+**The cost, and why it is stubborn.** A bass note's partials are not private to
+it. The sixth partial of C2 is 392 Hz, which is G4 — and in tonal music the
+notes above a bass note sit on its partials *by definition*: octaves, twelfths,
+thirds. A held G2 under a right hand repeating a G–B–D chord came out as four
+notes, because three of its seven partials were being struck by somebody else.
+
+Four ways of separating them, measured:
+
+| | repeated notes found | held notes cut up |
+|---|---|---|
+| main, before any of this | 0.58 | 0 |
+| summing the partials | 0.59 | 4 |
+| ...read after peeling instead | 0.60 | 5 |
+| each partial against its own running ceiling | 0.61 | 3 |
+| **the median partial** | **0.74** | **2** |
+| dropping partials whose owning pitch is rising | worse | 9 |
+
+The median is the one that works, and for the reason it should: a real re-strike
+lifts every partial of the note at once, and a note landing on one lifts one.
+Reading the residual after peeling looks principled — a coarse pitch subtracts
+only from the coarse spectrum, so peeling removes the right hand and not the
+bass note — and measures worse, because the residual churns frame to frame.
+Dropping the colliding partial outright is worst of all: which partials qualify
+changes every frame, and the median jumps around with it.
+
+`bassReattack` asks more of a bass re-strike than a treble one, and was swept
+from 1 to 4. It trades one for the other and never wins: the splits only clear
+at 4, where repeated notes are back to where they started.
+
+**Why it is not merged.** The remaining failure is a held bass note under a
+repeated consonant chord — an Alberti bass, an oom-pah accompaniment, a pedal
+point. That is not an edge case, it is the texture of most left hands in the
+repertoire, and cutting one held note into four is a visible error in a practice
+app. Against that, repeated notes go from 0.58 to 0.74.
+
+Which of those matters more is a question about real music, and the fixtures
+that would answer it — `test/fixtures/rendered/` and `piano-30s.wav` — are not
+in the repository. `test/restrikes.mjs` makes the trade permanently measurable
+without them, but it cannot adjudicate it: every case in it is a single
+mechanism with all else held still. Put the fixtures back, run
+`rendered.mjs --why`, and see whether `already on` falls by more than the
+precision costs.
+
 ### Rendering through a recorded piano instead of an oscillator
 
 The app's voice was a triangle plus a sawtooth through a lowpass. A triangle has
@@ -499,14 +573,16 @@ Net negative.
 
 In rough order of expected value:
 
-1. **Re-strikes.** Now the largest category of missed note (29%, and the share
-   rises as the others are dealt with), and the one thing above that neither the
-   sweeps nor the attack detector touched. A repeated note under a sustaining
-   chord has to be found from the salience curve alone, and the dip-then-recovery
-   test above is the best of several attempts. The activation matrix the octave
-   veto already builds is a second opinion that has never been asked this
-   question — it is per-note and learned from the recording, so a re-struck note
-   should show in it as a rise the peeling cannot see.
+1. **Adjudicate the bass re-strike change above.** It is written, measured and
+   unmerged, and needs one run against real music to settle. Everything else
+   here is downstream of that.
+2. **The quiet inner voice.** With the bass fixed, what is left in
+   `test/restrikes.mjs` is velocity 50 under a held chord: 15% found, against
+   80% at velocity 90. That is a masking problem rather than a timing one — the
+   note is there and the rise is smaller than `reattackFloor` asks of it, which
+   is scaled to the loudest thing in the whole recording rather than to the
+   note. Sweeping that floor down helps a little and then saturates, so
+   something else binds too.
 2. **The gap between a rendering and a performance.** Two rendered Mozart
    movements score around 0.8; a real performance rendered the same way scores
    0.56, at 0.61 precision and 0.52 recall. Everything in this file was tuned against
