@@ -50,9 +50,29 @@ and decompressed whole before the first note sounds.
 strengths, because a string struck harder is not the same sound louder — it is
 brighter. There is one recording per note here, so `src/piano.js` carries how
 hard a note was struck with loudness and a lowpass that opens with velocity.
-That is the usual single-layer compromise and it is audibly less than the real
-thing. It matters most in professional mode, which asks a player to reproduce
-dynamics.
+That is the usual single-layer compromise. `VELOCITY = 85` is hardcoded in the
+script that rendered these files, so every one of them is that note struck once,
+at mezzo-forte.
+
+Measured at C4, as spectral centroid — where the energy sits, which is what
+"struck harder" sounds like beyond loudness:
+
+| velocity | 20 | 40 | 60 | 85 | 100 | 127 |
+|---|---|---|---|---|---|---|
+| the old synth | 348 Hz | 374 | 406 | 463 | 512 | 631 |
+| this | 623 Hz | 823 | 1104 | 1448 | 1602 | 1711 |
+
+Wider than the oscillator voice managed, not narrower — 2.75x across the
+dynamic against 1.81x — because a filter closing on a real piano at
+mezzo-forte has far more to take away than one closing on a triangle.
+
+The limitation is the loud half specifically. From velocity 20 to 85 the
+centroid climbs 133%; from 85 to 127 — mf to fff, a long way musically — it
+climbs 18%, because the filter is open by then and there is nothing left to
+reveal. You cannot be brighter than the recording, and the recording is
+mezzo-forte. Soft dynamics are modelled well; everything above mf is
+under-differentiated, which is the range professional mode cares about most.
+
 
 **Three seconds long.** Under the pedal a bass note on a real instrument rings
 far longer than 3.13 s, and when the recording runs out the note is simply gone.

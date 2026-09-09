@@ -22,12 +22,21 @@
 //
 // ── What this is not ─────────────────────────────────────────────────────────
 //
-// One velocity layer. A real sampled piano records each note at a dozen
-// strengths, because a string struck harder is not the same sound louder — it
-// is brighter. There is one recording per note here, so how hard a note was
-// struck is carried by loudness and by a lowpass that opens with velocity,
-// which is the usual single-layer compromise and is audibly less than the real
-// thing.
+// One velocity layer, because the source has exactly one: `VELOCITY = 85` is
+// hardcoded in the script that rendered these files, so every one of them is
+// that note struck once, at mezzo-forte. How hard a note was struck is carried
+// by loudness and by a lowpass that opens with velocity.
+//
+// That is better than what it replaced, not worse. Measured at C4 as spectral
+// centroid, this spans 623–1711 Hz across the dynamic where the oscillator
+// voice spanned 348–631 — 2.75x against 1.81x — because a filter closing on a
+// real piano has far more to take away than one closing on a triangle.
+//
+// The limitation is the loud half. Velocity 20 to 85 climbs 133%; 85 to 127 —
+// mf to fff — climbs 18%, because by then the filter is open and there is
+// nothing left to reveal. Nothing can be brighter than the recording, and the
+// recording is mezzo-forte. Fixing that needs layers, which needs a source that
+// has them.
 //
 // Three seconds and a bit per note. Under the pedal a bass note on a real
 // instrument rings far longer than the recording lasts, and when the sample
