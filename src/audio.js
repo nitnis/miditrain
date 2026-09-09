@@ -7,6 +7,7 @@
 // carries volume and mute, and the note bus is what "clicks only" silences —
 // leaving the metronome and the count-in audible through their own path.
 import { state } from './state.js';
+import { voiceFor, loadPiano } from './piano.js';
 import { atOrPast, EDGE_MS } from './quantizer.js';
 import { isAudible } from './tracks.js';
 import { sustainSpans, soundingEnd } from './pedal.js';
@@ -73,6 +74,12 @@ export function getAudioContext() {
     keepAlive.connect(noteBus);
     keepAlive.connect(master);
     keepAlive.start();
+
+    // Fetch and decode the recorded notes for this context's rate. Nothing
+    // waits on it: until it lands — and forever, if there are no samples —
+    // `makeVoice` builds oscillators, so the app makes sound from the first
+    // key press either way and quietly gets better a moment later.
+    loadPiano(ctx.sampleRate);
   }
   return ctx;
 }
@@ -200,6 +207,13 @@ function decayTauFor(pitch) {
 // app made, and a second copy of the voice for the test rig would be a second
 // thing to drift.
 export function makeVoice(c, dest, pitch, velocity, when) {
+  // A recording of the note, if there is one loaded for this context's rate.
+  // Everything below is what plays when there is not — an empty assets
+  // directory, a fetch that failed, a browser that will not decode mp3 — and
+  // what the app sounded like before there were any samples at all.
+  const recorded = voiceFor(c, dest, pitch, velocity, when, peakFor(velocity));
+  if (recorded) return recorded;
+
   const osc = c.createOscillator();
   const bright = c.createOscillator();
   const brightGain = c.createGain();
@@ -252,9 +266,11 @@ export function makeVoice(c, dest, pitch, velocity, when) {
 
 function createVoice(pitch, velocity, when) {
   const voice = makeVoice(getAudioContext(), getNoteBus(), pitch, velocity, when);
-  voice.osc.addEventListener('ended', () => {
+  const source = voice.sampled ? voice.src : voice.osc;
+  source.addEventListener('ended', () => {
     try {
-      voice.osc.disconnect(); voice.bright.disconnect(); voice.brightGain.disconnect();
+      if (voice.sampled) voice.src.disconnect();
+      else { voice.osc.disconnect(); voice.bright.disconnect(); voice.brightGain.disconnect(); }
       voice.filter.disconnect(); voice.gain.disconnect();
     } catch (_) {}
     scheduledVoices.delete(voice);
@@ -269,6 +285,17 @@ function createVoice(pitch, velocity, when) {
 // the decay had got to by then, and only the caller knows when that is.
 export function applyAttack(voice, when) {
   const g = voice.gain.gain;
+  // A recorded note is already a string losing its energy. Shaping it again
+  // would be the note dying twice, so all this does is get out of silence
+  // without a step in the waveform. `tau` of Infinity makes `decayedTo` hand
+  // back the level unchanged, which is what a recording does on its own.
+  if (voice.sampled) {
+    const at = when + voice.attack;
+    g.cancelScheduledValues(when);
+    g.setValueAtTime(MIN_GAIN, when);
+    g.exponentialRampToValueAtTime(Math.max(voice.peak, MIN_GAIN), at);
+    return { sustain: voice.peak, from: at, tau: Infinity };
+  }
   const sustain = Math.max(voice.peak * SUSTAIN_RATIO, MIN_GAIN);
   const from = when + ATTACK_S + DECAY_S;
   g.cancelScheduledValues(when);
@@ -285,6 +312,7 @@ export function applyAttack(voice, when) {
 // A voice is two oscillators now, and both of them have to be stopped or the
 // bright one goes on running with nothing to switch it off
 function stopVoice(voice, at) {
+  if (voice.sampled) { try { voice.src.stop(at); } catch (_) {} return; }
   voice.osc.stop(at);
   voice.bright.stop(at);
 }

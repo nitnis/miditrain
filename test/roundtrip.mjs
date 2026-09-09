@@ -25,7 +25,10 @@
 //                that answers "what did it walk past".
 //   round trip   transcribe the playback and score it against the first pass.
 //                Self-consistency, not truth — but a note that cannot survive
-//                being played and heard again was never solid.
+//                being played and heard again was never solid. It got harder,
+//                on purpose, when the player stopped being an oscillator: the
+//                playback now has the even partials that make octaves
+//                ambiguous, so this asks a real question it never used to.
 //
 // Run it with a local server on port 7700 and:
 //   node test/roundtrip.mjs [seconds]
@@ -50,11 +53,11 @@ const ORIGIN = process.env.ORIGIN || 'http://localhost:7700';
 // trust the run, and keep them out of the repository along with the audio.
 const BASELINE = {
   notes: 133,
-  chroma: 0.954,
+  chroma: 0.966,
   onsetF1: 0.897,
   explained: 0.771,
   unexplainedAtFundamentals: 0.131,
-  roundTripF1: 0.939,
+  roundTripF1: 0.824,
 };
 
 // The shape this transcriber used to invent: a note beginning at the same

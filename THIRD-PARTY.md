@@ -1,9 +1,10 @@
 # Third-party notices
 
 MidiTrain itself is MIT licensed — see [LICENSE](LICENSE). It ships two
-vendored libraries in `lib/`, and one of them carries three music fonts inside
-it. All of them are free to use, modify and redistribute; each asks only that
-its notice travels with the code, which is what this file is for.
+vendored libraries in `lib/`, one of which carries three music fonts inside it,
+and a set of piano recordings in `assets/piano/`. All of them are free to use,
+modify and redistribute; each asks only that its notice travels with the work,
+which is what this file is for.
 
 Nothing here is fetched at runtime. Everything the browser loads is in this
 repository, so this list is complete.
@@ -82,6 +83,29 @@ Simon Tatham's music font, in the SMuFL-compliant fork VexFlow ships.
   form, with no conditions. (The Python source that *generates* the font is
   separately MIT licensed; MidiTrain ships only the outlines.)
 - **Home:** https://www.chiark.greenend.org.uk/~sgtatham/gonville/
+
+---
+
+## FluidR3_GM piano samples
+
+The instrument the app plays. Eighty-eight recordings, one per key, taken from
+the acoustic grand of the FluidR3_GM soundfont. Without them the app falls back
+to a synthesised voice and still works — see `assets/piano/README.md`.
+
+- **Files:** `assets/piano/*.mp3`
+- **Author:** Frank Wen
+- **Rendered to mp3 by:** [gleitz/midi-js-soundfonts](https://github.com/gleitz/midi-js-soundfonts)
+- **Licence:** Creative Commons Attribution 3.0 —
+  https://creativecommons.org/licenses/by/3.0/
+
+> FluidR3_GM soundfont, copyright Frank Wen. Licensed under the Creative Commons
+> Attribution 3.0 licence: free to share and adapt, including commercially,
+> provided attribution is given. This notice is that attribution.
+
+Modifications: the mp3 renderings are used as published. MidiTrain plays them
+through a velocity-dependent lowpass and a fixed makeup gain, and pitch-shifts a
+neighbour for any key with no file of its own; the recordings themselves are
+unaltered.
 
 ---
 
