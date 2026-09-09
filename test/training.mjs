@@ -1757,6 +1757,146 @@ const bests = await page.evaluate(async () => {
     .map(([k, v]) => [k, { score: v.score, tempo: v.tempo, takeNotes: v.take?.notes.length ?? null }]));
 });
 
+// ── Marking a loop by double-clicking ───────────────────────────────────────
+//
+// Two views, one rule. A double click marks the end of the loop it is nearest
+// to — past one end it is that end, inside the range it is the nearer one — and
+// with no loop at all it starts a one-bar one. Bars are the unit because the
+// loop is bars, so a note stands for the bar it is in.
+//
+// The single-click flow behind the button is deliberately not replaced: a bare
+// click used to set a range and every stray click set one, which is why that
+// button exists. A double click is deliberate on its own.
+{
+  await page.evaluate(async () => {
+    const { update } = await import('/src/state.js');
+    const notes = [];
+    for (let bar = 0; bar < 8; bar++) {
+      for (let beat = 0; beat < 4; beat++) {
+        notes.push({ id: `dl${bar}-${beat}`, pitch: 60 + (bar % 5) * 2 + beat, hand: 'right',
+                     startTime: (bar * 4 + beat) * 500, duration: 450, velocity: 90 });
+      }
+    }
+    update('composition.notes', notes);
+    update('composition.tempo', 120);
+    update('transport.loopEnabled', false);
+    update('transport.currentTime', 0);
+  });
+  await page.waitForTimeout(700);
+
+  const loopNow = () => page.evaluate(async () => {
+    const { state } = await import('/src/state.js');
+    const { loopEnabled, loopStartBar, loopEndBar } = state.transport;
+    return loopEnabled ? `${loopStartBar}-${loopEndBar}` : 'off';
+  });
+  // The falling window holds about two and a half seconds, so a bar has to be
+  // near the playhead before its notes are on the stage to be clicked
+  const seekBar = async (bar) => {
+    await page.evaluate(async (bar) => {
+      const { update } = await import('/src/state.js');
+      update('transport.currentTime', Math.max(0, (bar - 1) * 2000 - 300));
+    }, bar);
+    await page.waitForTimeout(280);
+  };
+  const dblFallingNote = async (bar, beat) => {
+    const at = await page.evaluate(async ([bar, beat]) => {
+      const { state } = await import('/src/state.js');
+      const pr = await import('/src/pianoroll.js');
+      const canvas = document.getElementById('falling-canvas');
+      const box = canvas.getBoundingClientRect();
+      for (let y = 4; y < canvas.height; y += 3) {
+        for (let x = 4; x < canvas.width; x += 3) {
+          const hit = pr.noteAtFallingPoint(x, y, state.composition.notes, state.transport.currentTime);
+          if (hit && hit.id === `dl${bar}-${beat}`) return { x: box.left + x, y: box.top + y };
+        }
+      }
+      return null;
+    }, [bar, beat]);
+    if (!at) return false;
+    await page.mouse.dblclick(at.x, at.y);
+    await page.waitForTimeout(220);
+    return true;
+  };
+
+  await seekBar(3);
+  const found = await dblFallingNote(2, 0);
+  check('a falling note can be found to double-click', found, true);
+  check('no loop yet, so one double click marks a single bar', await loopNow(), '3-3');
+
+  await seekBar(6);
+  await dblFallingNote(5, 0);
+  check('past the end, the end moves', await loopNow(), '3-6');
+
+  await seekBar(1);
+  await dblFallingNote(0, 0);
+  check('before the start, the start moves', await loopNow(), '1-6');
+
+  await seekBar(2);
+  await dblFallingNote(1, 0);
+  check('inside the range and nearer the start, the start moves', await loopNow(), '2-6');
+
+  const canvasBox = await page.locator('#falling-canvas').boundingBox();
+  await page.mouse.dblclick(canvasBox.x + 6, canvasBox.y + canvasBox.height - 6);
+  await page.waitForTimeout(220);
+  check('double-clicking where there is no note leaves the loop alone', await loopNow(), '2-6');
+
+  // ...and the same rule read off the score.
+  //
+  // The geometry is read again before every click rather than once: marking a
+  // loop draws bands and handles over the score, and anything that reflows it
+  // moves the bar that was about to be clicked.
+  const barsNow = () => page.evaluate(async () => {
+    const sheet = await import('/src/sheet.js');
+    const container = document.getElementById('sheet-container');
+    const scroller = container.parentElement;
+    const box = scroller.getBoundingClientRect();
+    // Only bars actually on screen: the score scrolls, and a bar on a system
+    // below the fold has coordinates but nothing there to click
+    return sheet.getStaveGeometry().filter(g => g.clef === 'treble').map(g => ({
+      bar: g.measure + 1, w: g.w,
+      x: box.left + (g.x + g.w / 2) - scroller.scrollLeft + container.offsetLeft,
+      y: box.top + (g.y + 40) - scroller.scrollTop + container.offsetTop,
+    })).filter(b => b.x > box.left + 4 && b.x < box.right - 4
+                 && b.y > box.top + 4 && b.y < box.bottom - 4);
+  });
+  const bars = await barsNow();
+  check('the score has bars to aim at', bars.length > 3, true);
+  if (bars.length > 3) {
+    await page.evaluate(async () => {
+      const { update } = await import('/src/state.js');
+      update('transport.loopEnabled', false);
+    });
+    const dblBar = async (n) => {
+      const b = (await barsNow()).find(x => x.bar === n);
+      if (!b) return false;
+      await page.mouse.dblclick(b.x, b.y);
+      await page.waitForTimeout(220);
+      return true;
+    };
+    // The furthest bar that is genuinely on screen to be clicked
+    const far = bars[bars.length - 1].bar;
+    await dblBar(3);
+    check('on the score too: one double click marks a single bar', await loopNow(), '3-3');
+    check('the far bar is on screen to click', far > 3, true);
+    check('the far bar could be clicked', await dblBar(far), true);
+    check('...and the second marks the other end', await loopNow(), `3-${far}`);
+
+    // Clicking late in a bar must mean that bar, not the next one. Measuring
+    // against the bar's left edge instead puts anything past the middle into
+    // its neighbour, which is what `edge: 'inside'` exists to avoid.
+    const late = await page.evaluate(async (b) => {
+      const sheet = await import('/src/sheet.js');
+      const x = b.x - b.w / 2 + b.w * 0.9;
+      return { inside: sheet.barAtPoint(x, b.y, 'inside'),
+               byLeftEdge: sheet.barAtPoint(x, b.y, 'start') };
+    }, bars[1]);
+    check('nine tenths across a bar still means that bar', late.inside, bars[1].bar);
+    check('...where measuring to the left edge would have said the next one',
+      late.byLeftEdge > late.inside, true);
+  }
+}
+
+
 await browser.close();
 
 const failed = checks.filter(c => !c.ok);
