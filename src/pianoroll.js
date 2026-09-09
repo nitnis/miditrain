@@ -664,6 +664,14 @@ const HIT_SLOP = 3;   // a note is a few pixels wide; a fingertip is not
 // What a pixel of the falling window is worth in time. Scrubbing asks, so that
 // dragging the view moves the music by exactly as much as it was dragged
 // instead of by some second, invented rate.
+// How far ahead the falling view can see: the whole stage, in milliseconds.
+// The score asks for this so it can dim exactly the notes that are on their way
+// down over here, rather than guessing at a lookahead of its own.
+export function fallingWindowMs() {
+  const canvas = document.getElementById('falling-canvas');
+  return canvas ? fallingMsPerPixel() * canvas.height : 0;
+}
+
 export function fallingMsPerPixel() {
   const h = fallingCanvas ? fallingCanvas.height : 0;
   return h > 0 ? lookaheadMs() / h : 0;

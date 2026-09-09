@@ -1,9 +1,9 @@
 // UI updates: DOM manipulation, modals, controls
 import { state, update, emit, on } from './state.js';
 import { record, play, stop, stopAndRewind, startCountIn, playRange, seekTo, seekToStart, seekToEnd, clearAllNotes, transposeNotes, transposeAll, setNotesHand, applyLegato, deleteNotes, changeTempo, getCompositionDuration } from './transport.js';
-import { renderSheet, initSheet, getChordOverlayData, getStaveGeometry, movePlayhead, markLoopRange, barAtPoint } from './sheet.js';
+import { renderSheet, initSheet, getChordOverlayData, getStaveGeometry, movePlayhead, markLoopRange, barAtPoint, lightNotes } from './sheet.js';
 import { refreshSuggestions, hasSuggestions } from './autofinger.js';
-import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWaitingPitches, setFallingBlind, setLoopPick, setTakeGhosts, noteAtFallingPoint, fallingMsPerPixel, HAND_COLORS } from './pianoroll.js';
+import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWaitingPitches, setFallingBlind, setLoopPick, setTakeGhosts, noteAtFallingPoint, fallingMsPerPixel, fallingWindowMs, HAND_COLORS } from './pianoroll.js';
 import { startLearn, stopLearn, isHoldingMessage, CLUSTERS } from './learn.js';
 import {
   startSectionWalk, stopSectionWalk, repeatSection, advanceSection, previousSection,
@@ -104,6 +104,9 @@ export function initUI() {
   on('transport:tick', (t) => {
     updatePositionDisplay(t);
     movePlayhead(t);
+    // The staff lights the same notes the falling view is showing, over the
+    // same window, so the two views agree about what is coming
+    lightNotes(t, fallingWindowMs());
   });
 
   // MIDI status updates
@@ -322,6 +325,7 @@ function bindTransport() {
       scheduleSheetRender(); // the step cursor is part of the drawing
     } else {
       movePlayhead(value);   // seeking while stopped only moves the overlay
+      lightNotes(value, fallingWindowMs());
     }
   });
 }

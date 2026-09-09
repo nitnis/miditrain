@@ -97,6 +97,10 @@ const TOP_PAD = 6;
 export function renderSheet(notes, composition, currentTimeMs = null, retry = false) {
   _chordOverlayData = [];
   _staveGeom = [];
+  _lights = [];
+  _litNow = new Map();
+  _lights = [];
+  _litNow = new Map();
   guessId = 0;
   if (!container || !window.Vex) return;
 
@@ -256,8 +260,104 @@ export function renderSheet(notes, composition, currentTimeMs = null, retry = fa
 
   playheadBeatsPerMeasure = beatsPerMeasure;
   playheadBeatMs = (60 / tempo) * 1000;
+  collectLights(notes);
   movePlayhead(stepping ? null : currentTimeMs);
 }
+
+// ── Lighting the notes as they arrive ────────────────────────────────────────
+//
+// The falling view already says when a note is coming and when it lands. The
+// score says neither: it has a playhead, which is a line between notes rather
+// than anything about a note, so a reader following the staff has to turn a bar
+// position into "which of these am I about to play" for themselves — the work
+// the falling view does for them.
+//
+// So the same two moments are shown on the staff. While a note is on its way
+// down it is dim; from the instant it lands until it stops sounding it is
+// bright. Nothing is invented: both moments already exist, in the other view,
+// over the same window.
+//
+// The noteheads are found by name, not by holding on to the objects that drew
+// them. A drawing can be built and thrown away — the top-overflow pass does
+// exactly that — and the notes left in hand then belong to a picture nobody is
+// looking at. Measured, their noteheads carried ids the document had never
+// heard of, and nothing lit. The document is the only thing that knows what is
+// on screen, so the document is what gets asked.
+//
+// A note tied across a barline is drawn as several noteheads and every one of
+// them is collected, so it lights as one note wherever it is written.
+// Each notehead is named for the note it belongs to and which piece of it this
+// is, so the drawing itself carries the mapping and nothing has to be kept in
+// step with it. VexFlow puts a `vf-` in front of whatever id it is given, which
+// is the same hook the fingering guesses use to get their own colour.
+//
+// Doubled dash, because a note's own id may contain single ones — `tr-12` is an
+// ordinary id from the transcriber — and the note has to be recoverable from
+// the name.
+const LIT_PREFIX = 'vf-lit-';
+const LIT_SPLIT = '--';
+
+let _lights = [];        // { startTime, endTime, els }
+let _litNow = new Map(); // index into _lights -> the class it currently carries
+
+// A note is bright while it sounds, and the shortest would otherwise flash for
+// less than a frame
+const MIN_LIT_MS = 120;
+const FALLING_CLASS = 'sheet-note-falling';
+const LIT_CLASS = 'sheet-note-lit';
+
+function collectLights(notes) {
+  _lights = [];
+  _litNow = new Map();
+  if (!container) return;
+
+  const els = new Map();
+  for (const el of container.querySelectorAll(`[id^="${LIT_PREFIX}"]`)) {
+    const name = el.getAttribute('id').slice(LIT_PREFIX.length);
+    const cut = name.lastIndexOf(LIT_SPLIT);
+    const noteId = cut < 0 ? name : name.slice(0, cut);
+    if (!els.has(noteId)) els.set(noteId, []);
+    els.get(noteId).push(el);
+  }
+
+  for (const note of notes) {
+    const mine = els.get(note.id);
+    if (!mine) continue;
+    _lights.push({
+      els: mine,
+      startTime: note.startTime,
+      endTime: note.startTime + Math.max(note.duration || 0, MIN_LIT_MS),
+    });
+  }
+}
+
+// `lookaheadMs` is how far ahead the falling view can see, so the staff dims
+// exactly the notes on the stage over there and no others. Passed in rather
+// than read, because that window belongs to the other view.
+export function lightNotes(currentTimeMs, lookaheadMs = 0) {
+  if (!_lights.length) return;
+  for (let i = 0; i < _lights.length; i++) {
+    const light = _lights[i];
+    let want = null;
+    if (currentTimeMs !== null) {
+      if (currentTimeMs >= light.startTime && currentTimeMs < light.endTime) want = LIT_CLASS;
+      else if (light.startTime > currentTimeMs
+               && light.startTime <= currentTimeMs + lookaheadMs) want = FALLING_CLASS;
+    }
+    // Only what changed is touched: this runs every frame, and rewriting a
+    // class on every notehead of a long score each time is work the browser
+    // then has to undo
+    const had = _litNow.get(i) || null;
+    if (had === want) continue;
+    for (const el of light.els) {
+      if (had) el.classList.remove(had);
+      if (want) el.classList.add(want);
+    }
+    if (want) _litNow.set(i, want);
+    else _litNow.delete(i);
+  }
+}
+
 
 // The most notes any one hand holds at once, which is how tall a stack of
 // finger numbers can get. Counted per staff, since the two staves' fingerings
@@ -853,8 +953,21 @@ function buildTickables(staveNotes, beatsPerMeasure, clef, keySignature, segment
         collect(note, item.beatInMeasure);
 
         if (segmentPlacement) {
+          const heads = note.noteHeads || note.note_heads;
           group.forEach((seg, keyIndex) => {
             segmentPlacement.set(`${seg.id}:${seg.segmentIndex}`, { note, keyIndex, line });
+            // Name the notehead so it can be found in the drawing afterwards.
+            // VexFlow puts a `vf-` in front of whatever id it is given, which is
+            // the same hook the fingering guesses use to get their own colour.
+            //
+            // By name rather than by holding the object: a drawing can be built
+            // and thrown away — the top-overflow pass does exactly that — and
+            // the notes left in hand then belong to a picture nobody is looking
+            // at. Measured, their noteheads carried ids the document had never
+            // heard of. The document is the only thing that knows what is on
+            // screen, so the document is what gets asked.
+            const head = heads && heads[keyIndex];
+            if (head && head.setAttribute) head.setAttribute('id', `lit-${seg.id}--${seg.segmentIndex}`);
           });
         }
       } catch (e) {
