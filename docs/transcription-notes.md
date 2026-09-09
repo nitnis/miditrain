@@ -130,8 +130,11 @@ until two counter-cases were added — `q100→150` and `chorale84→126`, both
 
 ### Timing a bass re-strike from the note's upper partials
 
-**Half solved, and not merged.** The gain is large and the cost is real; the
-check that would settle it needs fixtures this repository does not carry.
+**Half solved. Merged with the trade accepted, and one check still owed.** The
+gain is large, the cost is real, and the run that would settle which matters
+more needs fixtures this repository does not carry — so it was a judgement
+call rather than a measurement. It is written up in full below, including the
+failure, so that whoever runs that check has everything they need to reverse it.
 
 A repeated note is found by the level falling between the strikes and coming
 back. Below the crossover that cannot work, and no threshold can make it: those
@@ -188,19 +191,25 @@ changes every frame, and the median jumps around with it.
 from 1 to 4. It trades one for the other and never wins: the splits only clear
 at 4, where repeated notes are back to where they started.
 
-**Why it is not merged.** The remaining failure is a held bass note under a
+**The check still owed.** The remaining failure is a held bass note under a
 repeated consonant chord — an Alberti bass, an oom-pah accompaniment, a pedal
 point. That is not an edge case, it is the texture of most left hands in the
 repertoire, and cutting one held note into four is a visible error in a practice
 app. Against that, repeated notes go from 0.58 to 0.74.
 
 Which of those matters more is a question about real music, and the fixtures
-that would answer it — `test/fixtures/rendered/` and `piano-30s.wav` — are not
-in the repository. `test/restrikes.mjs` makes the trade permanently measurable
-without them, but it cannot adjudicate it: every case in it is a single
-mechanism with all else held still. Put the fixtures back, run
-`rendered.mjs --why`, and see whether `already on` falls by more than the
-precision costs.
+that would answer it — `test/fixtures/rendered/` and `piano-30s.wav` — were not
+in the repository when this landed. `test/restrikes.mjs` makes the trade
+permanently measurable without them, but it cannot adjudicate it: every case in
+it is a single mechanism with all else held still.
+
+So this is the one change in this file that went in on judgement rather than on
+a number. **To settle it:** put the fixtures back, run `rendered.mjs --why` on
+this and on the commit before it, and compare the `already on` category against
+what precision costs. If `already on` does not fall by more than the splits
+cost, revert it — the whole of `buildAttackTable` and the `timing` envelope in
+`tracksToNotes` come out together, and `restrikes.mjs` will show the numbers
+going back to 0.58 / 0.
 
 ### Rendering through a recorded piano instead of an oscillator
 
@@ -573,9 +582,9 @@ Net negative.
 
 In rough order of expected value:
 
-1. **Adjudicate the bass re-strike change above.** It is written, measured and
-   unmerged, and needs one run against real music to settle. Everything else
-   here is downstream of that.
+1. **Adjudicate the bass re-strike change above.** It is merged on judgement
+   rather than on a measurement, and one run against real music settles it
+   either way. Everything else here is downstream of that.
 2. **The quiet inner voice.** With the bass fixed, what is left in
    `test/restrikes.mjs` is velocity 50 under a held chord: 15% found, against
    80% at velocity 90. That is a masking problem rather than a timing one — the
