@@ -1308,6 +1308,18 @@ function bindProfiles() {
   };
 
   on('profiles:changed', () => renderProfileSelect());
+
+  // Switching profiles puts the app back the way that person left it — the
+  // switches, the speed, the marked loop, their piece and where they were in
+  // it. `session.js` does the restoring and says when it has landed; the
+  // controls have to be told, because most of them are written to by the thing
+  // that changes the setting rather than by watching the setting change.
+  on('profile:restored', () => {
+    applyStateToControls();
+    resetHistory();
+    scheduleSheetRender();
+    updatePositionDisplay(state.transport.currentTime);
+  });
   renderProfileSelect();
 }
 

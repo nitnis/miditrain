@@ -100,15 +100,24 @@ export function compositionToJSON(composition) {
 // imported file gets — browser storage can be stale, half-written or left over
 // from an older version of the app, and none of that should load over the top
 // of a working state the app has no code for.
-export async function saveWorkingComposition(composition) {
-  await getWorkingStore().setItem(WORKING_KEY, {
+// One working composition per profile, because two people sharing a browser
+// are not working on the same piece. `who` is the profile's id; the old single
+// key is still read when a profile has nothing of its own yet, so an app that
+// has been in use since before profiles had their own song does not lose it.
+const workingKey = (who) => (who ? `${WORKING_KEY}:${who}` : WORKING_KEY);
+
+export async function saveWorkingComposition(composition, who = null) {
+  await getWorkingStore().setItem(workingKey(who), {
     id: composition.id || null,
     json: compositionToJSON(composition),
   });
 }
 
-export async function loadWorkingComposition() {
-  const saved = await getWorkingStore().getItem(WORKING_KEY);
+export async function loadWorkingComposition(who = null) {
+  let saved = await getWorkingStore().getItem(workingKey(who));
+  // Nothing of this profile's own: fall back to what the app was working on
+  // before there was anywhere per-profile to put it
+  if (!saved && who) saved = await getWorkingStore().getItem(WORKING_KEY);
   if (!saved || typeof saved.json !== 'string') return null;
   const composition = compositionFromJSON(saved.json);
   // Unlike an import, this keeps its identity: Save should still update the
