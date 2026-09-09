@@ -2938,6 +2938,21 @@ function bindFallingScrub() {
     const box = canvas.getBoundingClientRect();
     pickNoteForLoop(e.clientX - box.left, e.clientY - box.top);
   });
+
+  canvas.addEventListener('dblclick', (e) => {
+    // The guided flow owns the clicks while it is running, and its two picks
+    // have already happened by the time a double click is reported
+    if (picking) return;
+    const box = canvas.getBoundingClientRect();
+    // Only what is on the stage can be marked on it: a part switched off is not
+    // drawn, and a loop marked on something nobody can see is a mystery
+    const note = noteAtFallingPoint(e.clientX - box.left, e.clientY - box.top,
+                                    state.composition.notes.filter(isAudible),
+                                    state.transport.currentTime);
+    if (!note) { showToast('Double-click one of the falling notes', 1600); return; }
+    const { tempo, timeSignature } = state.composition;
+    markLoopEnd(barAtMs(note.startTime, tempo, timeSignature));
+  });
 }
 
 // ── Marking a loop ───────────────────────────────────────────────────────────
@@ -2984,6 +2999,48 @@ function toggleLoopPicking() {
   document.getElementById('falling-canvas').classList.add('picking');
   syncLoopPickButton();
   showToast('Click the note the passage starts on', 2400);
+}
+
+// ── Marking a loop end by double-clicking a note ─────────────────────────────
+//
+// The guided flow above exists because a bare click used to set a range, and
+// every stray click on the window set one. A double click is deliberate on its
+// own, so it does not need a mode first: it marks one end of the loop directly,
+// in whichever view the music is being read in.
+//
+// Which end is not asked, because there is always an answer. Outside the range
+// it is the end it is past; inside it is the end it is nearer. With no loop at
+// all it starts a one-bar one, so the first double click leaves something
+// visible on both views rather than an invisible half-made selection.
+//
+// Bars, not notes, because the loop is bars — every field, handle and readout
+// downstream of `loopStartBar` counts in them. Double-clicking a note marks the
+// bar that note is in, which is the same thing said in the units the rest of
+// the app uses.
+function markLoopEnd(bar) {
+  if (!bar) return;
+  const { loopEnabled, loopStartBar, loopEndBar } = state.transport;
+
+  if (!loopEnabled) {
+    update('transport.loopStartBar', bar);
+    update('transport.loopEndBar', bar);
+    update('transport.loopEnabled', true);
+    syncLoopControls();
+    showToast(`${rangeName()} bar ${bar} — double-click another note for the other end`, 2600);
+    return;
+  }
+
+  // Past one end, it is that end. Within the range, the nearer one — and a tie
+  // inside a range goes to the start, which is the edge a player is usually
+  // pulling back to hear a passage from.
+  const movesStart = bar < loopStartBar
+    || (bar <= loopEndBar && bar - loopStartBar <= loopEndBar - bar);
+  if (movesStart) update('transport.loopStartBar', Math.min(bar, loopEndBar));
+  else update('transport.loopEndBar', Math.max(bar, loopStartBar));
+
+  syncLoopControls();
+  const { loopStartBar: from, loopEndBar: to } = state.transport;
+  showToast(from === to ? `${rangeName()} bar ${from}` : `${rangeName()} bars ${from}–${to}`, 2000);
 }
 
 function endPicking() {
@@ -3065,6 +3122,14 @@ function bindLoopHandles() {
   };
   box.addEventListener('pointerup', release);
   box.addEventListener('pointercancel', release);
+
+  box.addEventListener('dblclick', (e) => {
+    if (picking) return;
+    // A double click on a handle is two grabs of it, not a request to move the
+    // end it already is
+    if (e.target.closest && e.target.closest('.sheet-loop-handle')) return;
+    markLoopEnd(barAtPoint(e.clientX, e.clientY, 'inside'));
+  });
 }
 
 function syncLoopControls() {

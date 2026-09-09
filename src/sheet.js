@@ -526,6 +526,10 @@ function addLoopHandle(edge, x, top, height) {
 // A start edge snaps to a bar's left-hand side and an end edge to its right,
 // so both follow the pointer within half a bar and neither moves at all when
 // the pointer has not.
+// `edge` says what the pointer is being measured against: the bar's left edge,
+// its right edge, or — for 'inside' — the bar it is actually within, which is
+// what a click asking "which bar is this" wants. Measuring a click against the
+// left edge puts anything past the middle of a bar into the next one.
 export function barAtPoint(clientX, clientY, edge = 'start') {
   if (!container || !_staveGeom.length) return null;
   const scroller = container.parentElement;
@@ -541,7 +545,9 @@ export function barAtPoint(clientX, clientY, edge = 'start') {
     const top = g.y - 8;
     const bottom = (bass ? bass.y : g.y) + 95;
     const dy = py < top ? top - py : (py > bottom ? py - bottom : 0);
-    const dx = Math.abs(px - (edge === 'end' ? g.x + g.w : g.x));
+    const dx = edge === 'inside'
+      ? (px < g.x ? g.x - px : (px > g.x + g.w ? px - (g.x + g.w) : 0))
+      : Math.abs(px - (edge === 'end' ? g.x + g.w : g.x));
     // Which system the pointer is on settles it before which bar across it —
     // otherwise a drag drifting vertically snaps to the wrong line of music
     const score = dy * 1000 + dx;
