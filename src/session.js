@@ -1,12 +1,25 @@
-// Everything the app was last doing, so a refresh puts it back.
+// Everything the app was last doing, so a refresh puts it back — and so does
+// picking a profile back up.
+//
+// The state belongs to the PROFILE, not to the browser. Two people sharing a
+// tab do not share a tempo, a marked loop, a metronome or a place in the piece,
+// and before this they did: the settings sat under one key for everybody and
+// switching profiles left the app exactly as the last person had it. Now each
+// profile carries its own, so switching puts the app back the way that person
+// left it, down to where the playhead was.
 //
 // Two stores, because the halves have different shapes. Settings are a handful
-// of values wanted before the first paint, so they sit in localStorage and are
-// read synchronously; the song can be thousands of notes, so it goes to
-// IndexedDB beside the saved compositions.
-import { state, update, on } from './state.js';
+// of values wanted before the first paint, so they ride in the profile record
+// in localStorage and are read synchronously; the song can be thousands of
+// notes, so it goes to IndexedDB beside the saved compositions, keyed by whose
+// it is.
+import { state, update, on, emit } from './state.js';
+import { stop as stopTransport } from './transport.js';
 import { saveWorkingComposition, loadWorkingComposition, compositionToJSON, compositionFromJSON } from './storage.js';
-import { current as currentProfile, adoptProfile, switchProfile } from './profiles.js';
+import {
+  current as currentProfile, adoptProfile, switchProfile,
+  rememberSession, sessionOf,
+} from './profiles.js';
 
 const SETTINGS_KEY = 'miditrain.settings';
 const SAVE_DEBOUNCE_MS = 400;
@@ -26,8 +39,8 @@ const wholeRange = (lo, hi) => (v) => {
 const stringList = (v) =>
   (Array.isArray(v) && v.every(x => typeof x === 'string') ? v.slice(0, 64) : undefined);
 
-// Every option the app remembers. What is missing is deliberately transient:
-// the playhead, the selection, and whatever the transport is doing.
+// Every option the app remembers. What is still missing is deliberately
+// transient: the selection, and whatever the transport is in the middle of.
 const SETTINGS = {
   'ui.view': oneOf('sheet', 'piano-roll'),
   'ui.trainMode': bool,
@@ -62,7 +75,18 @@ const SETTINGS = {
   'transport.loopStartBar': wholeRange(1, 999),
   'transport.loopEndBar': wholeRange(1, 999),
   'transport.speed': range(0.25, 2),
+  // Where they were in the piece. This used to be left out on the grounds that
+  // a playhead is not a setting, which is true and was still wrong: coming back
+  // to a piece and being put at the top of it is not where anybody left off.
+  // Twelve hours is longer than any piece and keeps a damaged value bounded.
+  'transport.currentTime': range(0, 12 * 60 * 60 * 1000),
 };
+
+// ...but it moves on every frame of playback, and a save on every frame is a
+// write to localStorage forty times a second. It is written whenever anything
+// else is, and always on the way out, which is what makes it accurate at the
+// only moment it is read.
+const NOT_WORTH_SAVING_FOR = new Set(['transport.currentTime']);
 
 function readPath(path) {
   return path.split('.').reduce((obj, key) => (obj ? obj[key] : undefined), state);
@@ -70,15 +94,19 @@ function readPath(path) {
 
 // ── Restore, before the first render ─────────────────────────────────────────
 
-export function restoreSettings() {
-  let saved;
+// What the app kept under one key for everybody, before profiles had their own.
+// Read once, as the starting point for a profile that has never been put down.
+function legacySettings() {
   try {
-    saved = JSON.parse(localStorage.getItem(SETTINGS_KEY));
+    const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY));
+    return saved && typeof saved === 'object' ? saved : null;
   } catch {
-    return;
+    return null;
   }
-  if (!saved || typeof saved !== 'object') return;
+}
 
+function applySettings(saved) {
+  if (!saved || typeof saved !== 'object') return false;
   for (const [path, check] of Object.entries(SETTINGS)) {
     const value = check(saved[path]);
     if (value !== undefined) update(path, value);
@@ -86,11 +114,19 @@ export function restoreSettings() {
   // Two practice modes cannot both be armed; a stored pair that says otherwise
   // came from an older build
   if (state.ui.trainMode && state.ui.learnMode) update('ui.learnMode', false);
+  return true;
+}
+
+export function restoreSettings() {
+  const mine = sessionOf();
+  // A profile with nothing of its own inherits whatever the browser was set to,
+  // so upgrading does not reset everybody to defaults
+  applySettings(Object.keys(mine).length ? mine : legacySettings());
 }
 
 export async function restoreComposition() {
   try {
-    const composition = await loadWorkingComposition();
+    const composition = await loadWorkingComposition(currentProfile()?.id || null);
     if (!composition) return false;
     Object.assign(state.composition, composition);
     return true;
@@ -143,19 +179,19 @@ export function applyBundle(bundle) {
 
 let timer = null;
 
-function saveSettings() {
+function collectSettings() {
   const out = {};
   for (const path of Object.keys(SETTINGS)) out[path] = readPath(path);
-  try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(out));
-  } catch { /* storage full or blocked; this session still works */ }
+  return out;
 }
 
-function flush() {
+// `who` is the profile being written to, which is not always the current one:
+// on the way out of a profile the state still on screen is the departing one's.
+function flush(who = currentProfile()?.id || null) {
   clearTimeout(timer);
   timer = null;
-  saveSettings();
-  saveWorkingComposition(state.composition).catch(() => {});
+  rememberSession(collectSettings());
+  saveWorkingComposition(state.composition, who).catch(() => {});
 }
 
 function schedule() {
@@ -166,14 +202,49 @@ function schedule() {
 export function initSession() {
   on('transport:noteschanged', schedule);
   on('change', ({ path }) => {
+    if (NOT_WORTH_SAVING_FOR.has(path)) return;
     if (SETTINGS[path] || path.startsWith('composition.')) schedule();
+  });
+
+  // ── Handing over between profiles ──
+  //
+  // The order matters and is the whole of it. Whatever is on screen belongs to
+  // the profile being put down, so it is written there first — while it is
+  // still the current one, since `rememberSession` writes to whoever that is.
+  on('profile:leaving', ({ id }) => flush(id));
+  on('profile:switched', async ({ to }) => {
+    // A profile that has never been put down has nothing to restore, so it
+    // takes what is on screen as its starting point and that is written to it
+    // straight away. Wiping the desk instead was tried and is wrong twice
+    // over: it throws away work for anyone adding a profile mid-practice, and
+    // "as that profile last had it" has no meaning for one that has no last.
+    if (!Object.keys(sessionOf()).length) {
+      flush(to);
+      emit('profile:restored', { id: to });
+      return;
+    }
+
+    // Nothing should still be sounding from the last person's piece. `stop()`
+    // rather than the event it emits: the event announces a stop, it does not
+    // perform one, and it leaves the position alone — which matters, because
+    // the position being restored below is the incoming profile's.
+    stopTransport();
+    applySettings(sessionOf());
+    let composition = null;
+    try { composition = await loadWorkingComposition(to); } catch { /* keep what is loaded */ }
+    if (composition) Object.assign(state.composition, composition);
+    // Everything that draws from the piece redraws from this
+    emit('transport:noteschanged');
+    emit('profile:restored', { id: to });
   });
 
   // Debouncing means the last few hundred milliseconds are still pending when
   // a tab goes away. Settings can be written synchronously on the way out;
   // the composition write is started here and usually lands, which is the best
   // IndexedDB offers from an unload.
-  const onLeaving = () => { if (timer) flush(); };
+  // Always, not only when a save is already pending: the playhead moves without
+  // scheduling one, and where they got to is the thing most worth having
+  const onLeaving = () => flush();
   window.addEventListener('pagehide', onLeaving);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') onLeaving();

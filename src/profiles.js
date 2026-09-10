@@ -54,6 +54,12 @@ function blank(name) {
     // Belongs to the person, not to the app, which is why it lives here and
     // travels with the profile file.
     calibration: null,
+    // What the app was doing when this profile was last put down: the
+    // switches, the speed, the marked loop, where the playhead had got to.
+    // Opaque here on purpose — `session.js` decides what belongs in it and
+    // checks every value on the way back out, so this file does not have to
+    // know the name of a single setting.
+    session: {},
   };
 }
 
@@ -93,7 +99,49 @@ function sanitise(raw) {
       ? raw.filename.slice(0, 120)
       : null,
     calibration: sanitiseCalibration(raw.calibration),
+    session: sanitiseSession(raw.session),
   };
+}
+
+// The session is `session.js`'s business and this only has to make sure what
+// comes back is storable and bounded: a flat object of primitives and short
+// string lists. Every value is checked again by name where it is used, so
+// nothing that survives here can be trusted for being here.
+const MAX_SESSION_KEYS = 80;
+
+function sanitiseSession(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (Object.keys(out).length >= MAX_SESSION_KEYS) break;
+    if (typeof key !== 'string' || key.length > 60) continue;
+    if (value === null || ['boolean', 'number', 'string'].includes(typeof value)) {
+      if (typeof value === 'string' && value.length > 200) continue;
+      if (typeof value === 'number' && !Number.isFinite(value)) continue;
+      out[key] = value;
+    } else if (Array.isArray(value)
+               && value.length <= 64
+               && value.every(v => typeof v === 'string' && v.length <= 200)) {
+      out[key] = value.slice();
+    }
+  }
+  return out;
+}
+
+// Called as the app changes, so it is deliberately cheap and does not emit:
+// nothing on screen depends on the session of the profile being used, and a
+// redraw on every switch flipped would be a redraw on every switch flipped.
+export function rememberSession(session) {
+  const profile = current();
+  if (!profile) return;
+  profile.session = sanitiseSession(session);
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify({ current: currentId, list: profiles }));
+  } catch { /* storage full or blocked; this session still works */ }
+}
+
+export function sessionOf(profile = current()) {
+  return profile && profile.session ? profile.session : {};
 }
 
 // A calibration decides how hard a player is judged to have struck every note,
@@ -314,10 +362,28 @@ export function current() {
   return profiles.find(p => p.id === currentId) || profiles[0];
 }
 
+// Changing who is using the app is two halves and the order is the whole of it:
+// whatever the app is doing now belongs to the profile being put down and has
+// to be written there before the pointer moves, and only then can the incoming
+// one be restored. `session.js` does the writing and the restoring; this says
+// when.
+//
+// Everything that changes `currentId` goes through here — switching, creating,
+// and deleting the one in use. Creating did not, and a new profile opened onto
+// the last person's piece with the last person's switches, which is precisely
+// what a new profile is not.
+function handOver(to) {
+  const from = currentId;
+  if (from === to) return;
+  if (from) emit('profile:leaving', { id: from });
+  currentId = to;
+  persist();
+  emit('profile:switched', { from, to });
+}
+
 export function switchProfile(id) {
   if (!profiles.some(p => p.id === id)) return false;
-  currentId = id;
-  persist();
+  handOver(id);
   return true;
 }
 
@@ -325,8 +391,7 @@ export function createProfile(name) {
   const profile = blank((name || '').trim() || `Profile ${profiles.length + 1}`);
   profile.filename = claimFileName(profile);
   profiles.push(profile);
-  currentId = profile.id;
-  persist();
+  handOver(profile.id);
   return profile;
 }
 
@@ -353,8 +418,14 @@ export function deleteProfile(id) {
   const going = profiles.find(p => p.id === id);
   if (!going) return null;
   profiles = profiles.filter(p => p.id !== id);
-  if (currentId === id) currentId = profiles[0].id;
-  persist();
+  if (currentId === id) {
+    // The one being put down no longer exists, so there is nothing to write
+    // back to it — only the incoming one has to be restored
+    currentId = null;
+    handOver(profiles[0].id);
+  } else {
+    persist();
+  }
   return fileNameFor(going);
 }
 

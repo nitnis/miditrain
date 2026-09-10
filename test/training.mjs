@@ -1992,6 +1992,125 @@ const bests = await page.evaluate(async () => {
 }
 
 
+// ── A profile carries the state of the app ──────────────────────────────────
+//
+// Picking a profile back up — by switching, or by refreshing the page — puts
+// the app the way that person left it: their piece, their switches, their
+// speed, their marked loop, and where in the piece they had got to. Before
+// this the settings sat under one key for the whole browser, so two people
+// sharing a tab shared a tempo and a metronome, and switching changed nothing
+// but the name.
+//
+// Done last, because it reloads the page.
+{
+  const ids = await page.evaluate(async () => {
+    const p = await import('/src/profiles.js');
+    const a = p.createProfile('State A').id;
+    const b = p.createProfile('State B').id;
+    return { a, b };
+  });
+  await page.waitForTimeout(300);
+
+  const setUp = (cfg) => page.evaluate(async (cfg) => {
+    const { update } = await import('/src/state.js');
+    update('composition.notes', Array.from({ length: cfg.notes }, (_, i) =>
+      ({ id: `${cfg.name}${i}`, pitch: 60 + i % 12, hand: 'right',
+         startTime: i * 500, duration: 400, velocity: 90 })));
+    update('composition.name', cfg.name);
+    update('composition.tempo', cfg.tempo);
+    update('transport.speed', cfg.speed);
+    update('transport.loopStartBar', cfg.loop[1]);
+    update('transport.loopEndBar', cfg.loop[2]);
+    update('transport.loopEnabled', cfg.loop[0]);
+    update('ui.metronomeEnabled', cfg.metronome);
+    update('ui.countInEnabled', cfg.countIn);
+    update('ui.quantize', cfg.quantize);
+    update('ui.practiceHand', cfg.hand);
+    update('transport.currentTime', cfg.at);
+  }, cfg);
+
+  const snap = () => page.evaluate(async () => {
+    const { state } = await import('/src/state.js');
+    const cls = (id) => document.getElementById(id)?.classList.contains('active');
+    return {
+      state: {
+        tempo: state.composition.tempo, notes: state.composition.notes.length,
+        name: state.composition.name, at: Math.round(state.transport.currentTime),
+        speed: state.transport.speed,
+        loop: [state.transport.loopEnabled, state.transport.loopStartBar, state.transport.loopEndBar],
+        metronome: state.ui.metronomeEnabled, countIn: state.ui.countInEnabled,
+        quantize: state.ui.quantize, hand: state.ui.practiceHand,
+      },
+      // The controls have to follow too: most of them are written by the thing
+      // that changes the setting, not by watching the setting change, so state
+      // being right proves nothing about what is on screen
+      dom: {
+        metronome: cls('btn-metronome'), countIn: cls('btn-count-in'),
+        quantize: document.getElementById('quantize-select')?.value,
+        hand: document.getElementById('practice-hand')?.value,
+        loopStart: document.getElementById('loop-start')?.value,
+        loopEnd: document.getElementById('loop-end')?.value,
+      },
+    };
+  });
+  const wantState = (c) => ({ tempo: c.tempo, notes: c.notes, name: c.name, at: c.at,
+    speed: c.speed, loop: c.loop, metronome: c.metronome, countIn: c.countIn,
+    quantize: c.quantize, hand: c.hand });
+  const wantDom = (c) => ({ metronome: c.metronome, countIn: c.countIn,
+    quantize: String(c.quantize), hand: c.hand,
+    loopStart: String(c.loop[1]), loopEnd: String(c.loop[2]) });
+  const switchTo = async (id) => {
+    await page.evaluate(async (id) => (await import('/src/profiles.js')).switchProfile(id), id);
+    await page.waitForTimeout(600);
+  };
+
+  const A = { name: 'Alpha', notes: 8, tempo: 96, speed: 0.75, at: 2500,
+              loop: [true, 2, 5], metronome: true, countIn: false, quantize: 16, hand: 'left' };
+  const B = { name: 'Beta', notes: 20, tempo: 144, speed: 1.5, at: 7000,
+              loop: [true, 3, 9], metronome: false, countIn: true, quantize: 4, hand: 'right' };
+
+  await switchTo(ids.a);
+  await setUp(A);
+  await page.waitForTimeout(600);
+  await switchTo(ids.b);
+  await setUp(B);
+  await page.waitForTimeout(600);
+
+  await switchTo(ids.a);
+  let s = await snap();
+  check('switching back to a profile restores its piece, switches and position', s.state, wantState(A));
+  check('...and the controls on screen show it', s.dom, wantDom(A));
+
+  await switchTo(ids.b);
+  s = await snap();
+  check('and switching on restores the other one', s.state, wantState(B));
+  check('...with its controls too', s.dom, wantDom(B));
+
+  // A profile with nothing of its own has nothing to restore, so it takes what
+  // is on screen. Wiping the desk instead throws away the work of anyone who
+  // adds a profile mid-practice.
+  await page.evaluate(async () => {
+    const p = await import('/src/profiles.js');
+    p.createProfile('Inherits');
+  });
+  await page.waitForTimeout(600);
+  s = await snap();
+  check('a new profile inherits the desk rather than clearing it',
+    [s.state.notes, s.state.name], [B.notes, B.name]);
+
+  await switchTo(ids.a);
+  await page.reload();
+  await page.waitForTimeout(1800);
+  s = await snap();
+  check('a refresh comes back to the profile in use, exactly as it was', s.state, wantState(A));
+  check('...controls included', s.dom, wantDom(A));
+
+  await switchTo(ids.b);
+  s = await snap();
+  check('and the other profile survived the refresh as well', s.state, wantState(B));
+}
+
+
 await browser.close();
 
 const failed = checks.filter(c => !c.ok);
