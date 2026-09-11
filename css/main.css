@@ -1109,7 +1109,12 @@ select:focus { outline: 1px solid var(--accent); }
   border: 1px solid var(--border);
   border-radius: 6px;
   max-height: 220px;
-  overflow: auto;
+  /* Down, never across. A row holds a name, a filename and its buttons, and
+     any of those can be longer than the dialog is wide — but a list you have
+     to scroll sideways to find the Delete button in is not a list. Everything
+     in the row below is set up to shrink instead, so this only ever hides the
+     last pixel of an ellipsis rather than hiding a control. */
+  overflow: hidden auto;
 }
 .profile-item {
   display: flex;
@@ -1120,7 +1125,19 @@ select:focus { outline: 1px solid var(--accent); }
 }
 .profile-item:last-child { border-bottom: none; }
 .profile-item.active { background: rgba(91, 192, 235, 0.1); }
-.profile-item-name { flex: 1; font-size: 13px; }
+/* The three text parts of a row, in the order they give way.
+   A flex item will not shrink below its own content unless it is told it may,
+   which is why each of these needs `min-width` saying so — without it the
+   longest name in the list set the width of the dialog and everything else
+   was pushed off the side of it.
+   The name is last to go and keeps a few characters whatever happens: it is
+   the only part that says whose row this is. */
+.profile-item-name {
+  flex: 1 1 auto;
+  min-width: 4em;
+  font-size: 13px;
+  overflow: hidden;
+}
 /* The name is a button now — pressing it opens what the profile has done — but
    it should still read as the row's title rather than as a control */
 .profile-open {
@@ -1131,10 +1148,25 @@ select:focus { outline: 1px solid var(--accent); }
   font: inherit;
   text-align: left;
   cursor: pointer;
+  /* The button is the full width of its cell, so a long name ends in an
+     ellipsis rather than in the middle of the next thing along */
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .profile-open:hover { text-decoration: underline; }
 .profile-item.active .profile-item-name { color: var(--accent); font-weight: 700; }
-.profile-item-meta { font-size: 11px; color: var(--muted); }
+.profile-item-meta {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* The dynamics rating, under the tallies. Its own line: it rates different
    playing from the stars above it, and adding the two would say neither. */
 .level-line {
@@ -1207,13 +1239,28 @@ select:focus { outline: 1px solid var(--accent); }
 }
 .calibrate-strike.struck { background: var(--accent); }
 
-/* Every profile lives in a file, and the row says which one */
+/* Every profile lives in a file, and the row says which one.
+   First to give way of the three: a filename is made from the name just above
+   it, so a truncated one is the least lost. The whole of it is on the `title`
+   either way. */
 .profile-item-file {
+  flex: 0 1 auto;
+  min-width: 0;
   font-size: 11px;
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   opacity: 0.75;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Narrow enough and it cannot say anything: "Ale…" costs sixty pixels and
+   tells you nothing a truncated name has not already told you. Below the
+   width where a filename is readable it gives its space to the name instead
+   of spending it on an ellipsis. The dialog is 90% of the window, so this is
+   the window width at which the row itself runs out of room. */
+@media (max-width: 560px) {
+  .profile-item-file { display: none; }
 }
 .profile-row {
   display: flex;
@@ -1370,6 +1417,36 @@ body.hands-shown #hand-canvas { display: block; }
 .modal-btn:hover { background: var(--border); }
 .modal-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
 .modal-btn.primary:hover { opacity: 0.9; }
+
+/* A button that is a picture instead of a word, for rows too narrow to spell
+   the word out. Square, so a line of them reads as a set, and no smaller than
+   a fingertip: the width saved here comes out of the label, not the target.
+   Every one of these carries an `aria-label` — an icon on its own says nothing
+   to a screen reader, and nothing to anyone who does not recognise the
+   drawing, which is what the `title` tooltip is for. */
+.icon-btn {
+  width: 40px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+.icon-btn:hover { color: var(--text); }
+.icon-btn svg {
+  width: 17px;
+  height: 17px;
+  /* The icons are drawn as strokes, so they take their weight from the colour
+     the button is currently in and dim with it */
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.icon-btn.danger:hover { color: var(--red); border-color: var(--red); background: var(--surface); }
+.icon-btn:disabled { opacity: 0.35; cursor: default; }
+.icon-btn:disabled:hover { color: var(--muted); background: var(--surface); border-color: var(--border); }
 
 /* Accuracy modal */
 /* ── The star rating ── */

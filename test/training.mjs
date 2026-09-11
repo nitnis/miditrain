@@ -770,7 +770,7 @@ check('...and neither written over the other', await page.evaluate(async () => {
 const wasCalled = (await profileNamed('Anna B')).filename;
 await page.click('#btn-profiles');
 await page.evaluate(() => { window.prompt = () => 'Bernadette'; });
-await page.click('#profile-list .profile-item.active button:text-is("Rename")');
+await page.click('#profile-list .profile-item.active button[aria-label^="Rename"]');
 await page.waitForTimeout(600);
 check('renaming a profile renames its file',
   (await profileNamed('Bernadette'))?.filename, 'Bernadette.miditrain.json');
@@ -783,7 +783,7 @@ check('...and leaving nothing behind at the old name',
   (await folderFiles()).includes(wasCalled), false);
 
 await page.evaluate(() => { window.confirm = () => true; });
-await page.click('#profile-list .profile-item.active button:text-is("Delete")');
+await page.click('#profile-list .profile-item.active button[aria-label^="Delete"]');
 await page.waitForTimeout(600);
 check('deleting a profile takes its file away too',
   (await folderFiles()).includes('Bernadette.miditrain.json'), false);
@@ -2108,6 +2108,87 @@ const bests = await page.evaluate(async () => {
   await switchTo(ids.b);
   s = await snap();
   check('and the other profile survived the refresh as well', s.state, wantState(B));
+}
+
+// ── The profile rows fit the dialog they are in ─────────────────────────────
+//
+// A row holds a name, the file it lives in, and its buttons. Spelled out in
+// words, "Rename" and "Delete" took 177px of a 420px row and the rest went off
+// the side: the list grew a horizontal scrollbar, at every window size, and the
+// Delete button was off the end of it. The buttons are pictures now and every
+// text part of the row may shrink.
+//
+// What is checked is the thing that was wrong — nothing scrolls sideways — at
+// widths from a desktop down to a phone, and that the two icons still say what
+// they are to anything that cannot see them.
+{
+  await page.evaluate(async () => {
+    const p = await import('/src/profiles.js');
+    // A name far longer than the dialog is wide, which is what broke it
+    for (const n of ['Alexandra Kowalczyk-Brennan', 'Jo']) p.createProfile(n);
+  });
+  await page.click('#btn-profiles');
+  await page.waitForTimeout(400);
+
+  for (const width of [1400, 900, 600, 420, 360]) {
+    await page.setViewportSize({ width, height: 950 });
+    await page.waitForTimeout(250);
+    const fit = await page.evaluate(() => {
+      const list = document.querySelector('.profile-list');
+      const rows = [...document.querySelectorAll('.profile-item')];
+      return {
+        list: list.scrollWidth > list.clientWidth,
+        rows: rows.some(r => r.scrollWidth > r.clientWidth),
+        // Every button has to be inside the list it is drawn in, not merely
+        // laid out somewhere: a Delete button 200px off the right-hand edge
+        // has a width and a position and is still unreachable
+        escaped: rows.some((r) => {
+          const edge = list.getBoundingClientRect();
+          return [...r.querySelectorAll('button')].some((b) => {
+            const box = b.getBoundingClientRect();
+            return box.right > edge.right + 1 || box.left < edge.left - 1;
+          });
+        }),
+      };
+    });
+    check(`at ${width}px the list does not scroll sideways`, fit.list, false);
+    check(`at ${width}px no row overflows`, fit.rows, false);
+    check(`at ${width}px every button is inside the list`, fit.escaped, false);
+  }
+
+  await page.setViewportSize({ width: 1400, height: 950 });
+  await page.waitForTimeout(250);
+
+  const icons = await page.evaluate(() => {
+    const row = document.querySelector('.profile-item');
+    const named = (label) => [...row.querySelectorAll('button')]
+      .find(b => (b.getAttribute('aria-label') || '').startsWith(label));
+    const describe = (b) => b && ({
+      drawn: !!b.querySelector('svg'),
+      spelled: b.textContent.trim(),
+      titled: !!b.title,
+      square: Math.abs(b.getBoundingClientRect().width - b.getBoundingClientRect().height) < 2,
+      big: b.getBoundingClientRect().width >= 32,
+    });
+    return { rename: describe(named('Rename')), remove: describe(named('Delete')) };
+  });
+  // An icon with no accessible name is a button that only means something to
+  // people who recognise the drawing
+  check('the rename button is a labelled picture', icons.rename,
+    { drawn: true, spelled: '', titled: true, square: true, big: true });
+  check('...and so is delete', icons.remove,
+    { drawn: true, spelled: '', titled: true, square: true, big: true });
+
+  // The pictures still do what the words did
+  await page.evaluate(() => { window.prompt = () => 'Renamed By Pencil'; });
+  await page.click('#profile-list .profile-item button[aria-label^="Rename"]');
+  await page.waitForTimeout(600);
+  const renamed = await page.evaluate(async () =>
+    (await import('/src/profiles.js')).listProfiles().map(p => p.name));
+  check('clicking the pencil renames', renamed.includes('Renamed By Pencil'), true);
+
+  await page.click('#btn-close-profiles');
+  await page.waitForTimeout(200);
 }
 
 
