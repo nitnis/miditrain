@@ -1124,6 +1124,19 @@ select:focus { outline: 1px solid var(--accent); }
 .bests-score { min-width: 42px; font-variant-numeric: tabular-nums; }
 .bests-when { flex: 1; color: var(--muted); font-size: 11px; }
 .bests-empty { padding: 14px; color: var(--muted); font-size: 13px; text-align: center; }
+/* The bin at the end of a run. A modal button's forty pixels would be taller
+   than the row it sits in, so it is cut down to the row — still a real target,
+   and the only one here that destroys anything, which is why it is the only
+   one that is not a word.
+   Qualified by the row it is in: `.icon-btn` sets the same properties from
+   further down this file, and at equal weight the later rule is the one that
+   counts. */
+.bests-run .bests-forget {
+  width: 26px;
+  height: 26px;
+  flex: none;
+}
+.bests-run .bests-forget svg { width: 14px; height: 14px; }
 
 /* ── Scale and arpeggio generator ── */
 .practice-box {

@@ -34,7 +34,7 @@ import { looksLikeAudio, transcribeAudioFile } from './audio-import.js';
 import {
   listProfiles, current as currentProfile, switchProfile, createProfile, deleteProfile,
   renameProfile, adoptProfile, sectionKey, sectionTempo, rememberSectionTempo, setLearningPosition,
-  trainingKey, parseTrainingKey, bestFor, rememberBest, bestsTree,
+  trainingKey, parseTrainingKey, bestFor, rememberBest, forgetBest, bestsTree,
   learningPosition, canUseFolder, chooseFolder, folderHandle, storedFolder, scanFolder,
   writeToFolder, readFromFolder, removeFromFolder,
   fileNameFor, bundleToJSON, bundleFromJSON,
@@ -1005,6 +1005,22 @@ function whenText(at) {
 function renderBestsTree(profile) {
   const host = document.getElementById('bests-tree');
   const tree = bestsTree(profile);
+
+  // Which branches were open, so deleting a run does not fold the tree up and
+  // lose the reader's place. Kept by the path through the tree rather than by
+  // position, so the branch that held the deleted run stays open even though
+  // its count has changed — and a branch that emptied out simply is not there
+  // to reopen.
+  //
+  // `reopening` separates the redraw from the first draw. On a redraw what was
+  // open is the whole answer, including what was closed: without it, a branch
+  // that opens by default and had been closed by hand would spring back open
+  // every time anything at all was deleted.
+  const wasOpen = new Set([...host.querySelectorAll('details[data-path]')]
+    .filter(d => d.open).map(d => d.dataset.path));
+  const reopening = host.querySelector('details[data-path]') !== null;
+  const opens = (path, byDefault) => (reopening ? wasOpen.has(path) : byDefault);
+
   host.innerHTML = '';
 
   const runsIn = (songs) => songs.reduce((n, s) => n + s.hands.reduce(
@@ -1020,9 +1036,10 @@ function renderBestsTree(profile) {
     return;
   }
 
-  const detail = (cls, label, count) => {
+  const detail = (cls, label, count, path) => {
     const el = document.createElement('details');
     el.className = cls;
+    el.dataset.path = path;
     const head = document.createElement('summary');
     head.textContent = label;
     if (count !== undefined) {
@@ -1043,22 +1060,27 @@ function renderBestsTree(profile) {
   for (const branch of tree) {
     const songs = branch.songs;
     const into = branched
-      ? detail('bests-mode', MODE_NAMES[branch.mode] || branch.mode, runsIn(songs))
+      ? detail('bests-mode', MODE_NAMES[branch.mode] || branch.mode, runsIn(songs), branch.mode)
       : host;
-    if (branched) into.open = branch.mode === 'standard';
+    if (branched) into.open = opens(branch.mode, branch.mode === 'standard');
 
     for (const song of songs) {
       const runsHere = song.hands.reduce(
         (m, h) => m + h.speeds.reduce((k, v) => k + v.runs.length, 0), 0);
-      const songEl = detail('bests-song', song.songName, runsHere);
+      const songPath = `${branch.mode}/${song.songName}`;
+      const songEl = detail('bests-song', song.songName, runsHere, songPath);
       // One piece opens by itself, because opening it is then the only thing
       // there is to do
-      songEl.open = !branched && songs.length === 1;
+      songEl.open = opens(songPath, !branched && songs.length === 1);
 
       for (const hand of song.hands) {
-        const handEl = detail('bests-hand', HAND_NAMES[hand.hand] || hand.hand);
+        const handPath = `${songPath}/${hand.hand}`;
+        const handEl = detail('bests-hand', HAND_NAMES[hand.hand] || hand.hand, undefined, handPath);
+        handEl.open = opens(handPath, false);
         for (const speed of hand.speeds) {
-          const speedEl = detail('bests-speed', `${speed.bpm} BPM`);
+          const speedPath = `${handPath}/${speed.bpm}`;
+          const speedEl = detail('bests-speed', `${speed.bpm} BPM`, undefined, speedPath);
+          speedEl.open = opens(speedPath, false);
           for (const run of speed.runs) {
             speedEl.appendChild(bestRow(run));
           }
@@ -1126,9 +1148,47 @@ function bestRow(run) {
     feet.title = 'How the pedalling was timed';
   }
 
+  // Giving a record up. The same bin as the Profiles dialog, for the same
+  // reason: the row has no width to spell the word out in, and a line of these
+  // down the side of the tree reads as one column rather than as a button
+  // repeated.
+  const forget = iconButton(TRASH, `Delete this best run — ${describeRun(run)}`);
+  forget.classList.add('danger', 'bests-forget');
+  forget.onclick = () => forgetBestFromDialog(run);
+
   row.append(bars, stars, ...(level ? [level] : []), ...(feet ? [feet] : []),
-             score, when, load);
+             score, when, load, forget);
   return row;
+}
+
+// A run in one line, for a tooltip and for the question that asks before it
+// goes. The row itself only says the bars — the piece, the hand and the tempo
+// are the branches it hangs under, and they have to be spelled out here or the
+// question is "delete bars 1–4?" with no answer to "of what?".
+function describeRun(run) {
+  const at = parseTrainingKey(run.key);
+  const where = run.bars === 'all' ? 'the whole piece' : `bars ${run.bars.replace('-', '–')}`;
+  if (!at) return where;
+  const hand = (HAND_NAMES[at.hand] || at.hand).toLowerCase();
+  const mode = at.mode === 'pro' ? ', professional' : '';
+  return `${where} of "${at.songName}", ${hand} at ${at.bpm} BPM${mode}`;
+}
+
+// Asked before, not undone after: a best is one line in one profile, and an
+// undo for it would be more machinery than the thing it restores. So the
+// question names the run in full, and says what is actually lost — the score
+// and the recording of the take, which is the part people would miss.
+function forgetBestFromDialog(run) {
+  const scored = run.stars == null ? `${run.score}%` : `${run.score}%, ★ ${starText(run.stars)}`;
+  const alsoTake = run.take ? ' The recording of it goes too.' : '';
+  if (!confirm(`Delete your best for ${describeRun(run)}?\n\n${scored}, set ${whenText(run.at)}.`
+               + `${alsoTake} This cannot be undone.`)) return;
+  if (!forgetBest(run.key)) return;
+  // Redraw from the store rather than lifting the row out, so the counts on
+  // every branch above it, and the empty state when the last one goes, are
+  // right without this having to know about any of them
+  renderBestsTree(currentProfile());
+  showToast('Best run deleted', 2000);
 }
 
 function openBests(profile) {

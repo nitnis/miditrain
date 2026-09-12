@@ -890,7 +890,7 @@ await page.evaluate(async () => {
   on('transport:play', () => { window.__played += 1; });
 });
 await page.locator('.bests-speed').filter({ hasText: '150 BPM' })
-  .locator('.bests-run button').click();
+  .locator('.bests-run .small-btn').click();
 await page.waitForTimeout(1000);
 // The tempo goes to the rate the run was set at. This record was written when
 // a speed slider could reach 150 by multiplying a written 120, so it still says
@@ -1288,7 +1288,7 @@ check('...and only the professional rows carry the second rating',
 
 // Loading a best arms the mode it was set in — a standard best retried with the
 // mode left on would file the retry somewhere the record it meant to beat is not
-await page.locator('.bests-mode').nth(1).locator('.bests-run button').click();
+await page.locator('.bests-mode').nth(1).locator('.bests-run .small-btn').click();
 await page.waitForTimeout(900);
 check('loading a professional best arms professional mode',
   await page.evaluate(() => window.__t.state.ui.professional), true);
@@ -1300,7 +1300,7 @@ await page.waitForTimeout(250);
 await page.locator('.profile-item.active .profile-open').click();
 await page.waitForTimeout(400);
 await page.evaluate(() => document.querySelectorAll('#bests-tree details').forEach(d => { d.open = true; }));
-await page.locator('.bests-mode').nth(0).locator('.bests-run button').click();
+await page.locator('.bests-mode').nth(0).locator('.bests-run .small-btn').click();
 await page.waitForTimeout(900);
 check('...and loading an ordinary one disarms it again',
   await page.evaluate(() => window.__t.state.ui.professional), false);
@@ -2389,6 +2389,99 @@ const bests = await page.evaluate(async () => {
         spills: hdr.scrollWidth > hdr.clientWidth + 1,
       };
     }), { caret: true, spills: false });
+}
+
+// ── Giving a record up ──────────────────────────────────────────────────────
+//
+// A best can now be deleted, which is the one thing in this app that destroys
+// something a player earned. So: it asks first, Cancel means Cancel, and what
+// it asks names the run in full — the row itself only says which bars, and the
+// piece, the hand and the tempo are the branches it hangs under.
+//
+// There is no undo, deliberately, so the question is the whole of the safety
+// and is worth checking as carefully as the deletion.
+{
+  // A profile of its own, so the records are exactly these four and the counts
+  // below are not at the mercy of everything the suite did above
+  await page.evaluate(async () => {
+    const p = await import('/src/profiles.js');
+    p.createProfile('Records');
+    const take = { range: { startMs: 0, endMs: 900, tailMs: 0 },
+                   notes: [{ pitch: 60, startTime: 0, duration: 300, velocity: 90, matched: true }],
+                   expected: [{ pitch: 60, startTime: 0, grade: 'perfect' }] };
+    for (const [songName, bars, hand, bpm, score, stars] of [
+      ['Study in C', { startBar: 1, endBar: 4 }, 'both', 120, 92, 8],
+      ['Study in C', { startBar: 5, endBar: 8 }, 'both', 120, 78, 6],
+      ['Study in C', { startBar: 1, endBar: 4 }, 'left', 90, 85, 7],
+      ['Nocturne', { startBar: 1, endBar: 2 }, 'right', 60, 100, 10],
+    ]) {
+      p.rememberBest(p.trainingKey({ songName, bars, hand, bpm }), {
+        score, stars, perfect: 4, good: 0, almost: 0, missed: 0, extra: 0,
+        total: 4, avgLatencyMs: 20, tempo: bpm, take,
+      });
+    }
+  });
+  await page.waitForTimeout(400);
+
+  const kept = () => page.evaluate(async () =>
+    Object.keys((await import('/src/profiles.js')).current().bests).length);
+  const expandAll = async () => {
+    await page.evaluate(() =>
+      document.querySelectorAll('#bests-tree details').forEach(d => { d.open = true; }));
+    await page.waitForTimeout(150);
+  };
+
+  await page.click('#btn-profile-bests');
+  await page.waitForTimeout(400);
+  await expandAll();
+  check('four records to begin with', await kept(), 4);
+
+  const bins = await page.evaluate(() =>
+    [...document.querySelectorAll('.bests-run .bests-forget')].map(b => ({
+      drawn: !!b.querySelector('svg'), spelled: b.textContent.trim(),
+      labelled: (b.getAttribute('aria-label') || '').startsWith('Delete this best run'),
+    })));
+  check('every run offers a way to give it up', bins.length, 4);
+  check('...each a labelled picture rather than a bare drawing',
+    bins.filter(b => !(b.drawn && b.spelled === '' && b.labelled)), []);
+
+  // The question has to say what is going. "Delete bars 1–4?" has no answer to
+  // "of what?" — the piece and the hand are branches, not part of the row.
+  const asked = await page.evaluate(async () => {
+    let seen = null;
+    const real = window.confirm;
+    window.confirm = (message) => { seen = message; return false; };
+    document.querySelector('.bests-run .bests-forget').click();
+    window.confirm = real;
+    return seen;
+  });
+  check('it asks before deleting', Boolean(asked), true);
+  check('...naming the piece, the hand and the tempo, not just the bars',
+    ['Nocturne', 'right hand', '60 BPM', 'cannot be undone'].filter(s => !asked.includes(s)), []);
+  check('...and saying no keeps the record', await kept(), 4);
+
+  // Everything open stays open: deleting a run must not fold the tree up and
+  // lose the place of whoever is reading it
+  await page.evaluate(() => { window.confirm = () => true; });
+  await page.click('.bests-run .bests-forget');
+  await page.waitForTimeout(500);
+  check('saying yes takes it', await kept(), 3);
+  check('...and the tree keeps its place rather than folding up', await page.evaluate(() =>
+    [...document.querySelectorAll('#bests-tree details')].every(d => d.open)), true);
+
+  // ...down to none, where the branches and their counts have to go too
+  for (let i = 0; i < 3; i++) {
+    await expandAll();
+    if (!(await page.locator('.bests-run .bests-forget').count())) break;
+    await page.locator('.bests-run .bests-forget').first().click();
+    await page.waitForTimeout(400);
+  }
+  check('the last one can go as well', await kept(), 0);
+  check('...and the window says there is nothing rather than showing an empty tree',
+    await page.evaluate(() => Boolean(document.querySelector('.bests-empty'))), true);
+
+  await page.click('#btn-close-bests');
+  await page.waitForTimeout(200);
 }
 
 
