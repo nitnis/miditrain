@@ -21,6 +21,14 @@ const browser = await chromium.launch({
   executablePath: process.env.CHROME || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
 });
 const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+
+// The header carries one button now: everything that is not playing the piece
+// moved behind the gear, so reaching any of it means opening that first.
+const openSettings = async () => {
+  await page.click('#btn-settings');
+  await page.waitForTimeout(120);
+};
+
 const problems = [];
 page.on('pageerror', e => problems.push('pageerror: ' + e.message));
 page.on('console', m => { if (m.type() === 'error') problems.push('console: ' + m.text()); });
@@ -242,7 +250,6 @@ await page.evaluate(async () => {
     update('composition.tempo', 120);
     update('ui.countInEnabled', false);   // a bar of clicks the driver would have to sit through
     update('ui.practiceHand', 'both');
-    update('transport.speed', 1);
     emit('transport:noteschanged', notes);
   };
 
@@ -317,6 +324,7 @@ const folderFiles = () => page.evaluate(() => window.__t.folderFiles?.() ?? []);
 const profileNamed = (name) => page.evaluate(async n =>
   (await import('/src/profiles.js')).listProfiles().find(p => p.name === n) || null, name);
 const makeProfile = async (name) => {
+  await openSettings();
   await page.click('#btn-profiles');
   await page.fill('#profile-new-name', name);
   await page.click('#btn-profile-create');
@@ -529,18 +537,20 @@ check('practising one hand keeps its own best',
   Object.keys(p.bests).some(k => k.endsWith('|1-1|right|120')), true);
 check('...without touching the both-hands one', p.bests[key120].score, clean.score);
 
-// ── and so is the same passage at a different speed ──────────────────────────
+// ── and so is the same passage taken faster ──────────────────────────────────
+// There is one rate now. A passage at 180 is a passage at 180, however you got
+// there, and it is a different exercise from the same passage at 120.
 await page.evaluate(async () => {
   const { update } = await import('/src/state.js');
   update('ui.practiceHand', 'both');
-  update('transport.speed', 1.5);       // 120 BPM taken at 150% is 180 to the fingers
+  update('composition.tempo', 180);
 });
-r = await run('clean, at 150% speed', CLEAN);
+r = await run('clean, at 180 BPM', CLEAN);
 p = await profile();
 check('a faster run is a separate best',
   Object.keys(p.bests).some(k => k.endsWith('|1-1|both|180')), true);
 await page.evaluate(async () =>
-  (await import('/src/state.js')).update('transport.speed', 1));
+  (await import('/src/state.js')).update('composition.tempo', 120));
 
 // ── the results screen says so, and offers the best back ─────────────────────
 r = await run('two of three, so a best stands over it', [[500, 62], [1000, 64]]);
@@ -768,6 +778,7 @@ check('...and neither written over the other', await page.evaluate(async () => {
 }), ['Anna B', 'Anna B.']);
 
 const wasCalled = (await profileNamed('Anna B')).filename;
+await openSettings();
 await page.click('#btn-profiles');
 await page.evaluate(() => { window.prompt = () => 'Bernadette'; });
 await page.click('#profile-list .profile-item.active button[aria-label^="Rename"]');
@@ -838,6 +849,7 @@ await page.evaluate(async () => {
   put('Prelude | No. 2', { startBar: 1, endBar: 4 }, 'left', 60, 6, 74);
 });
 
+await openSettings();
 await page.click('#btn-profiles');
 await page.waitForTimeout(300);
 await page.locator('.profile-item.active .profile-open').click();
@@ -869,7 +881,7 @@ check('the tree is piece, then hand, then speed — each in order', await shape(
 check('...with a song name that contains the key separator kept whole',
   (await shape())[0].song, 'Prelude | No. 2');
 
-// Load the 150 BPM run: a different speed from the piece as it stands.
+// Load the 150 BPM run: a different tempo from the piece as it stands.
 // Counted rather than caught in the act — the replay is a second long, and
 // whether it is still running when the check looks is a matter of luck.
 await page.evaluate(async () => {
@@ -880,15 +892,18 @@ await page.evaluate(async () => {
 await page.locator('.bests-speed').filter({ hasText: '150 BPM' })
   .locator('.bests-run button').click();
 await page.waitForTimeout(1000);
-check('loading a run puts the piece, hand, speed and bars back', await page.evaluate(async () => {
+// The tempo goes to the rate the run was set at. This record was written when
+// a speed slider could reach 150 by multiplying a written 120, so it still says
+// `tempo: 120` inside — and the rate is the half worth restoring.
+check('loading a run puts the piece, hand, tempo and bars back', await page.evaluate(async () => {
   const { state } = await import('/src/state.js');
   return {
     song: state.composition.name, tempo: state.composition.tempo,
-    speed: state.transport.speed, hand: state.ui.practiceHand,
+    hand: state.ui.practiceHand,
     training: state.ui.trainMode,
     loop: [state.transport.loopEnabled, state.transport.loopStartBar, state.transport.loopEndBar],
   };
-}), { song: 'Study in C', tempo: 120, speed: 1.25, hand: 'both', training: true,
+}), { song: 'Study in C', tempo: 150, hand: 'both', training: true,
       loop: [true, 3, 4] });
 check('...and plays it', await page.evaluate(() => window.__played), 1);
 // A replay started from here has no results screen behind it to go back to
@@ -908,6 +923,11 @@ await section(0, 0);
 await setupBars(8);
 await page.click('#btn-to-start');
 await page.selectOption('#learn-sections', '2');
+// Said here rather than inherited from whatever ran last: every number below
+// is measured from this one, and a block whose expectations depend on a
+// distant earlier block is a block that breaks for unrelated reasons.
+await page.evaluate(async () =>
+  (await import('/src/state.js')).update('composition.tempo', 120));
 await page.waitForTimeout(200);
 r = await run('a run, to open the results screen', []);
 await page.waitForTimeout(400);
@@ -1251,6 +1271,7 @@ await page.evaluate(async () => {
   const { switchProfile, listProfiles } = await import('/src/profiles.js');
   switchProfile(listProfiles().find(p => p.name === 'Two ways of playing').id);
 });
+await openSettings();
 await page.click('#btn-profiles');
 await page.waitForTimeout(300);
 await page.locator('.profile-item.active .profile-open').click();
@@ -1273,6 +1294,7 @@ check('loading a professional best arms professional mode',
   await page.evaluate(() => window.__t.state.ui.professional), true);
 await page.evaluate(() => document.getElementById('btn-stop').click());
 await closeResults();
+await openSettings();
 await page.click('#btn-profiles');
 await page.waitForTimeout(250);
 await page.locator('.profile-item.active .profile-open').click();
@@ -1612,6 +1634,7 @@ const calibrate = async (passes) => {
 const calNote = () => page.textContent('#calibrate-note');
 const pass = (v) => Array(8).fill(v);
 
+await openSettings();
 await page.click('#btn-profiles');
 await page.evaluate(() => window.__t.fakeInput('kbd-studio', 'Studio 88'));
 await page.click('#btn-calibrate');
@@ -1646,6 +1669,7 @@ check('the profile screen says when it was taken and on what',
 await page.evaluate(() => window.__t.fakeInput('kbd-other', 'Some other keyboard'));
 await page.evaluate(() => window.__t.emit('profiles:changed', {}));
 await page.click('#btn-close-profiles');
+await openSettings();
 await page.click('#btn-profiles');
 check('a different keyboard is noticed and said out loud',
   (await page.textContent('#profile-calibration-state')).includes('wants taking again'), true);
@@ -1996,7 +2020,7 @@ const bests = await page.evaluate(async () => {
 //
 // Picking a profile back up — by switching, or by refreshing the page — puts
 // the app the way that person left it: their piece, their switches, their
-// speed, their marked loop, and where in the piece they had got to. Before
+// tempo, their marked loop, and where in the piece they had got to. Before
 // this the settings sat under one key for the whole browser, so two people
 // sharing a tab shared a tempo and a metronome, and switching changed nothing
 // but the name.
@@ -2018,7 +2042,6 @@ const bests = await page.evaluate(async () => {
          startTime: i * 500, duration: 400, velocity: 90 })));
     update('composition.name', cfg.name);
     update('composition.tempo', cfg.tempo);
-    update('transport.speed', cfg.speed);
     update('transport.loopStartBar', cfg.loop[1]);
     update('transport.loopEndBar', cfg.loop[2]);
     update('transport.loopEnabled', cfg.loop[0]);
@@ -2036,7 +2059,6 @@ const bests = await page.evaluate(async () => {
       state: {
         tempo: state.composition.tempo, notes: state.composition.notes.length,
         name: state.composition.name, at: Math.round(state.transport.currentTime),
-        speed: state.transport.speed,
         loop: [state.transport.loopEnabled, state.transport.loopStartBar, state.transport.loopEndBar],
         metronome: state.ui.metronomeEnabled, countIn: state.ui.countInEnabled,
         quantize: state.ui.quantize, hand: state.ui.practiceHand,
@@ -2054,7 +2076,7 @@ const bests = await page.evaluate(async () => {
     };
   });
   const wantState = (c) => ({ tempo: c.tempo, notes: c.notes, name: c.name, at: c.at,
-    speed: c.speed, loop: c.loop, metronome: c.metronome, countIn: c.countIn,
+    loop: c.loop, metronome: c.metronome, countIn: c.countIn,
     quantize: c.quantize, hand: c.hand });
   const wantDom = (c) => ({ metronome: c.metronome, countIn: c.countIn,
     quantize: String(c.quantize), hand: c.hand,
@@ -2064,9 +2086,9 @@ const bests = await page.evaluate(async () => {
     await page.waitForTimeout(600);
   };
 
-  const A = { name: 'Alpha', notes: 8, tempo: 96, speed: 0.75, at: 2500,
+  const A = { name: 'Alpha', notes: 8, tempo: 96, at: 2500,
               loop: [true, 2, 5], metronome: true, countIn: false, quantize: 16, hand: 'left' };
-  const B = { name: 'Beta', notes: 20, tempo: 144, speed: 1.5, at: 7000,
+  const B = { name: 'Beta', notes: 20, tempo: 144, at: 7000,
               loop: [true, 3, 9], metronome: false, countIn: true, quantize: 4, hand: 'right' };
 
   await switchTo(ids.a);
@@ -2127,6 +2149,7 @@ const bests = await page.evaluate(async () => {
     // A name far longer than the dialog is wide, which is what broke it
     for (const n of ['Alexandra Kowalczyk-Brennan', 'Jo']) p.createProfile(n);
   });
+  await openSettings();
   await page.click('#btn-profiles');
   await page.waitForTimeout(400);
 
@@ -2189,6 +2212,77 @@ const bests = await page.evaluate(async () => {
 
   await page.click('#btn-close-profiles');
   await page.waitForTimeout(200);
+}
+
+// ── One button in the header, and one rate for the music ────────────────────
+//
+// The header carried ten buttons, nine of which were things you do between
+// practice sessions rather than during one. They live behind the gear now.
+//
+// What has to keep working is everything that reached them by id — the click
+// handlers, and the shortcut that writes each button's key onto its tooltip —
+// and the way out of the dialog, since every button in it leads somewhere else
+// and two stacked overlays is not a way out.
+{
+  const shown = (id) => page.evaluate((id) =>
+    !document.getElementById(id).classList.contains('hidden'), id);
+
+  const header = await page.evaluate(() =>
+    [...document.querySelectorAll('#header .header-right button')].map(b => b.id));
+  check('the header is down to one button', header, ['btn-settings']);
+
+  check('the settings dialog starts closed', await shown('settings-modal'), false);
+  await page.click('#btn-settings');
+  await page.waitForTimeout(200);
+  check('...and the gear opens it', await shown('settings-modal'), true);
+
+  // A button in here that lost its handler on the way out of the header would
+  // look perfectly normal and do nothing
+  check('every button in it is still wired to something', await page.evaluate(() =>
+    [...document.querySelectorAll('#settings-modal .settings-grid button')]
+      .filter(b => typeof b.onclick !== 'function').map(b => b.id)), []);
+
+  await page.click('#btn-profiles');
+  await page.waitForTimeout(400);
+  check('a button in it opens what it always opened', await shown('profiles-modal'), true);
+  check('...and settings closes rather than stacking behind it',
+    await shown('settings-modal'), false);
+  await page.click('#btn-close-profiles');
+  await page.waitForTimeout(200);
+
+  await page.click('#btn-settings');
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(250);
+  check('Escape closes it', await shown('settings-modal'), false);
+
+  // The shortcut reaches a button that is no longer anywhere on screen
+  await page.keyboard.press('Shift+KeyS');
+  await page.waitForTimeout(400);
+  check('a shortcut still reaches a button that has left the header',
+    await shown('practice-modal'), true);
+  await page.click('#btn-practice-cancel');
+  await page.waitForTimeout(200);
+
+  // ── and the speed multiplier is gone ──
+  //
+  // Two controls for one quantity: a passage at 60 BPM with the slider at 150%
+  // and the same passage at 90 BPM were the same thing to the fingers, written
+  // down two different ways, and the number that mattered was on neither.
+  check('there is no speed control left', await page.evaluate(() =>
+    Boolean(document.getElementById('speed-slider')
+            || document.getElementById('speed-value'))), false);
+  check('...nor a speed left in the state', await page.evaluate(async () =>
+    'speed' in (await import('/src/state.js')).state.transport), false);
+
+  // The tempo is the rate, so it is what a best is keyed by
+  const keyed = await page.evaluate(async () => {
+    const { update, state } = await import('/src/state.js');
+    update('composition.tempo', 132);
+    await new Promise(r => setTimeout(r, 100));
+    return state.composition.tempo;
+  });
+  check('the tempo alone says how fast this is going', keyed, 132);
 }
 
 

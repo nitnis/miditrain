@@ -307,7 +307,7 @@ function beginCluster(k) {
 
 // The cluster plays itself through, in time, with the notes falling
 function listen() {
-  const t = posStart + (performance.now() - perfStart) * (state.transport.speed || 1);
+  const t = posStart + (performance.now() - perfStart);
   const here = cluster();
   if (!here) { rafId = null; return; }
 
@@ -432,7 +432,7 @@ function goTo(i) {
 
 // The only time the clock moves: between one attack and the next
 function fall() {
-  const t = posStart + (performance.now() - perfStart) * (state.transport.speed || 1);
+  const t = posStart + (performance.now() - perfStart);
   if (t >= targetMs) { arrive(); return; }
   update('transport.currentTime', t);
   emit('transport:tick', t);

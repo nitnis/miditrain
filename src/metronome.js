@@ -51,7 +51,13 @@ export function clickKind(tick, subs, beatsPerBar) {
   return Math.floor(tick / subs) % beatsPerBar === 0 ? 'downbeat' : 'beat';
 }
 
-function beatMs() {
+// How long a beat lasts, in milliseconds.
+//
+// There was a second one of these — `beatRealMs`, for the count-in — back when
+// a speed control multiplied the tempo and the written beat and the sounded
+// beat were different lengths. They are the same beat now, so this is the only
+// one, and the count-in uses it too.
+export function beatMs() {
   return 60000 / state.composition.tempo;
 }
 
@@ -77,9 +83,11 @@ function tickGapBeats(tick) {
   return tickBeats(tick + 1) - tickBeats(tick);
 }
 
-// ...and heard in real time, which the speed control stretches
+// ...and heard in real time. The two were once different things: a speed
+// control multiplied the tempo, so a bar could be written at one rate and
+// sounded at another. There is only the tempo now, so this is a unit change.
 function realSeconds(ms) {
-  return ms / 1000 / (state.transport.speed || 1);
+  return ms / 1000;
 }
 
 function scheduler() {
@@ -153,15 +161,6 @@ export function stopMetronome() {
 // the count-in has to be audible even with the metronome off. Returns the lead
 // time in seconds before the first click, so the caller can line its countdown
 // up with the audio.
-// How long a beat actually lasts, in real milliseconds. The tempo is what the
-// music is written at; the speed control is what it is being played at, and a
-// count-in that ignores the second one counts you in at a pulse the music is
-// not about to arrive at — which at half speed means coming in twice as fast
-// as the first bar.
-export function beatRealMs() {
-  return realSeconds((60 / state.composition.tempo) * 1000) * 1000;
-}
-
 export function scheduleCountInClicks(beats, tempo, timeSignature) {
   const ctx = getAudioCtx();
   if (ctx.state === 'suspended') ctx.resume();

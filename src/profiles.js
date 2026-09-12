@@ -479,9 +479,11 @@ export function rememberSectionTempo(key, bpm) {
 // BPM says nothing about a run at 110 — a personal best that quietly compared
 // them would go up when the tempo came down, which is the opposite of progress.
 //
-// Speed is the tempo the notes were written at multiplied by the speed slider,
-// because that is the rate they actually arrived at. Two ways of reaching 90
-// BPM are the same 90 BPM to the fingers.
+// Speed is the tempo, which is the rate the notes arrive at. It was once the
+// tempo multiplied by a speed slider — two ways of writing down one rate — and
+// keys written then hold the product, which is the same number this holds now.
+// Two ways of reaching 90 BPM were always the same 90 BPM to the fingers, so
+// those records go on standing and go on being beatable.
 // Professional runs are kept apart from ordinary ones rather than mixed in with
 // them. They are not harder attempts at the same thing — they are a different
 // thing being asked, and a run graded on dynamics has nothing to prove against

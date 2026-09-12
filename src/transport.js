@@ -1,6 +1,6 @@
 // Transport engine: record, play, stop, seek
 import { state, update, emit, on } from './state.js';
-import { startMetronome, stopMetronome, scheduleCountInClicks, beatRealMs } from './metronome.js';
+import { startMetronome, stopMetronome, scheduleCountInClicks, beatMs } from './metronome.js';
 import { startPlaybackAudio, stopPlaybackAudio, stopAllAudio } from './audio.js';
 import { barStartMs } from './quantizer.js';
 
@@ -15,7 +15,7 @@ let stopAtMs = null;    // set when playing a bounded section
 let playUntilMs = null;
 
 function currentPosition() {
-  return posStart + (performance.now() - perfStart) * state.transport.speed;
+  return posStart + (performance.now() - perfStart);
 }
 
 export function getCompositionDuration() {
@@ -229,9 +229,8 @@ export function startCountIn(onComplete) {
 
   const { tempo, timeSignature } = state.composition;
   const beats = Math.max(1, timeSignature.numerator);
-  // Real milliseconds, not written ones: the count-in has to land on the pulse
-  // the music is about to be played at, which the speed control moves
-  const beatMs = beatRealMs();
+  // The count-in has to land on the pulse the music is about to be played at
+  const beatLength = beatMs();
   const leadMs = scheduleCountInClicks(beats, tempo, timeSignature) * 1000;
 
   update('transport.mode', 'count-in');
@@ -240,7 +239,7 @@ export function startCountIn(onComplete) {
   for (let i = 0; i < beats; i++) {
     countInTimers.push(setTimeout(
       () => emit('transport:countin', { beat: i + 1, total: beats }),
-      leadMs + i * beatMs
+      leadMs + i * beatLength
     ));
   }
 
@@ -252,7 +251,7 @@ export function startCountIn(onComplete) {
     update('transport.mode', 'stopped');
     emit('transport:countin-end');
     onComplete();
-  }, leadMs + beats * beatMs));
+  }, leadMs + beats * beatLength));
 }
 
 export function seekTo(ms) {
@@ -273,7 +272,7 @@ export function seekToEnd() {
 
 function handleRecordNoteOn({ pitch, velocity, perf }) {
   if (state.transport.mode !== 'recording') return;
-  const startTime = posStart + (perf - perfStart) * state.transport.speed;
+  const startTime = posStart + (perf - perfStart);
   activeRecordNotes.set(pitch, { startTime, velocity });
   emit('transport:recordnote', { pitch, startTime });
 }
@@ -283,7 +282,7 @@ function handleRecordNoteOff({ pitch, perf }) {
   const info = activeRecordNotes.get(pitch);
   if (!info) return;
   activeRecordNotes.delete(pitch);
-  const endTime = posStart + (perf - perfStart) * state.transport.speed;
+  const endTime = posStart + (perf - perfStart);
   finalizeNote(pitch, info, endTime);
 }
 

@@ -68,6 +68,7 @@ export function initUI() {
   bindTransport();
   bindToolbar();
   bindViewTabs();
+  bindSettings();
   bindCompositionControls();
   bindLoopControls();
   bindModalControls();
@@ -370,15 +371,6 @@ function setSwingAmount(amount) {
   syncSwingAmount();
   scheduleSheetRender();
   showToast(`${SWING_AMOUNTS[amount].name} swing — ${SWING_AMOUNTS[amount].ratio}`, 1100);
-}
-
-// The slider and its label read off the state rather than off the last thing
-// that moved them, so anything that sets the speed — the slider, or a best being
-// loaded back at the speed it was set — leaves the two agreeing.
-function syncSpeedControls() {
-  const pct = Math.round((state.transport.speed || 1) * 100);
-  document.getElementById('speed-slider').value = pct;
-  document.getElementById('speed-value').textContent = `${pct}%`;
 }
 
 function setTempo(v) {
@@ -1020,7 +1012,7 @@ function renderBestsTree(profile) {
   const total = tree.reduce((n, branch) => n + runsIn(branch.songs), 0);
   document.getElementById('bests-title').textContent = `${profile.name} · best runs`;
   document.getElementById('bests-sub').textContent = total
-    ? 'Open a piece to see what it has been played at. Load puts the piece, the hand, the speed and the bars back where they were, and plays the run.'
+    ? 'Open a piece to see what it has been played at. Load puts the piece, the hand, the tempo and the bars back where they were, and plays the run.'
     : '';
 
   if (!total) {
@@ -1122,7 +1114,7 @@ function bestRow(run) {
   // replay, and there is then nothing to put back
   load.disabled = !run.take;
   load.title = run.take
-    ? 'Put the piece, hand, speed and bars back where they were, and play this run'
+    ? 'Put the piece, hand, tempo and bars back where they were, and play this run'
     : 'This run was too long to keep a recording of';
   load.onclick = () => loadBestRun(run.key);
 
@@ -1168,12 +1160,13 @@ async function loadBestRun(key) {
   document.getElementById('bests-modal').classList.add('hidden');
   document.getElementById('profiles-modal').classList.add('hidden');
 
-  // The speed in the key is the tempo the notes were written at times whatever
-  // the slider was doing, so putting it back takes both
-  setTempo(best.tempo);
-  const speed = Math.min(2, Math.max(0.25, at.bpm / best.tempo));
-  update('transport.speed', speed);
-  syncSpeedControls();
+  // The key holds the rate the run actually happened at, which is what to put
+  // the piece back to. A run set before the speed slider was taken out may have
+  // reached that rate by multiplying a slower written tempo — the key says 90
+  // while `best.tempo` says 60 — and the rate is the half that matters, so it
+  // is the half that is restored. The take is rescaled to match a few lines
+  // down, from the tempo it was recorded at to this one.
+  setTempo(at.bpm);
 
   update('ui.practiceHand', at.hand);
   document.getElementById('practice-hand').value = at.hand;
@@ -2381,11 +2374,18 @@ let bestBefore = null;
 let lastWasBest = false;
 let lastAbandoned = false;
 
-// The rate the notes actually arrive at. The tempo is what they are written at;
-// the speed slider is a second multiplier on top of it, and a passage taken at
-// 60 BPM with the slider at 150% is a passage at 90 BPM to the fingers.
+// The rate the notes arrive at, which is simply the tempo.
+//
+// It was not always: a speed slider multiplied the tempo, so 60 BPM at 150%
+// and 90 BPM at 100% were the same thing to the fingers and different numbers
+// on screen. Two controls for one quantity, and the one that mattered — how
+// fast this is actually going — was written down nowhere. Training already
+// worked in BPM, so the slider only ever added a second way of saying it.
+//
+// Kept as a name rather than inlined because it is what a personal best is
+// keyed by, and that is worth being able to point at.
 function effectiveBpm() {
-  return Math.round(state.composition.tempo * (state.transport.speed || 1));
+  return Math.round(state.composition.tempo);
 }
 
 function keyForRun(bars) {
@@ -2848,11 +2848,6 @@ function bindToolbar() {
   document.getElementById('btn-hand-overlay').onclick = toggleHandOverlay;
   document.getElementById('btn-learn-mode').onclick = toggleLearnMode;
 
-  document.getElementById('speed-slider').oninput = (e) => {
-    update('transport.speed', parseInt(e.target.value) / 100);
-    syncSpeedControls();
-  };
-
   document.getElementById('btn-train-mode').onclick = toggleTrainMode;
 
   document.getElementById('key-select').onchange = (e) => {
@@ -3196,6 +3191,32 @@ function refreshLoopMarker() {
 function fileSafeName(name) {
   const cleaned = name.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-');
   return cleaned || 'composition';
+}
+
+// Everything that is not playing the piece lives behind the gear in the header.
+//
+// The buttons inside kept the ids they had when they were in the header, so
+// nothing that reaches for them by id had to change: their click handlers are
+// still bound where they always were, and the shortcut that puts a key on a
+// button's tooltip still finds it.
+//
+// Every one of them leads somewhere else — a dialog, a file picker, a new
+// piece — so the dialog closes itself on the way out rather than leaving one
+// overlay stacked on another. A listener on the container, not on each button:
+// a click on a button runs that button's own handler first and this second, so
+// whatever it opened is already open by the time this closes what is behind it.
+function bindSettings() {
+  const modal = document.getElementById('settings-modal');
+  const close = () => modal.classList.add('hidden');
+
+  document.getElementById('btn-settings').onclick = () => modal.classList.remove('hidden');
+  document.getElementById('btn-close-settings').onclick = close;
+  // Clicking the dimmed area outside the box is the other way out, and the one
+  // people try first
+  modal.onclick = (e) => { if (e.target === modal) close(); };
+  for (const grid of modal.querySelectorAll('.settings-grid')) {
+    grid.addEventListener('click', (e) => { if (e.target.closest('button')) close(); });
+  }
 }
 
 function bindCompositionControls() {

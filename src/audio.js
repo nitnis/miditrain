@@ -382,9 +382,9 @@ let anchorMs = 0;      // composition position at that moment
 let scheduledUpToMs = 0;
 let playUntilMs = Infinity; // past this, notes belong to whatever comes next
 
-// Composition ms → audio context time, honouring the speed multiplier
-function ctxTimeFor(compMs, speed) {
-  return anchorCtxTime + (compMs - anchorMs) / (1000 * speed);
+// Composition ms → audio context time
+function ctxTimeFor(compMs) {
+  return anchorCtxTime + (compMs - anchorMs) / 1000;
 }
 
 // Normally the piece. Set to something else — a recording of what the player
@@ -425,9 +425,8 @@ const pedalled = () => !playbackSource && damperSpans().length > 0;
 
 function pump() {
   const c = getAudioContext();
-  const speed = state.transport.speed || 1;
-  const nowMs = anchorMs + (c.currentTime - anchorCtxTime) * 1000 * speed;
-  const horizonMs = nowMs + LOOKAHEAD_MS * speed;
+  const nowMs = anchorMs + (c.currentTime - anchorCtxTime) * 1000;
+  const horizonMs = nowMs + LOOKAHEAD_MS;
   if (horizonMs <= scheduledUpToMs) return;
 
   for (const note of (playbackSource || state.composition.notes)) {
@@ -438,10 +437,10 @@ function pump() {
     // section's to begin — and asked through atOrPast, so the section sounds
     // the same notes its walk is about to ask for.
     if (atOrPast(note.startTime, playUntilMs)) continue;
-    const when = Math.max(ctxTimeFor(note.startTime, speed), c.currentTime);
+    const when = Math.max(ctxTimeFor(note.startTime), c.currentTime);
     const keyUp = note.startTime + note.duration;
     const stops = pedalled() ? soundingEnd(damperSpans(), keyUp) : keyUp;
-    scheduleVoice(note.pitch, note.velocity ?? 90, when, (stops - note.startTime) / (1000 * speed));
+    scheduleVoice(note.pitch, note.velocity ?? 90, when, (stops - note.startTime) / 1000);
   }
   scheduledUpToMs = horizonMs;
 }

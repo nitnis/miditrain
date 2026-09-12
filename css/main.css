@@ -110,6 +110,26 @@ html, body {
    hidden says so itself — so a header button that comes and goes needs its own. */
 .hdr-btn.hidden { display: none; }
 
+/* The one button the header still carries a picture for. Square, so it reads
+   as an icon rather than as a word that failed to load. */
+.hdr-icon {
+  width: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+.hdr-icon:hover { color: var(--text); }
+.hdr-icon svg { width: 17px; height: 17px; }
+/* The gear turns a little on the way in, which is the whole of the animation */
+.hdr-icon svg { transition: transform 0.25s ease; }
+.hdr-icon:hover svg { transform: rotate(25deg); }
+@media (prefers-reduced-motion: reduce) {
+  .hdr-icon svg { transition: none; }
+  .hdr-icon:hover svg { transform: none; }
+}
+
 .midi-status {
   display: flex;
   align-items: center;
@@ -375,24 +395,6 @@ select:focus { outline: 1px solid var(--accent); }
   color: var(--bg);
   font-weight: 600;
 }
-
-/* Speed */
-.speed-group { gap: 6px; }
-#speed-slider {
-  -webkit-appearance: none;
-  width: 80px; height: 4px;
-  background: var(--border);
-  border-radius: 2px;
-  cursor: pointer;
-}
-#speed-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 14px; height: 14px;
-  border-radius: 50%;
-  background: #a78bfa;
-  cursor: pointer;
-}
-.speed-value { font-size: 12px; color: var(--muted); min-width: 36px; }
 
 /* Loop bar */
 .loop-row {
@@ -1399,6 +1401,22 @@ body.hands-shown #hand-canvas { display: block; }
   margin-top: 20px;
 }
 
+/* The settings dialog is a menu, not a form: every row is a way out of it, and
+   they read fastest as a grid of equal targets rather than as a paragraph of
+   buttons of assorted widths. Columns fit themselves to the box, so the same
+   markup is three across on a desktop and one on a phone. */
+.settings-box { max-width: 520px; }
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+  margin: 10px 0 4px;
+}
+.settings-grid .modal-btn { width: 100%; }
+/* A button that comes and goes has to actually go — `.modal-btn` sets its own
+   display, and would otherwise win against a plain `.hidden` */
+.settings-grid .modal-btn.hidden { display: none; }
+
 .modal-btn {
   height: 40px;
   padding: 0 20px;
@@ -1844,7 +1862,6 @@ body.hands-shown #hand-canvas { display: block; }
 @media (max-width: 600px) {
   :root { --toolbar-h: 130px; }
   .display-group { display: none; }
-  .speed-group { display: none; }
   .tempo-slider { display: none; }
   .volume-slider, .volume-value { display: none; }
 }
