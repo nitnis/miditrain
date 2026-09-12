@@ -1540,6 +1540,32 @@ async function deleteFromDialog(profile) {
   if (handle) await removeFromFolder(handle, filename);
 }
 
+// A row holds a name, the file it lives in, and its buttons, inside a dialog
+// narrower than all of that spelled out — so the two buttons that are the same
+// two on every row are drawn rather than written. "Rename" and "Delete" cost
+// 177px of a 420px row between them; the pictures cost 80px, and the rest goes
+// back to the name.
+//
+// Drawn as bare paths rather than emoji: an emoji pencil is a different picture
+// on every platform, sits on its own coloured background, and cannot be dimmed
+// to match a disabled button. These take their colour from the button.
+const PENCIL = '<path d="M3 13.5V17h3.5L15 8.5 11.5 5 3 13.5Z"/><path d="M11.5 5 15 8.5"/>';
+const TRASH = '<path d="M3.5 5.5h13"/><path d="M8 5.5V3.5h4v2"/>'
+  + '<path d="M5 5.5 5.7 16a1 1 0 0 0 1 .9h6.6a1 1 0 0 0 1-.9L15 5.5"/>'
+  + '<path d="M8.5 8.5v5M11.5 8.5v5"/>';
+
+// `label` is what the button IS, for anyone not reading the picture: it becomes
+// both the tooltip and the accessible name, because an icon with neither is a
+// button that only says something to people who already know what it does.
+function iconButton(paths, label) {
+  const button = document.createElement('button');
+  button.className = 'modal-btn icon-btn';
+  button.title = label;
+  button.setAttribute('aria-label', label);
+  button.innerHTML = `<svg viewBox="0 0 20 20" aria-hidden="true">${paths}</svg>`;
+  return button;
+}
+
 function renderProfiles() {
   const list = document.getElementById('profile-list');
   const active = currentProfile();
@@ -1555,7 +1581,9 @@ function renderProfiles() {
     const name = document.createElement('button');
     name.className = 'profile-item-name profile-open';
     name.textContent = profile.name;
-    name.title = 'Browse this profile\u2019s best runs';
+    // The name is in the tooltip as well as on the button, because in a narrow
+    // dialog the button may only be showing the front of it
+    name.title = `${profile.name} \u2014 browse this profile\u2019s best runs`;
     name.onclick = () => {
       if (profile.id !== active.id) { switchProfile(profile.id); renderProfiles(); }
       openBests(currentProfile());
@@ -1565,6 +1593,7 @@ function renderProfiles() {
     meta.className = 'profile-item-meta';
     const at = profile.id === active.id ? learningPosition() : null;
     meta.textContent = at ? `section ${at.sectionIndex + 1} of "${at.songName}"` : '';
+    meta.title = meta.textContent;
 
     // Which file this profile lives in. Worth saying out loud: it is the thing
     // a player would go looking for in the folder, and seeing it here is how
@@ -1572,6 +1601,9 @@ function renderProfiles() {
     const file = document.createElement('span');
     file.className = 'profile-item-file';
     file.textContent = profile.filename;
+    // All three of these can end in an ellipsis in a narrow dialog, so the
+    // whole of each is a hover away
+    file.title = profile.filename;
 
     row.append(name, meta, file);
 
@@ -1583,16 +1615,14 @@ function renderProfiles() {
       row.appendChild(use);
     }
 
-    const rename = document.createElement('button');
-    rename.className = 'modal-btn';
-    rename.textContent = 'Rename';
+    const rename = iconButton(PENCIL, `Rename ${profile.name}`);
     rename.onclick = () => renameFromDialog(profile);
     row.appendChild(rename);
 
-    const remove = document.createElement('button');
-    remove.className = 'modal-btn';
-    remove.textContent = 'Delete';
+    const remove = iconButton(TRASH, `Delete ${profile.name}`);
+    remove.classList.add('danger');
     remove.disabled = listProfiles().length <= 1;
+    if (remove.disabled) remove.title = 'There is always one profile';
     remove.onclick = () => deleteFromDialog(profile);
     row.appendChild(remove);
 
