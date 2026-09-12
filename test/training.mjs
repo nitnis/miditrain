@@ -2227,9 +2227,13 @@ const bests = await page.evaluate(async () => {
   const shown = (id) => page.evaluate((id) =>
     !document.getElementById(id).classList.contains('hidden'), id);
 
+  // What must not be up there is the row of actions. What is left is the
+  // profile picker — who you are and what you have done — and the gear.
   const header = await page.evaluate(() =>
     [...document.querySelectorAll('#header .header-right button')].map(b => b.id));
-  check('the header is down to one button', header, ['btn-settings']);
+  check('the header carries no action buttons any more',
+    header.filter(id => !['btn-profile-bests', 'btn-profile-switch', 'btn-settings'].includes(id)), []);
+  check('...and the gear is one of the few left', header.includes('btn-settings'), true);
 
   check('the settings dialog starts closed', await shown('settings-modal'), false);
   await page.click('#btn-settings');
@@ -2283,6 +2287,108 @@ const bests = await page.evaluate(async () => {
     return state.composition.tempo;
   });
   check('the tempo alone says how fast this is going', keyed, 132);
+}
+
+// ── The profile picker is two things, not one ───────────────────────────────
+//
+// A <select> could only ever change who is practising: there is no part of one
+// you can press by itself. So the name became a button of its own — it opens
+// what that profile has done — with a caret beside it for changing who it is.
+//
+// The native element took its keyboard handling with it when it went, so that
+// is checked here too: a picker you cannot drive from the keyboard would be
+// worse than the one it replaced, however it looks.
+{
+  const shown = (id) => page.evaluate((id) =>
+    !document.getElementById(id).classList.contains('hidden'), id);
+  const headerName = () => page.textContent('#btn-profile-bests');
+  const inUse = () => page.evaluate(async () =>
+    (await import('/src/profiles.js')).current().name);
+
+  const made = await page.evaluate(async () => {
+    const p = await import('/src/profiles.js');
+    const back = p.current().id;
+    const other = p.createProfile('Someone Else').id;
+    p.switchProfile(back);
+    return { back, other, name: p.current().name };
+  });
+  await page.waitForTimeout(400);
+  check('the header shows who is practising', await headerName(), made.name);
+
+  // ── the name ──
+  await page.click('#btn-profile-bests');
+  await page.waitForTimeout(400);
+  check('pressing the name opens that profile’s best runs',
+    await shown('bests-modal'), true);
+  check('...and it is the profile in use it opened for',
+    await page.textContent('#bests-modal h2'), `${made.name} · best runs`);
+  await page.click('#btn-close-bests');
+  await page.waitForTimeout(250);
+
+  // ── the caret ──
+  check('the menu starts closed', await shown('profile-menu'), false);
+  await page.click('#btn-profile-switch');
+  await page.waitForTimeout(250);
+  check('the caret opens it', await shown('profile-menu'), true);
+  // Everyone in the store, in the store's order — which by now is a dozen and
+  // more from the blocks above, so it is asked of the store rather than listed
+  check('...listing everyone there is', await page.evaluate(() =>
+    [...document.querySelectorAll('.profile-menu-item')].map(b => b.textContent)),
+    await page.evaluate(async () =>
+      (await import('/src/profiles.js')).listProfiles().map(p => p.name)));
+  check('...with the one in use marked, and only that one', await page.evaluate(() =>
+    [...document.querySelectorAll('.profile-menu-item[aria-checked="true"]')]
+      .map(b => b.textContent)), [made.name]);
+
+  await page.evaluate(() => [...document.querySelectorAll('.profile-menu-item')]
+    .find(b => b.textContent === 'Someone Else').click());
+  await page.waitForTimeout(600);
+  check('choosing one switches to it', await inUse(), 'Someone Else');
+  check('...the header follows', await headerName(), 'Someone Else');
+  check('...and the menu puts itself away', await shown('profile-menu'), false);
+
+  // ── getting out of it ──
+  await page.click('#btn-profile-switch');
+  await page.waitForTimeout(200);
+  await page.mouse.click(700, 620);
+  await page.waitForTimeout(250);
+  check('a click anywhere else closes the menu', await shown('profile-menu'), false);
+
+  await page.click('#btn-profile-switch');
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(250);
+  check('Escape closes it', await shown('profile-menu'), false);
+
+  // ── from the keyboard alone ──
+  await page.click('#btn-profile-switch');
+  await page.waitForTimeout(250);
+  check('opening puts the focus in the menu', await page.evaluate(() =>
+    document.activeElement?.className), 'profile-menu-item');
+  // Down one from the top, so whoever is second in the list is who we land on
+  const second = await page.evaluate(async () =>
+    (await import('/src/profiles.js')).listProfiles()[1].name);
+  await page.keyboard.press('ArrowDown');
+  await page.waitForTimeout(120);
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(600);
+  check('arrow then Enter chooses without a mouse', await inUse(), second);
+
+  // A name longer than the header has room for must not push the caret off the
+  // end of it — the button that gets you back would be the one that vanished
+  await page.evaluate(async () => {
+    const p = await import('/src/profiles.js');
+    p.renameProfile(p.current().id, 'Bartholomew Quartermaine-Fitzwilliam');
+  });
+  await page.waitForTimeout(400);
+  check('a name too long for the header gives way rather than pushing',
+    await page.evaluate(() => {
+      const hdr = document.querySelector('.header-right');
+      return {
+        caret: document.getElementById('btn-profile-switch').getBoundingClientRect().width > 0,
+        spills: hdr.scrollWidth > hdr.clientWidth + 1,
+      };
+    }), { caret: true, spills: false });
 }
 
 

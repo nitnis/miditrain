@@ -1211,9 +1211,12 @@ async function loadBestRun(key) {
 
 function bindProfiles() {
   const modal = document.getElementById('profiles-modal');
-  const select = document.getElementById('profile-select');
 
-  select.onchange = (e) => { switchProfile(e.target.value); showProfileWelcome(); };
+  // Pressing the name asks what this profile has done. It is the same question
+  // the name answers inside the Profiles dialog, and the same answer.
+  document.getElementById('btn-profile-bests').onclick = () => openBests(currentProfile());
+  bindProfileMenu();
+
   document.getElementById('btn-profiles').onclick = () => {
     renderProfiles();
     backfillCurrentFile();
@@ -1343,17 +1346,85 @@ function showProfileWelcome() {
   );
 }
 
-function renderProfileSelect() {
-  const select = document.getElementById('profile-select');
+// The caret's menu: everyone there is to be, with the current one marked.
+//
+// A menu rather than the <select> this replaced, because a <select> is one
+// control and the name had to become a button of its own. What is lost with the
+// native element is its keyboard handling, so that is put back by hand below —
+// a picker you cannot reach from the keyboard is worse than the one it replaced,
+// however it looks.
+function bindProfileMenu() {
+  const caret = document.getElementById('btn-profile-switch');
+  const menu = document.getElementById('profile-menu');
+
+  const close = () => {
+    menu.classList.add('hidden');
+    caret.setAttribute('aria-expanded', 'false');
+  };
+  const open = () => {
+    renderProfileMenu();
+    menu.classList.remove('hidden');
+    caret.setAttribute('aria-expanded', 'true');
+    menu.querySelector('.profile-menu-item')?.focus();
+  };
+  closeProfileMenu = close;
+
+  caret.onclick = (e) => {
+    e.stopPropagation();   // ...or the document listener below closes it again
+    if (menu.classList.contains('hidden')) open(); else close();
+  };
+
+  // Anywhere else on the page dismisses it, which is what a menu does
+  document.addEventListener('click', (e) => {
+    if (!menu.classList.contains('hidden') && !e.target.closest?.('#profile-picker')) close();
+  });
+  menu.addEventListener('keydown', (e) => {
+    const items = [...menu.querySelectorAll('.profile-menu-item')];
+    const at = items.indexOf(document.activeElement);
+    if (e.key === 'Escape') { close(); caret.focus(); }
+    else if (e.key === 'ArrowDown') items[Math.min(items.length - 1, at + 1)]?.focus();
+    else if (e.key === 'ArrowUp') { if (at <= 0) { close(); caret.focus(); } else items[at - 1].focus(); }
+    else return;
+    e.preventDefault();
+  });
+}
+
+// Set by bindProfileMenu, so anything that changes who is current can put the
+// menu away without reaching into it
+let closeProfileMenu = () => {};
+
+function renderProfileMenu() {
+  const menu = document.getElementById('profile-menu');
   const active = currentProfile();
-  select.innerHTML = '';
+  menu.innerHTML = '';
   for (const profile of listProfiles()) {
-    const option = document.createElement('option');
-    option.value = profile.id;
-    option.textContent = profile.name;
-    option.selected = profile.id === active.id;
-    select.appendChild(option);
+    const item = document.createElement('button');
+    item.className = 'profile-menu-item';
+    item.textContent = profile.name;
+    item.title = profile.name;      // it may be showing only the front of it
+    item.setAttribute('role', 'menuitemradio');
+    item.setAttribute('aria-checked', String(profile.id === active.id));
+    item.onclick = () => {
+      closeProfileMenu();
+      document.getElementById('btn-profile-switch').focus();
+      if (profile.id === active.id) return;
+      switchProfile(profile.id);
+      showProfileWelcome();
+    };
+    menu.appendChild(item);
   }
+}
+
+// The name on the header button. Rebuilt from the store rather than written by
+// whoever changed it, so a rename, a switch and a profile arriving from a file
+// all land here the same way.
+function renderProfileSelect() {
+  const active = currentProfile();
+  const name = document.getElementById('btn-profile-bests');
+  name.textContent = active.name;
+  name.title = `${active.name} — what this profile has played, and how well`;
+  const menu = document.getElementById('profile-menu');
+  if (!menu.classList.contains('hidden')) renderProfileMenu();
 }
 
 // ── Calibration ──────────────────────────────────────────────────────────────
