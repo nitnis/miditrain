@@ -23,7 +23,6 @@ const _state = {
     loopEnabled: false,
     loopStartBar: 1,
     loopEndBar: 4,
-    speed: 1.0,
   },
   midi: {
     available: false,

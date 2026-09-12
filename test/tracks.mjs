@@ -94,6 +94,20 @@ const browser = await chromium.launch({
   executablePath: process.env.CHROME || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
 });
 const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+
+// The header carries one button now: everything that is not playing the piece
+// moved behind the gear, so reaching any of it means opening that first.
+const openSettings = async () => {
+  await page.click('#btn-settings');
+  await page.waitForTimeout(120);
+};
+
+// Tracks… sits in the settings dialog now. Whether it is OFFERED is a question
+// about the button, not about whether that dialog happens to be open — so it is
+// asked of the class the app puts there rather than of what is on screen.
+const tracksOffered = () =>
+  page.evaluate(() => !document.getElementById('btn-tracks').classList.contains('hidden'));
+
 const problems = [];
 page.on('pageerror', e => problems.push('pageerror: ' + e.message));
 page.on('console', m => { if (m.type() === 'error') problems.push('console: ' + m.text()); });
@@ -101,7 +115,7 @@ page.on('dialog', d => d.accept());
 await page.goto(`${ORIGIN}/index.html`);
 await page.waitForTimeout(1300);
 
-check('the button is hidden with nothing loaded', await page.locator('#btn-tracks').isVisible(), false);
+check('the button is not offered with nothing loaded', await tracksOffered(), false);
 
 // ── the reader keeps the parts, and reads a hand out of each name ──
 const read = await page.evaluate(async (bytes) => {
@@ -125,8 +139,9 @@ await page.setInputFiles('#import-file', {
   name: 'three.mid', mimeType: 'audio/midi', buffer: Buffer.from(threePartMidi()),
 });
 await page.waitForTimeout(900);
-check('the button appears for a file in parts', await page.locator('#btn-tracks').isVisible(), true);
+check('the button is offered for a file in parts', await tracksOffered(), true);
 
+await openSettings();
 await page.click('#btn-tracks');
 await page.waitForTimeout(300);
 check('one row per part', await page.locator('.track-row').count(), 3);
@@ -186,6 +201,7 @@ await page.waitForTimeout(800);
 await page.click('#btn-stop');
 await page.waitForTimeout(300);
 check('everything off, played, nothing thrown', problems.length, 0);
+await openSettings();
 await page.click('#btn-tracks');
 await page.click('#btn-tracks-all');
 await page.locator('.track-row').nth(2).locator('.track-enabled').uncheck();
@@ -421,7 +437,7 @@ await page.click('#btn-clear');
 await page.waitForTimeout(600);
 check('Clear All takes the parts too', await page.evaluate(async () =>
   (await import('/src/state.js')).state.composition.tracks.length), 0);
-check('...and the button goes', await page.locator('#btn-tracks').isVisible(), false);
+check('...and the button goes', await tracksOffered(), false);
 // Left behind, the next piece loaded would be played through the last one's feet
 check('...and the pedalling with them', await page.evaluate(async () =>
   (await import('/src/state.js')).state.composition.pedal.length), 0);

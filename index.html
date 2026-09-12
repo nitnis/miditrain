@@ -32,19 +32,16 @@
 
     <div class="header-right">
       <select id="profile-select" class="profile-select" title="Who is practising — each profile keeps its own progress and speeds"></select>
-      <button class="hdr-btn" id="btn-profiles" title="Manage profiles and the folder they are kept in">Profiles…</button>
-      <button class="hdr-btn" id="btn-practice" title="Write a scale or arpeggio onto the stave to practise (Shift+S)">Scales…</button>
-      <button class="hdr-btn" id="btn-new">New</button>
-      <button class="hdr-btn" id="btn-open">Open</button>
-      <button class="hdr-btn" id="btn-save">Save</button>
-      <button class="hdr-btn" id="btn-export" title="Download this composition as a JSON file">Export</button>
-      <button class="hdr-btn" id="btn-export-midi" title="Download this composition as a MIDI file">Export MIDI</button>
-      <button class="hdr-btn" id="btn-import" title="Load a composition from a JSON or MIDI file">Import</button>
-      <!-- Only a file written in parts has anything to say here, so the button
-           appears when one is loaded and is gone the rest of the time. -->
-      <button class="hdr-btn hidden" id="btn-tracks" title="The parts this file was written in — switch one off, colour it, or put it in a hand">Tracks…</button>
       <input type="file" id="import-file" accept="application/json,.json,audio/midi,.mid,.midi,audio/*,.wav,.mp3,.m4a,.ogg,.flac" hidden>
-      <button class="hdr-btn" id="btn-shortcuts" title="Keyboard shortcuts (?)">⌨</button>
+      <!-- Everything that is not playing the piece lives behind this. The
+           header used to carry ten buttons; nine of them were things you do
+           between sessions rather than during one. -->
+      <button class="hdr-btn hdr-icon" id="btn-settings" title="Settings — files, profiles, exercises and shortcuts" aria-label="Settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3.2"/>
+          <path d="M19.4 14.5a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.11a1.7 1.7 0 0 0-1.11-1.56 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.88 1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.11a1.7 1.7 0 0 0 1.56-1.11 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.88.34H9a1.7 1.7 0 0 0 1.03-1.56V3a2 2 0 1 1 4 0v.11a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.88V9a1.7 1.7 0 0 0 1.56 1.03H21a2 2 0 1 1 0 4h-.11a1.7 1.7 0 0 0-1.49 1.03Z"/>
+        </svg>
+      </button>
       <div class="midi-status" id="midi-status" title="Click for MIDI settings">
         <div class="status-dot disconnected" id="midi-dot"></div>
         <span id="midi-text">No MIDI</span>
@@ -288,13 +285,6 @@
           </svg>
           <span class="btn-label">Hands</span>
         </button>
-      </div>
-
-      <!-- Speed -->
-      <div class="tool-group speed-group">
-        <span class="tool-label">SPEED</span>
-        <input type="range" id="speed-slider" min="25" max="200" value="100" step="5">
-        <span class="speed-value" id="speed-value">100%</span>
       </div>
 
       <!-- Training Mode -->
@@ -622,6 +612,45 @@
   </div>
 
   <!-- Profiles -->
+  <!-- ── SETTINGS ──
+       The header's old button row, grouped by what you came here to do. Every
+       button keeps the id it had, so the shortcuts still reach them and the key
+       each one is bound to still appears on its tooltip. -->
+  <div class="modal-overlay hidden" id="settings-modal">
+    <div class="modal-box settings-box">
+      <h2>Settings</h2>
+
+      <h3 class="profile-heading">This piece</h3>
+      <div class="settings-grid">
+        <button class="modal-btn" id="btn-new">New</button>
+        <button class="modal-btn" id="btn-open">Open</button>
+        <button class="modal-btn" id="btn-save">Save</button>
+        <button class="modal-btn" id="btn-import" title="Load a composition from a JSON or MIDI file">Import</button>
+        <button class="modal-btn" id="btn-export" title="Download this composition as a JSON file">Export</button>
+        <button class="modal-btn" id="btn-export-midi" title="Download this composition as a MIDI file">Export MIDI</button>
+        <!-- Only a file written in parts has anything to say here, so the
+             button appears when one is loaded and is gone the rest of the
+             time. -->
+        <button class="modal-btn hidden" id="btn-tracks" title="The parts this file was written in — switch one off, colour it, or put it in a hand">Tracks…</button>
+      </div>
+
+      <h3 class="profile-heading">Practice</h3>
+      <div class="settings-grid">
+        <button class="modal-btn" id="btn-practice" title="Write a scale or arpeggio onto the stave to practise (Shift+S)">Scales…</button>
+        <button class="modal-btn" id="btn-profiles" title="Manage profiles and the folder they are kept in">Profiles…</button>
+      </div>
+
+      <h3 class="profile-heading">Help</h3>
+      <div class="settings-grid">
+        <button class="modal-btn" id="btn-shortcuts" title="Keyboard shortcuts (?)">Keyboard shortcuts…</button>
+      </div>
+
+      <div class="modal-actions">
+        <button class="modal-btn primary" id="btn-close-settings">Done</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-overlay hidden" id="profiles-modal">
     <div class="modal-box profiles-box">
       <h2>Profiles</h2>

@@ -74,7 +74,6 @@ const SETTINGS = {
   'transport.loopEnabled': bool,
   'transport.loopStartBar': wholeRange(1, 999),
   'transport.loopEndBar': wholeRange(1, 999),
-  'transport.speed': range(0.25, 2),
   // Where they were in the piece. This used to be left out on the grounds that
   // a playhead is not a setting, which is true and was still wrong: coming back
   // to a piece and being put at the top of it is not where anybody left off.
