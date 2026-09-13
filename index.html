@@ -541,6 +541,23 @@
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 4.5 15 10l-8 5.5Z"/><path d="M4 4.5v11" opacity="0.55"/></svg>
           <span>Section</span>
         </button>
+        <span class="learn-nav-sep" aria-hidden="true"></span>
+        <!-- A run over this cluster, graded, at a tempo of its own. Nothing is
+             recorded: it is a way of finding out whether the cluster is
+             actually in the hands yet, not an attempt at a personal best. -->
+        <button class="learn-nav-btn learn-nav-train" id="btn-learn-train"
+                title="Play this cluster graded, at the tempo beside. Nothing is recorded.">
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <circle cx="10" cy="10" r="7.2"/><circle cx="10" cy="10" r="2.6"/>
+            <path d="M10 1.4v2.4M10 16.2v2.4M1.4 10h2.4M16.2 10h2.4"/>
+          </svg>
+          <span>Train</span>
+        </button>
+        <span class="learn-nav-bpm" id="learn-nav-bpm">
+          <button class="learn-nav-step" id="btn-learn-bpm-down" aria-label="Slower" title="Ten beats slower">&#8722;</button>
+          <span class="learn-nav-bpm-value" id="learn-nav-bpm-value" aria-live="polite">60</span>
+          <button class="learn-nav-step" id="btn-learn-bpm-up" aria-label="Faster" title="Ten beats faster">&#43;</button>
+        </span>
         <button class="learn-nav-btn learn-nav-test" id="btn-learn-test" title="Play it from memory now (T)">
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.8a4.6 4.6 0 0 1 2.6 8.4v1.9h-5.2v-1.9A4.6 4.6 0 0 1 10 2.8Z"/><path d="M7.8 15.6h4.4"/></svg>
           <span>Test me</span>

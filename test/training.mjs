@@ -2812,6 +2812,140 @@ const bests = await page.evaluate(async () => {
     await kept(), placed);
 }
 
+// ── A graded run over one cluster, which does not count ─────────────────────
+//
+// The three learning passes tell you whether you can follow a phrase and
+// whether you can remember it. Neither asks whether it is in the hands, in
+// time, without being waited for — learn mode never moves until the right key
+// is down, so there is no such thing as being late in it.
+//
+// So: the ordinary graded run, over this cluster alone, at a tempo of its own.
+// And nothing recorded, because a four-note fragment at sixty is not an attempt
+// at the same thing a personal best is an attempt at — filing it as one would
+// put a record on the board that no real playing of the piece could beat.
+//
+// That last claim is the one worth being careful about: "nothing was recorded"
+// is trivially true of a run that never finished, so the run here is played
+// through to the end, and the same passage is then trained the ordinary way to
+// show that it does go on the board.
+{
+  await page.evaluate(async () => {
+    const { update } = await import('/src/state.js');
+    const notes = [];
+    for (let i = 0; i < 16; i++) {
+      notes.push({ id: `qt${i}`, pitch: 60 + (i % 4), hand: 'right',
+                   startTime: i * 500, duration: 400, velocity: 90 });
+    }
+    update('composition.notes', notes);
+    update('composition.name', 'Quick Study');
+    update('composition.tempo', 120);
+    update('ui.learnCluster', 'bar');
+    update('ui.learnSectionBars', 0);
+    update('ui.countInEnabled', false);
+    update('ui.trainMode', false);
+    update('transport.loopEnabled', false);
+    update('transport.currentTime', 0);
+  });
+  await page.waitForTimeout(500);
+
+  const now = () => page.evaluate(async () => {
+    const { state } = await import('/src/state.js');
+    const l = await import('/src/learn.js');
+    return { tempo: state.composition.tempo, bpm: state.ui.quickTrainBpm,
+             cluster: l.getLearnCluster(), grading: state.accuracy.active };
+  });
+  const dark = () => page.evaluate(() =>
+    Object.fromEntries(['prev', 'again', 'next', 'demo', 'test', 'train']
+      .map(k => [k, document.getElementById(`btn-learn-${k}`).disabled])));
+  const onTheBoard = () => page.evaluate(async () =>
+    Object.keys((await import('/src/profiles.js')).current().bests || {}).length);
+  const untilDone = async () => {
+    for (let i = 0; i < 90; i++) {
+      if (!(await now()).grading) return true;
+      await page.waitForTimeout(200);
+    }
+    return false;
+  };
+
+  await page.evaluate(async () => (await import('/src/learn.js')).startLearn());
+  await page.waitForTimeout(500);
+
+  check('the quick run starts out at sixty', (await now()).bpm, 60);
+  check('...and the panel says so', await page.textContent('#learn-nav-bpm-value'), '60');
+  await page.click('#btn-learn-bpm-up');
+  await page.click('#btn-learn-bpm-up');
+  await page.click('#btn-learn-bpm-down');
+  await page.waitForTimeout(250);
+  check('the buttons beside it move it ten at a time', (await now()).bpm, 70);
+  check('...and the panel follows', await page.textContent('#learn-nav-bpm-value'), '70');
+
+  const boardWas = await onTheBoard();
+  await page.click('#btn-learn-train');
+  await page.waitForTimeout(700);
+  let at = await now();
+  check('Train gives the walk up for a graded run', [at.cluster, at.grading], [null, true]);
+  check('...taken at the tempo beside the button, not the piece’s', at.tempo, 70);
+  check('the panel stays up, so it can be taken again', await page.evaluate(() =>
+    !document.getElementById('learn-nav').classList.contains('hidden')), true);
+  // There is no walk to drive between runs, so what drives one goes dark —
+  // except Again, which means what it always means
+  const during = await dark();
+  check('...with the walk’s buttons dark and Again still lit',
+    [during.prev, during.next, during.demo, during.test, during.again, during.train],
+    [true, true, true, true, false, false]);
+
+  // Played through with nothing touched: every note missed, which is still a
+  // completed run — and a completed run is exactly what would be recorded if
+  // this one were meant to be
+  check('the run ends by itself rather than hanging', await untilDone(), true);
+  check('...with the results shown', await page.evaluate(() =>
+    !document.getElementById('accuracy-modal').classList.contains('hidden')), true);
+  check('...and nothing on the board', await onTheBoard(), boardWas);
+
+  // The contrast, without which the line above only says that nothing ever gets
+  // recorded here
+  await page.click('#btn-close-accuracy');
+  await page.waitForTimeout(300);
+  await page.evaluate(async () => {
+    const { update } = await import('/src/state.js');
+    update('transport.loopEnabled', true);
+    update('transport.loopStartBar', 1);
+    update('transport.loopEndBar', 1);
+    update('ui.trainMode', true);
+  });
+  await page.waitForTimeout(200);
+  await page.evaluate(() => document.getElementById('btn-play').click());
+  await untilDone();
+  await page.waitForTimeout(500);
+  check('...where the same bars trained the ordinary way are recorded',
+    (await onTheBoard()) > boardWas, true);
+  await page.evaluate(async () => {
+    const { update } = await import('/src/state.js');
+    update('ui.trainMode', false);
+    update('transport.loopEnabled', false);
+  });
+  await page.click('#btn-close-accuracy');
+  await page.waitForTimeout(300);
+
+  // ...and back to learning the cluster the run came from
+  await page.evaluate(async () => (await import('/src/learn.js')).startLearn());
+  await page.waitForTimeout(600);
+  await page.click('#btn-learn-next');
+  await page.waitForTimeout(400);
+  await page.click('#btn-learn-train');
+  await page.waitForTimeout(700);
+  check('a run can be taken over any cluster', (await now()).cluster, null);
+  await page.click('#btn-learn-again');
+  await page.waitForTimeout(1000);
+  at = await now();
+  check('Again puts the walk back', Boolean(at.cluster), true);
+  check('...at the cluster the run was taken from', at.cluster && at.cluster.index, 1);
+  check('...and the walk’s buttons answer again', (await dark()).next, false);
+
+  await page.evaluate(async () => (await import('/src/learn.js')).stopLearn());
+  await page.waitForTimeout(300);
+}
+
 
 await browser.close();
 

@@ -889,6 +889,39 @@ select:focus { outline: 1px solid var(--accent); }
 /* The test is the way out of the loop, so it is the one that looks like a
    decision. Lit when the cluster has been followed and is waiting to be asked
    for — which is the moment the whole `ready` pass exists to create. */
+/* The tempo the graded run is taken at. Its own, not the piece's: a cluster is
+   drilled slowly and the piece is not necessarily written slowly. */
+.learn-nav-bpm {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  align-self: center;
+}
+.learn-nav-bpm-value {
+  min-width: 30px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.learn-nav-step {
+  width: 20px;
+  height: 22px;
+  padding: 0;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.learn-nav-step:hover:not(:disabled) { background: var(--surface); color: var(--text); }
+.learn-nav-step:disabled { opacity: 0.3; cursor: default; }
+
+.learn-nav-train { color: #6ee7a8; }
+.learn-nav-train:hover:not(:disabled) { color: #6ee7a8; background: rgba(110, 231, 168, 0.14); }
 .learn-nav-test { color: var(--accent); }
 .learn-nav-test:hover:not(:disabled) { color: var(--accent); background: rgba(91, 192, 235, 0.14); }
 .learn-nav-btn.urging {
