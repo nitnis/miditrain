@@ -504,6 +504,34 @@
         <span class="learn-pass hidden" id="learn-pass"></span>
         <span class="learn-phase hidden" id="learn-phase"></span>
       </div>
+      <!-- Learning a piece in clusters means going back over them, and there
+           was no way to: the walk went forwards and only forwards. These are
+           that way — and they float over the window because the hands are on
+           the keys and the eyes are here. Only up while a cluster session is
+           running. -->
+      <div id="learn-nav" class="learn-nav hidden" role="group" aria-label="Cluster controls">
+        <button class="learn-nav-btn" id="btn-learn-prev" title="The cluster before this one">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4.5 7 10l5.5 5.5"/><path d="M5.5 4.5v11" opacity="0.55"/></svg>
+          <span>Back</span>
+        </button>
+        <button class="learn-nav-btn" id="btn-learn-again" title="Hear this cluster and follow it again (Space)">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16 10a6 6 0 1 1-1.9-4.4"/><path d="M16.3 3v3.4h-3.4"/></svg>
+          <span>Again</span>
+        </button>
+        <button class="learn-nav-btn" id="btn-learn-next" title="The cluster after this one">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 4.5 13 10l-5.5 5.5"/><path d="M14.5 4.5v11" opacity="0.55"/></svg>
+          <span>Next</span>
+        </button>
+        <span class="learn-nav-sep" aria-hidden="true"></span>
+        <button class="learn-nav-btn" id="btn-learn-demo" title="Hear the whole section played through, then come back here">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 4.5 15 10l-8 5.5Z"/><path d="M4 4.5v11" opacity="0.55"/></svg>
+          <span>Section</span>
+        </button>
+        <button class="learn-nav-btn learn-nav-test" id="btn-learn-test" title="Play it from memory now (T)">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.8a4.6 4.6 0 0 1 2.6 8.4v1.9h-5.2v-1.9A4.6 4.6 0 0 1 10 2.8Z"/><path d="M7.8 15.6h4.4"/></svg>
+          <span>Test me</span>
+        </button>
+      </div>
     </div>
     <div id="piano-keyboard-container">
       <div id="piano-keyboard"></div>
