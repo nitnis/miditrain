@@ -4,7 +4,10 @@ import { record, play, stop, stopAndRewind, startCountIn, playRange, seekTo, see
 import { renderSheet, initSheet, getChordOverlayData, getStaveGeometry, movePlayhead, markLoopRange, barAtPoint, lightNotes } from './sheet.js';
 import { refreshSuggestions, hasSuggestions } from './autofinger.js';
 import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWaitingPitches, setFallingBlind, setLoopPick, setTakeGhosts, noteAtFallingPoint, fallingMsPerPixel, fallingWindowMs, HAND_COLORS } from './pianoroll.js';
-import { startLearn, stopLearn, isHoldingMessage, CLUSTERS } from './learn.js';
+import {
+  startLearn, stopLearn, isHoldingMessage, CLUSTERS,
+  learnAgain, learnTest, learnStepCluster, learnDemoSection, getLearnCluster,
+} from './learn.js';
 import {
   startSectionWalk, stopSectionWalk, repeatSection, advanceSection, previousSection,
   handOverForTraining, isWalking, buildSections,
@@ -69,6 +72,7 @@ export function initUI() {
   bindToolbar();
   bindViewTabs();
   bindSettings();
+  bindLearnNav();
   bindCompositionControls();
   bindLoopControls();
   bindModalControls();
@@ -159,10 +163,14 @@ export function initUI() {
   // The memory pass shows nothing, so the window has to be told to show nothing
   on('learn:phase', ({ phase, blind, cluster, clusters, whole }) => {
     setFallingBlind(blind);
+    syncLearnNav();
     if (!clusters) { setLearnPhase(''); return; }
     const which = whole ? 'the whole section' : `cluster ${cluster + 1}/${clusters}`;
     setLearnPhase(`${CLUSTER_PHASE[phase] || ''} · ${which}`);
   });
+  // ...and when the session ends however it ended, since the panel belongs to
+  // the session rather than to any pass within it
+  on('change:transport.mode', () => syncLearnNav());
   on('learn:hit', ({ pitch }) => spawnKeyEffect(pitch, 'good'));
   on('learn:wrong', ({ pitch }) => spawnKeyEffect(pitch, 'wrong'));
   // Only a looping session reports the pass it just finished; a straight
@@ -2037,11 +2045,58 @@ function updateLearnCounters(correct, misses) {
 }
 
 // What each pass of a cluster is called, and what it asks of the player
-const CLUSTER_PHASE = { listen: 'Listen', guided: 'Follow it', memory: 'From memory' };
+const CLUSTER_PHASE = {
+  listen: 'Listen', guided: 'Follow it', ready: 'Again, or test yourself',
+  memory: 'From memory', demo: 'The whole section',
+};
 const CLUSTER_HINT = {
   listen: 'Listen to the cluster',
-  memory: 'Now play the cluster again from memory',
+  ready: 'Again, or Test me when you have it',
+  memory: 'Now play the cluster again from memory · Space to go back to it',
+  demo: 'Listening to the whole section',
 };
+
+// ── The cluster controls ─────────────────────────────────────────────────────
+//
+// Learning in clusters means going back over them, and until now the walk went
+// forwards and only forwards: the way to hear a phrase a second time was to
+// fail the memory pass. These are the way back, and the way on, and the way to
+// hear what the piece the cluster belongs to actually sounds like.
+function bindLearnNav() {
+  const press = (fn) => (e) => {
+    // ...or the button keeps the focus and the next Space press lands on it
+    // instead of on the session
+    e.currentTarget.blur();
+    fn();
+  };
+  document.getElementById('btn-learn-prev').onclick = press(() => learnStepCluster(-1));
+  document.getElementById('btn-learn-again').onclick = press(() => learnAgain());
+  document.getElementById('btn-learn-next').onclick = press(() => learnStepCluster(1));
+  document.getElementById('btn-learn-demo').onclick = press(() => learnDemoSection());
+  document.getElementById('btn-learn-test').onclick = press(() => learnTest());
+}
+
+// Drawn from what learn.js says it is doing rather than from what was last
+// pressed, so the panel is right after a cluster ends by itself as well as
+// after one of these moved it.
+function syncLearnNav() {
+  const nav = document.getElementById('learn-nav');
+  const at = getLearnCluster();
+  nav.classList.toggle('hidden', !at);
+  if (!at) return;
+
+  // Nothing to go back to from the first, and the last is the whole section,
+  // which is the end of the walk
+  document.getElementById('btn-learn-prev').disabled = at.first;
+  document.getElementById('btn-learn-next').disabled = at.last;
+  // Already hearing the section, and already being tested
+  document.getElementById('btn-learn-demo').disabled = at.phase === 'demo';
+  const test = document.getElementById('btn-learn-test');
+  test.disabled = at.phase === 'memory' || at.phase === 'demo';
+  // The one moment the panel has an opinion: the cluster has been followed and
+  // is waiting to be asked for
+  test.classList.toggle('urging', at.phase === 'ready');
+}
 
 function updateLearnStatus({ pitches, done, total, looping, pass, slips, phase, cluster }) {
   setWaitingPitches(pitches);
@@ -3533,6 +3588,13 @@ function shortcutActions() {
     state.ui.editorSelectedNotes.size > 0;
 
   const resultsUp = () => !document.getElementById('accuracy-modal').classList.contains('hidden');
+  // A cluster session, in one of the passes where the key in question means
+  // something. Never while a verdict is being read — the session is a moment
+  // away from carrying on by itself and pressing through it would cut in.
+  const learnWaitingAt = (...phases) => {
+    const at = getLearnCluster();
+    return Boolean(at) && phases.includes(at.phase) && !isHoldingMessage();
+  };
   const sectionUp = () => !document.getElementById('section-modal').classList.contains('hidden');
 
   return [
@@ -3558,6 +3620,25 @@ function shortcutActions() {
       section: 'Training', label: 'Move to the next section',
       defaultBindings: [{ code: 'KeyN' }],
       run: () => advanceSection() },
+
+    // ── Inside a cluster session ──
+    //
+    // Space means "take me back to learning this" — which is what it is for in
+    // the middle of a memory pass that has gone wrong, and what it is for when
+    // the cluster has been followed and is waiting to be asked for. One idea,
+    // so one key.
+    //
+    // Scoped to those two passes only. While the cluster is playing itself or
+    // being followed, Space keeps its ordinary meaning, so there is always a
+    // way to stop a session with the key that stops everything else.
+    { id: 'learn-again', group: 'learn', scope: () => learnWaitingAt('memory', 'ready'),
+      section: 'Training', label: 'Back to learning this cluster',
+      defaultBindings: [{ code: 'Space' }],
+      run: () => learnAgain() },
+    { id: 'learn-test', group: 'learn', scope: () => learnWaitingAt('listen', 'guided', 'ready'),
+      section: 'Training', label: 'Play this cluster from memory now',
+      defaultBindings: [{ code: 'KeyT' }],
+      run: () => learnTest() },
 
     // While the results are up Space repeats the run rather than driving the
     // transport — a context binding, matched before the global one

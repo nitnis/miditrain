@@ -796,6 +796,80 @@ select:focus { outline: 1px solid var(--accent); }
 }
 .learn-status.hidden { display: none; }
 
+/* ── The cluster controls ──
+   Along the bottom of the falling window, centred: the piece is above them and
+   the keyboard below, so this is the one strip where nothing is being read.
+   Unlike everything else floating here they are pressed, so `pointer-events`
+   stays on — and the panel is only as wide as its buttons, leaving the notes
+   either side of it clear. */
+.learn-nav {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  padding: 5px;
+  background: rgba(13, 13, 26, 0.86);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  backdrop-filter: blur(4px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  z-index: 6;
+  max-width: calc(100% - 24px);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.learn-nav.hidden { display: none; }
+.learn-nav-sep {
+  width: 1px;
+  margin: 3px 3px;
+  background: var(--border);
+}
+.learn-nav-btn {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 52px;
+  padding: 5px 8px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.learn-nav-btn svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.learn-nav-btn:hover:not(:disabled) { background: var(--surface); color: var(--text); }
+.learn-nav-btn:disabled { opacity: 0.3; cursor: default; }
+/* The demo plays with a filled arrowhead rather than an outlined one */
+#btn-learn-demo svg path:first-child { fill: currentColor; }
+
+/* The test is the way out of the loop, so it is the one that looks like a
+   decision. Lit when the cluster has been followed and is waiting to be asked
+   for — which is the moment the whole `ready` pass exists to create. */
+.learn-nav-test { color: var(--accent); }
+.learn-nav-test:hover:not(:disabled) { color: var(--accent); background: rgba(91, 192, 235, 0.14); }
+.learn-nav-btn.urging {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+.learn-nav-btn.urging:hover:not(:disabled) { background: var(--accent); color: var(--bg); opacity: 0.9; }
+
 /* One face for the note just played, in the middle of the window. Big, because
    the player is looking at their hands; brief, because it is a reaction rather
    than a message and the next note is already on its way. */

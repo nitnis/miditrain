@@ -1131,52 +1131,75 @@ function drawBeatCount(composition, currentTimeMs, cw, signal) {
   fallingCtx.shadowColor = 'rgba(0,0,0,0.85)';
   fallingCtx.shadowBlur = 10;
 
-  // Shrink until the bar fits rather than letting it run under the furniture
+  // Learning is the one time the count is being read rather than glanced at:
+  // the player is stopped, working out where in the bar the next attack falls,
+  // and a row of evenly sized syllables with one of them tinted does not answer
+  // that from across a keyboard. So the one being counted grows.
+  //
+  // Only here. During playback the row is peripheral and a jumping letter in
+  // the corner of the eye is worse than no letter at all.
+  const learning = state.transport.mode === 'learning';
+  const grow = learning ? COUNT_LEARN_GROW : 1;
+
+  // Shrink until the bar fits rather than letting it run under the furniture.
+  // Measured with the enlarged syllable in place, so the row cannot fit at rest
+  // and then run under the signal the moment a beat lands on the widest one.
   let size = Math.round(22 * signal.s);
   let laid;
   for (;;) {
-    laid = layoutCount(tokens, size);
+    laid = layoutCount(tokens, size, grow);
     if (laid.width <= room || size <= 9) break;
     size -= 1;
   }
 
-  let x = cw / 2 - laid.width / 2;
+  // The row keeps its place while the emphasis moves along it: laid out as
+  // though every syllable were the big one, then each drawn centred in the slot
+  // it was given. Sizing the slots to the token instead made the whole bar
+  // shuffle sideways on every click, which is unreadable.
   const y = signal.y + signal.height / 2;
+  const x = cw / 2 - laid.width / 2;
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
     const lit = i === nowAt;
-    fallingCtx.font = countFont(t.beat, size);
-    fallingCtx.textAlign = 'left';
+    fallingCtx.font = countFont(t.beat, size, lit ? grow : 1);
+    fallingCtx.textAlign = 'center';
     fallingCtx.globalAlpha = lit ? 1 : (t.beat ? 0.5 : 0.34);
     fallingCtx.fillStyle = lit
       ? (t.beat ? '#ffd166' : '#7fe3ff')
       : 'rgba(230,230,255,1)';
-    fallingCtx.fillText(t.text, x + laid.offsets[i], y);
+    fallingCtx.fillText(t.text, x + laid.centres[i], y);
   }
   fallingCtx.restore();
 }
 
-function countFont(isBeat, size) {
+// How much bigger the syllable being counted is while learning
+const COUNT_LEARN_GROW = 1.75;
+
+function countFont(isBeat, size, grow = 1) {
   const family = '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
   return isBeat
-    ? `700 ${size}px ${family}`
-    : `500 ${Math.max(8, Math.round(size * 0.72))}px ${family}`;
+    ? `700 ${Math.round(size * grow)}px ${family}`
+    : `500 ${Math.max(8, Math.round(size * 0.72 * grow))}px ${family}`;
 }
 
 // Widths measured once per frame at the size being tried, so the row can be
 // centred and shrunk to fit without guessing at them
-function layoutCount(tokens, size) {
-  const offsets = [];
+// Slots wide enough for the enlarged syllable, and the centre of each. Every
+// slot is sized as though its syllable were the one being counted, so the row
+// is the same width whichever one that is and nothing moves but the emphasis.
+function layoutCount(tokens, size, grow = 1) {
+  const centres = [];
   let x = 0;
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
     // A new beat gets air in front of it, so the groups read as groups
     if (i) x += (t.beat ? size * 0.62 : size * 0.3);
-    offsets.push(x);
-    fallingCtx.font = countFont(t.beat, size);
-    x += fallingCtx.measureText(t.text).width;
+    fallingCtx.font = countFont(t.beat, size, grow);
+    const w = fallingCtx.measureText(t.text).width;
+    centres.push(x + w / 2);
+    x += w;
   }
-  return { offsets, width: x };
+  return { centres, width: x };
 }
 
 // ── Metronome ────────────────────────────────────────────────────────────────

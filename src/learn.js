@@ -70,6 +70,7 @@ let spoiled = false;
 //   listen   the cluster plays itself, once, in time
 //   guided   it comes round again in silence, one attack at a time, waiting;
 //            the only sound is the player's own
+//   ready    it waits. Again, or test yourself — the player decides.
 //   memory   nothing falls and nothing is highlighted. Play it again from
 //            memory. A wrong note lights the one that was wanted so the phrase
 //            can carry on; if the pass had any in it, the cluster comes round
@@ -77,6 +78,13 @@ let spoiled = false;
 //
 // The last pass is the one that does the work: it is the first time the player
 // has to produce the phrase rather than react to it.
+//
+// `ready` is there because one guided run through a phrase is not learning it.
+// It used to go straight from guided into memory, which asked the player to
+// produce from memory something they had followed exactly once — so the memory
+// pass failed, and the cluster came round again, and the way to get a second
+// hearing was to get it wrong. Now the second hearing is just asked for, and
+// the test happens when the player says they are ready for it.
 
 export const CLUSTERS = {
   off:      { name: 'Fast learn' },
@@ -89,8 +97,12 @@ export const CLUSTERS = {
 
 let clusters = [];      // [{ from, to, startMs, endMs }] — indices into groups
 let clusterIndex = 0;
-let phase = 'walk';     // walk | listen | guided | memory
+let phase = 'walk';     // walk | listen | guided | ready | memory | demo
 let listenAt = 0;       // the next group the listen pass has still to sound
+// What the listen pass is sounding its way through. Usually the cluster; for
+// the section demo it is every group there is, which is the only difference
+// between the two — so they are one loop with a range rather than two loops.
+let sounding = null;    // { from, to, endMs, then }
 // The memory pass is showing the keys rather than hiding them: at the start of
 // the cluster, so it is a memory test and not a guessing game, and again from
 // wherever a wrong note says the player has lost their place.
@@ -284,6 +296,7 @@ function beginCluster(k) {
   clearTimeout(holding);
   holding = null;
   if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+  sounding = null;
   clusterIndex = k;
   if (k >= clusters.length) { finish(true); return; }
 
@@ -291,34 +304,40 @@ function beginCluster(k) {
   say(null);
   hinting = false;
   phase = 'listen';
-  listenAt = clusters[k].from;
   index = clusters[k].from;
   pending.clear();
   struck.clear();
-  posStart = clusters[k].startMs;
-  targetMs = clusters[k].endMs;
+  announcePhase();
+  announce();
+  soundThrough(clusters[k].from, clusters[k].to, clusters[k].startMs, clusters[k].endMs, beginGuided);
+}
+
+// Play a stretch through, in time, with the notes falling. The cluster's listen
+// pass and the demo of the whole section are this with different ends.
+function soundThrough(from, to, startMs, endMs, then) {
+  sounding = { to, endMs, then };
+  listenAt = from;
+  posStart = startMs;
+  targetMs = endMs;
   perfStart = performance.now();
   update('transport.currentTime', posStart);
   emit('transport:tick', posStart);
-  announcePhase();
-  announce();
   rafId = requestAnimationFrame(listen);
 }
 
-// The cluster plays itself through, in time, with the notes falling
 function listen() {
   const t = posStart + (performance.now() - perfStart);
-  const here = cluster();
-  if (!here) { rafId = null; return; }
+  const run = sounding;
+  if (!run) { rafId = null; return; }
 
-  while (listenAt <= here.to && groups[listenAt].startMs <= t) {
+  while (listenAt <= run.to && groups[listenAt].startMs <= t) {
     playPrompt(groups[listenAt]);
     listenAt += 1;
   }
-  update('transport.currentTime', Math.min(t, targetMs));
-  emit('transport:tick', Math.min(t, targetMs));
+  update('transport.currentTime', Math.min(t, run.endMs));
+  emit('transport:tick', Math.min(t, run.endMs));
 
-  if (t >= targetMs) { rafId = null; beginGuided(); return; }
+  if (t >= run.endMs) { rafId = null; sounding = null; run.then(); return; }
   rafId = requestAnimationFrame(listen);
 }
 
@@ -331,6 +350,100 @@ function beginGuided() {
   emit('transport:tick', cluster().startMs);
   announcePhase();
   goTo(cluster().from);
+}
+
+// Followed once, and now it waits. Nothing happens here until the player says
+// which of the two things they want, because only they know whether they have
+// it yet — and going straight on used to make "get it wrong" the only way to
+// ask for another hearing.
+function beginReady() {
+  clearPrompt();
+  if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+  phase = 'ready';
+  hinting = false;
+  index = cluster().to;
+  pending.clear();
+  struck.clear();
+  update('transport.currentTime', cluster().startMs);
+  emit('transport:tick', cluster().startMs);
+  announcePhase();
+  announce();
+}
+
+// ── What the player can ask for ──────────────────────────────────────────────
+//
+// All of these are the same shape: stop whatever is running and begin
+// something. `beginCluster` already clears the prompt, the frame and any
+// message being held, so they do not each have to.
+
+// This cluster from the top. It is what "again" means at the end of the guided
+// pass, and what Space means in the middle of the memory pass — one idea, so
+// one function: take me back to learning this.
+export function learnAgain() {
+  if (!clusters.length || state.transport.mode !== 'learning') return false;
+  beginCluster(clusterIndex);
+  return true;
+}
+
+// Straight to the test, whenever the player reckons they have it
+export function learnTest() {
+  if (!clusters.length || state.transport.mode !== 'learning') return false;
+  if (phase === 'memory') return false;      // already there
+  clearTimeout(holding);
+  holding = null;
+  if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+  resetTally();
+  beginMemory();
+  return true;
+}
+
+export function learnGoToCluster(k) {
+  if (!clusters.length || state.transport.mode !== 'learning') return false;
+  if (k < 0 || k >= clusters.length) return false;
+  beginCluster(k);
+  return true;
+}
+
+export function learnStepCluster(delta) {
+  return learnGoToCluster(clusterIndex + delta);
+}
+
+// The whole section played through, as a reminder of what all this is a piece
+// of. It puts the cluster back the way it found it afterwards rather than
+// moving on: it is something you asked to hear, not a pass you completed.
+export function learnDemoSection() {
+  if (!clusters.length || state.transport.mode !== 'learning') return false;
+  clearPrompt();
+  clearTimeout(holding);
+  holding = null;
+  if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+  const back = clusterIndex;
+  phase = 'demo';
+  hinting = false;
+  pending.clear();
+  struck.clear();
+  say(null);
+  announcePhase();
+  announce();
+  soundThrough(0, groups.length - 1, sectionStartMs,
+    clusters[clusters.length - 1].endMs, () => beginCluster(back));
+  return true;
+}
+
+// What the controls need to know to draw themselves: which cluster, how many,
+// and what is being asked right now.
+export function getLearnCluster() {
+  if (!clusters.length || state.transport.mode !== 'learning') return null;
+  const here = cluster();
+  return {
+    phase,
+    index: clusterIndex,
+    total: clusters.length,
+    pieces: pieceCount(),
+    whole: Boolean(here && here.whole),
+    first: clusterIndex === 0,
+    last: clusterIndex >= clusters.length - 1,
+  };
 }
 
 // Now without the guide — except for where to start. A phrase you cannot find
@@ -381,6 +494,7 @@ function releaseListeners() {
 function finish(completed) {
   if (rafId !== null) cancelAnimationFrame(rafId);
   rafId = null;
+  sounding = null;
   clearTimeout(holding);
   holding = null;
   hinting = false;
@@ -404,8 +518,8 @@ function finish(completed) {
 }
 
 function goTo(i) {
-  // End of the cluster hands over to playing it from memory
-  if (phase === 'guided' && i > cluster().to) { beginMemory(); return; }
+  // End of the guided pass stops and asks rather than testing at once
+  if (phase === 'guided' && i > cluster().to) { beginReady(); return; }
 
   // End of the section, and the same verdict a cluster gets: how the pass went
   // as a whole. Looping means going again until one is clean — "correctly" can
@@ -510,6 +624,10 @@ function handleNoteOn({ pitch }) {
   // Input counts only at the wait, never while the notes are still falling and
   // never while a message is still being read
   if (state.transport.mode !== 'learning' || rafId !== null || holding) return;
+  // ...and never while nothing is being asked. In `ready` the player is between
+  // passes and may well be trying the phrase over; counting that as a slip
+  // would punish exactly the practice the pass exists to allow.
+  if (phase === 'ready' || phase === 'demo') return;
   if (!groups[index]) return;
 
   if (!groups[index].pitches.has(pitch)) {
@@ -568,6 +686,7 @@ function advance() {
 // the step waits again rather than banking the notes already pressed
 function handleNoteOff({ pitch }) {
   if (state.transport.mode !== 'learning' || rafId !== null || holding) return;
+  if (phase === 'ready' || phase === 'demo') return;
   if (!groups[index]) return;
   if (!struck.delete(pitch)) return;
   refreshPending();

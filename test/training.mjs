@@ -2484,6 +2484,191 @@ const bests = await page.evaluate(async () => {
   await page.waitForTimeout(200);
 }
 
+// ── Learning in clusters ────────────────────────────────────────────────────
+//
+// A cluster is heard, then followed, then played from memory. It used to go
+// from the second to the third with nothing in between, which asked the player
+// to produce from memory a phrase they had followed exactly once — so the
+// memory pass failed, the cluster came round again, and getting it wrong was
+// the only way to ask for another hearing.
+//
+// Now it stops and waits, and the player says which they want. Around that sit
+// the controls that let them go back over a cluster, on to the next, or hear
+// the whole section — none of which there was any way to do: the walk went
+// forwards and only forwards.
+//
+// None of this had any coverage before, which is why none of it broke when the
+// flow was changed.
+{
+  await page.evaluate(async () => {
+    const { update } = await import('/src/state.js');
+    const notes = [];
+    // Four bars, a note a beat, so a one-bar cluster is four attacks
+    for (let i = 0; i < 16; i++) {
+      notes.push({ id: `cl${i}`, pitch: 60 + (i % 4), hand: 'right',
+                   startTime: i * 500, duration: 400, velocity: 90 });
+    }
+    update('composition.notes', notes);
+    update('composition.tempo', 120);
+    update('ui.learnCluster', 'bar');
+    update('ui.learnSectionBars', 0);
+    update('ui.countInEnabled', false);
+    update('transport.loopEnabled', false);
+    update('transport.currentTime', 0);
+  });
+  await page.waitForTimeout(500);
+
+  const at = () => page.evaluate(async () =>
+    (await import('/src/learn.js')).getLearnCluster());
+  const navUp = () => page.evaluate(() =>
+    !document.getElementById('learn-nav').classList.contains('hidden'));
+  const nav = () => page.evaluate(() =>
+    Object.fromEntries(['prev', 'again', 'next', 'demo', 'test'].map((k) => {
+      const b = document.getElementById(`btn-learn-${k}`);
+      return [k, { off: b.disabled, urging: b.classList.contains('urging') }];
+    })));
+  // Play whatever the walk is waiting for, so it moves on
+  const playIt = () => page.evaluate(async () => {
+    const { emit } = await import('/src/state.js');
+    const l = await import('/src/learn.js');
+    const g = l.getLearnProgress();
+    if (!g || !g.pending.length) return false;
+    for (const pitch of g.pending) emit('midi:noteon', { pitch, velocity: 90 });
+    for (const pitch of g.pending) emit('midi:noteoff', { pitch });
+    return true;
+  });
+  // Forward until the named pass, playing through whatever waits on the way
+  const reach = async (want, tries = 60) => {
+    for (let i = 0; i < tries; i++) {
+      const here = await at();
+      if (!here || here.phase === want) return here;
+      if (here.phase === 'guided' || here.phase === 'memory') { await playIt(); await page.waitForTimeout(90); }
+      else await page.waitForTimeout(120);
+    }
+    return at();
+  };
+
+  await page.evaluate(async () => (await import('/src/learn.js')).startLearn());
+  await page.waitForTimeout(300);
+  check('the cluster controls come up with the session', await navUp(), true);
+  let here = await at();
+  check('a session starts by playing the cluster', here.phase, 'listen');
+  check('...over four clusters and the whole section on the end',
+    [here.index, here.total, here.pieces], [0, 5, 4]);
+  check('there is nothing before the first cluster', (await nav()).prev.off, true);
+
+  // The change: it stops here rather than testing
+  here = await reach('ready');
+  check('the guided pass ends in a wait rather than a test', here.phase, 'ready');
+  check('...with the test offered rather than taken', (await nav()).test.urging, true);
+
+  await page.click('#btn-learn-again');
+  await page.waitForTimeout(300);
+  here = await at();
+  check('Again goes back to the top of the same cluster',
+    [here.phase, here.index], ['listen', 0]);
+
+  await reach('ready');
+  await page.click('#btn-learn-test');
+  await page.waitForTimeout(300);
+  check('Test me is what takes it to the memory pass', (await at()).phase, 'memory');
+
+  // Out of a memory pass that is going badly, without ending the session
+  await page.keyboard.press('Space');
+  await page.waitForTimeout(400);
+  here = await at();
+  check('Space in the memory pass goes back to learning that cluster',
+    [here.phase, here.index], ['listen', 0]);
+
+  await page.click('#btn-learn-next');
+  await page.waitForTimeout(300);
+  check('Next moves on a cluster', [(await at()).phase, (await at()).index], ['listen', 1]);
+  await page.click('#btn-learn-prev');
+  await page.waitForTimeout(300);
+  check('Back moves to the one before', [(await at()).phase, (await at()).index], ['listen', 0]);
+
+  // Hearing the piece the cluster belongs to, without losing your place in it
+  await page.click('#btn-learn-demo');
+  await page.waitForTimeout(300);
+  here = await at();
+  check('Section plays the whole thing through', here.phase, 'demo');
+  check('...without moving off the cluster being worked on', here.index, 0);
+  for (let i = 0; i < 140; i++) {
+    here = await at();
+    if (!here || here.phase !== 'demo') break;
+    await page.waitForTimeout(150);
+  }
+  check('...and comes back to it afterwards',
+    [here && here.phase, here && here.index], ['listen', 0]);
+
+  await page.keyboard.press('KeyT');
+  await page.waitForTimeout(350);
+  check('T asks for the test from anywhere in the cluster', (await at()).phase, 'memory');
+
+  await page.evaluate(async () => (await import('/src/learn.js')).stopLearn());
+  await page.waitForTimeout(300);
+  check('the controls go when the session does', await navUp(), false);
+  check('...and there is no cluster to report', await at(), null);
+
+  // ── the count, while learning ──
+  //
+  // Learning is the one time the count is read rather than glanced at: the
+  // clock is stopped on an attack and the player is working out where in the
+  // bar the next one falls. A row of evenly sized syllables with one of them
+  // tinted does not answer that from across a keyboard, so the one being
+  // counted grows — and only here, because during playback a letter jumping
+  // about in the corner of the eye is worse than no letter at all.
+  //
+  // Measured off the canvas rather than from the code that draws it: the claim
+  // is about what is on the screen.
+  const litBeat = () => page.evaluate(() => {
+    const c = document.getElementById('falling-canvas');
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let top = Infinity, bottom = -1, lit = 0;
+    for (let y = 0; y < c.height; y++) {
+      for (let x = 0; x < c.width; x++) {
+        const i = (y * c.width + x) * 4;
+        // The colour the counted beat is drawn in, #ffd166, and nothing else
+        // on this canvas is near it
+        if (d[i] > 230 && d[i + 1] > 180 && d[i + 1] < 230 && d[i + 2] < 150 && d[i + 3] > 200) {
+          lit++;
+          if (y < top) top = y;
+          if (y > bottom) bottom = y;
+        }
+      }
+    }
+    return { height: bottom < 0 ? 0 : bottom - top + 1, lit };
+  });
+
+  await page.evaluate(async () => {
+    const { update, emit } = await import('/src/state.js');
+    update('ui.showCountOverlay', true);
+    update('transport.mode', 'playing');
+    update('transport.currentTime', 60);
+    emit('transport:tick', 60);
+  });
+  await page.waitForTimeout(500);
+  const playing = await litBeat();
+  await page.evaluate(async () =>
+    (await import('/src/state.js')).update('transport.mode', 'stopped'));
+  await page.waitForTimeout(200);
+
+  await page.evaluate(async () => (await import('/src/learn.js')).startLearn());
+  await reach('guided');
+  await page.waitForTimeout(400);
+  const learning = await litBeat();
+
+  check('the counted beat is drawn at all while playing', playing.height > 0, true);
+  check('...and half again as tall while learning',
+    learning.height > playing.height * 1.3, true);
+  check('...with more of it on the screen', learning.lit > playing.lit * 1.5, true);
+  console.log(`        counted beat: ${playing.height}px playing, ${learning.height}px learning`
+    + `  ·  ${playing.lit} lit pixels against ${learning.lit}`);
+
+  await page.evaluate(async () => (await import('/src/learn.js')).stopLearn());
+  await page.waitForTimeout(300);
+}
+
 
 await browser.close();
 
