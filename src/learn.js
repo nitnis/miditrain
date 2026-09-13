@@ -451,6 +451,23 @@ export function getClusterRange() {
   };
 }
 
+// From the top of the section down to the end of the cluster being worked on.
+//
+// Clusters are learned one at a time, and a passage learned a bar at a time
+// and never once played from the beginning is a passage whose joins have never
+// been tried. This is the run-up: everything up to here, in one go.
+export function getSectionToHereRange() {
+  const here = cluster();
+  if (!here || !groups.length) return null;
+  const to = groups[here.to];
+  if (!to) return null;
+  return {
+    startMs: groups[0].startMs,
+    endMs: to.startMs + to.durationMs,
+    tailMs: Math.min(1500, to.durationMs),
+  };
+}
+
 // What the controls need to know to draw themselves: which cluster, how many,
 // and what is being asked right now.
 export function getLearnCluster() {
@@ -464,6 +481,10 @@ export function getLearnCluster() {
     whole: Boolean(here && here.whole),
     first: clusterIndex === 0,
     last: clusterIndex >= clusters.length - 1,
+    // Whether there is anything before this cluster in the section. When there
+    // is not, the run-up and the cluster are the same music and offering both
+    // says the same thing twice.
+    atStart: Boolean(here) && here.from === 0,
   };
 }
 

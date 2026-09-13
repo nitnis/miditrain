@@ -553,6 +553,18 @@
           </svg>
           <span>Train</span>
         </button>
+        <!-- The same graded run, but from the top of the section down to the
+             end of this cluster. A passage learned a bar at a time and never
+             once played from the beginning is a passage whose joins have never
+             been tried. -->
+        <button class="learn-nav-btn learn-nav-train" id="btn-learn-train-section"
+                title="Play from the start of the section to the end of this cluster, graded. Nothing is recorded.">
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <path d="M2.5 15.5V9M7 15.5V6M11.5 15.5v-3"/>
+            <circle cx="16" cy="10" r="3.4"/><circle cx="16" cy="10" r="1"/>
+          </svg>
+          <span>Section</span>
+        </button>
         <span class="learn-nav-bpm" id="learn-nav-bpm">
           <button class="learn-nav-step" id="btn-learn-bpm-down" aria-label="Slower" title="Ten beats slower">&#8722;</button>
           <span class="learn-nav-bpm-value" id="learn-nav-bpm-value" aria-live="polite">60</span>
@@ -660,6 +672,10 @@
         <button class="modal-btn" id="btn-replay-take" title="Play back what you just played, against the notes as written">Replay my take</button>
         <button class="modal-btn hidden" id="btn-replay-best" title="Play back your best run of this passage, at this hand setting and this speed">Replay my best</button>
         <button class="modal-btn" id="btn-train-section" hidden>Practise bars 1–2</button>
+        <!-- Only after a quick run over a cluster: the same thing the floating
+             controls offer, on the screen that run leaves behind. -->
+        <button class="modal-btn hidden" id="btn-results-train-section"
+                title="Play from the start of the section to the end of this cluster, graded. Nothing is recorded.">Train section</button>
         <!-- Having just finished one, the next thing is usually the one beside
              it. Hidden when the piece is a single section. -->
         <button class="modal-btn hidden" id="btn-results-prev">&#9664; Section</button>

@@ -7,7 +7,7 @@ import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWai
 import {
   startLearn, stopLearn, isHoldingMessage, CLUSTERS,
   learnAgain, learnTest, learnStepCluster, learnGoToCluster, learnDemoSection,
-  getLearnCluster, getClusterRange,
+  getLearnCluster, getClusterRange, getSectionToHereRange,
 } from './learn.js';
 import {
   startSectionWalk, stopSectionWalk, repeatSection, advanceSection, previousSection,
@@ -2085,7 +2085,8 @@ function bindLearnNav() {
   document.getElementById('btn-learn-next').onclick = press(() => learnStepCluster(1));
   document.getElementById('btn-learn-demo').onclick = press(() => learnDemoSection());
   document.getElementById('btn-learn-test').onclick = press(() => learnTest());
-  document.getElementById('btn-learn-train').onclick = press(() => quickTrainCluster());
+  document.getElementById('btn-learn-train').onclick = press(() => quickTrainCluster('cluster'));
+  document.getElementById('btn-learn-train-section').onclick = press(() => quickTrainCluster('section'));
   document.getElementById('btn-learn-bpm-down').onclick = press(() => nudgeQuickBpm(-10));
   document.getElementById('btn-learn-bpm-up').onclick = press(() => nudgeQuickBpm(10));
   bindLearnNavDrag();
@@ -2109,33 +2110,51 @@ function bindLearnNav() {
 // While it is running the panel stays up with the walk's buttons dark, so the
 // tempo can be changed and the run taken again — and `Again` means what it
 // always means, which here is going back to learning the cluster it came from.
-let quickTrain = null;   // { cluster, range } while a quick run is in play
+// Two scopes, the same run. `cluster` is the phrase just learned; `section` is
+// everything from the top of the section down to the end of it — a passage
+// learned a bar at a time and never once played from the beginning is a
+// passage whose joins have never been tried.
+//
+// Both ranges are kept, and the tempo they were measured at with them: changing
+// the tempo rescales every note in the piece, so a range measured before a
+// change names different music after one.
+let quickTrain = null;   // { cluster, scope, ranges, atTempo }
 
-function quickTrainCluster() {
+const QUICK_SCOPES = ['cluster', 'section'];
+
+function quickTrainCluster(scope = 'cluster') {
+  if (!QUICK_SCOPES.includes(scope)) return;
   const at = getLearnCluster();
-  // Already in one: take it again at whatever the tempo now says
-  const from = at || quickTrain;
-  if (!from) return;
+  // Inside the walk the ranges are asked for fresh; between runs the walk is
+  // gone and the ones taken when it was are what there is
+  let ranges = at
+    ? { cluster: getClusterRange(), section: getSectionToHereRange() }
+    : (quickTrain && quickTrain.ranges);
+  let atTempo = at ? state.composition.tempo : (quickTrain && quickTrain.atTempo);
+  if (!ranges || !ranges[scope]) return;
 
-  const range = at ? getClusterRange() : quickTrain.range;
-  if (!range) return;
-
-  // The tempo first, because it rescales every note in the piece — so a range
-  // measured before it has to be moved by the same ratio to still name the same
-  // music afterwards
-  const was = state.composition.tempo;
+  // The tempo first, then the ranges moved by the same ratio it moved the notes
   setTempo(state.ui.quickTrainBpm);
-  const k = was / state.composition.tempo;
-  const scaled = { startMs: range.startMs * k, endMs: range.endMs * k, tailMs: (range.tailMs || 0) * k };
+  const k = atTempo / state.composition.tempo;
+  const scale = (r) => (r
+    ? { startMs: r.startMs * k, endMs: r.endMs * k, tailMs: (r.tailMs || 0) * k }
+    : null);
+  ranges = { cluster: scale(ranges.cluster), section: scale(ranges.section) };
+  const range = ranges[scope];
 
-  quickTrain = { cluster: at ? at.index : quickTrain.cluster, range: scaled };
+  quickTrain = {
+    cluster: at ? at.index : quickTrain.cluster,
+    scope,
+    ranges,
+    atTempo: state.composition.tempo,
+  };
   stopLearn();
 
   document.getElementById('accuracy-modal').classList.add('hidden');
   endReplay();
   clearKeyEffects();
   showGauge(true);
-  update('transport.currentTime', scaled.startMs);
+  update('transport.currentTime', range.startMs);
   // The one line that makes this unrecorded: `recordBest` files a run under its
   // key, and a run with no key is not an attempt at anything it can file.
   trainingRunKey = null;
@@ -2144,9 +2163,18 @@ function quickTrainCluster() {
   syncLearnNav();
 
   withCountIn(() => {
-    startAccuracy(state.composition, scaled, { calibration: calibrationOf() });
-    playRange(scaled.startMs, scaled.endMs, scaled.tailMs);
+    startAccuracy(state.composition, range, { calibration: calibrationOf() });
+    playRange(range.startMs, range.endMs, range.tailMs);
   });
+}
+
+// Whether the run-up is different music from the cluster itself. On the first
+// cluster of a section it is not, and offering both says the same thing twice.
+function quickSectionWorthOffering() {
+  const at = getLearnCluster();
+  if (at) return !at.atStart && !at.whole;
+  return Boolean(quickTrain && quickTrain.ranges.section
+    && quickTrain.ranges.section.startMs < quickTrain.ranges.cluster.startMs - 1);
 }
 
 // "Back to learning this cluster", which is what Again has always meant. From
@@ -2319,6 +2347,8 @@ function syncLearnNav() {
   document.getElementById('btn-learn-prev').disabled = !walking || at.first;
   document.getElementById('btn-learn-next').disabled = !walking || at.last;
   document.getElementById('btn-learn-demo').disabled = !walking || at.phase === 'demo';
+  const section = document.getElementById('btn-learn-train-section');
+  section.classList.toggle('hidden', !quickSectionWorthOffering());
   const test = document.getElementById('btn-learn-test');
   test.disabled = !walking || at.phase === 'memory' || at.phase === 'demo';
   // The one moment the panel has an opinion: the cluster has been followed and
@@ -2963,6 +2993,10 @@ function startTrainingSession(bars = null) {
 }
 
 function retryTraining() {
+  // A quick run over a cluster is not an attempt at the passage `lastTrainingBars`
+  // names, and repeating it as one was a recorded full-length session started by
+  // a key press that meant "that again" — with a best filed under it.
+  if (quickTrain) { quickTrainCluster(quickTrain.scope); return; }
   startTrainingSession(lastTrainingBars);
 }
 
@@ -4832,7 +4866,11 @@ function trainAdjacentSection(delta) {
 
 // Only worth offering where there is more than one section to be at
 function syncResultsSectionButtons() {
-  const many = sectionList().length > 1;
+  // Gone after a quick run for the same reason the roughest-bars button is:
+  // both start an ordinary recorded session over some other passage, and the
+  // run this screen belongs to was deliberately neither recorded nor about
+  // another passage. What is offered here is the cluster again, or its run-up.
+  const many = sectionList().length > 1 && !quickTrain;
   document.getElementById('btn-results-prev').classList.toggle('hidden', !many);
   document.getElementById('btn-results-next').classList.toggle('hidden', !many);
 }
@@ -4854,7 +4892,7 @@ function showBestLine() {
     cheer.classList.add('pop');
   }
 
-  if (!best && !lastAbandoned) {
+  if (quickTrain || (!best && !lastAbandoned)) {
     line.classList.add('hidden');
     replayBtn.classList.add('hidden');
     return;
@@ -4892,7 +4930,12 @@ function showBestLine() {
 
   // Only when it is a different run from the one already on the screen — after
   // a new best the two are the same take, and "Replay my take" is that button.
-  const offerBest = !lastWasBest && Boolean(best?.take);
+  // Never after a quick run over a cluster. Its results are about a fragment at
+  // a drilling tempo; a best belongs to the passage played properly, and
+  // offering to replay one here invites a comparison between two different
+  // things. `best` is already null without a key, so this is belt and braces —
+  // and the braces are what stopped it appearing when the key came back.
+  const offerBest = !quickTrain && !lastWasBest && Boolean(best?.take);
   replayBtn.classList.toggle('hidden', !offerBest);
   if (offerBest) replayBtn.onclick = replayBest;
 }
@@ -5110,8 +5153,17 @@ function showAccuracyResults(results) {
   showBestLine();
   syncResultsSectionButtons();
 
-  // Offer the roughest couple of bars, when there is one worth repeating
-  const worst = getWorstSection(state.composition);
+  // After a quick run, the same run-up the floating controls offer — on the
+  // screen that run leaves behind, which is where the player already is.
+  const runUp = document.getElementById('btn-results-train-section');
+  const offerRunUp = Boolean(quickTrain) && quickSectionWorthOffering();
+  runUp.classList.toggle('hidden', !offerRunUp);
+  if (offerRunUp) runUp.onclick = () => quickTrainCluster('section');
+
+  // Offer the roughest couple of bars, when there is one worth repeating.
+  // Not after a quick run: that button starts an ordinary recorded session, and
+  // the whole point of the run just taken was that it was not one.
+  const worst = quickTrain ? null : getWorstSection(state.composition);
   document.getElementById('btn-replay-take').onclick = () => replayTake();
   const sectionBtn = document.getElementById('btn-train-section');
   if (worst) {
