@@ -55,6 +55,8 @@ const SETTINGS = {
   'ui.showFingering': bool,
   'ui.suggestFingering': bool,
   'ui.handOverlay': bool,
+  'ui.learnNavX': range(0, 1),
+  'ui.learnNavY': range(0, 1),
   'ui.muted': bool,
   'ui.volume': range(0, 1),
   'ui.clicksOnly': bool,
