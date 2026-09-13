@@ -510,6 +510,20 @@
            the keys and the eyes are here. Only up while a cluster session is
            running. -->
       <div id="learn-nav" class="learn-nav hidden" role="group" aria-label="Cluster controls">
+        <!-- The panel sits over the falling notes, so wherever it is put is on
+             top of something. This is how it gets moved off whatever that is.
+             A handle of its own rather than dragging the panel itself: every
+             other thing in here is a button, and a drag that starts on a
+             button is a press that has not finished yet. -->
+        <button class="learn-nav-grip" id="learn-nav-grip"
+                aria-label="Move these controls — arrow keys nudge, double-click to put them back"
+                title="Drag to move · arrows nudge · double-click to put back">
+          <svg viewBox="0 0 10 20" aria-hidden="true">
+            <circle cx="3.5" cy="6" r="1.1"/><circle cx="6.5" cy="6" r="1.1"/>
+            <circle cx="3.5" cy="10" r="1.1"/><circle cx="6.5" cy="10" r="1.1"/>
+            <circle cx="3.5" cy="14" r="1.1"/><circle cx="6.5" cy="14" r="1.1"/>
+          </svg>
+        </button>
         <button class="learn-nav-btn" id="btn-learn-prev" title="The cluster before this one">
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4.5 7 10l5.5 5.5"/><path d="M5.5 4.5v11" opacity="0.55"/></svg>
           <span>Back</span>

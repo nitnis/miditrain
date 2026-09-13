@@ -54,6 +54,13 @@ const _state = {
     showFingering: true,    // finger numbers on the keys, where the exercise carries them
     suggestFingering: false, // work out a fingering for a piece that has none: a guess, off by default
     handOverlay: false,     // draw hands on the keys instead of finger numbers
+    // Where the cluster controls sit over the falling window, as a fraction of
+    // the room they have to move in: 0 is hard left or top, 1 is hard right or
+    // bottom. Kept proportional rather than in pixels so resizing the window —
+    // or opening the piece on a different screen — moves them with it instead
+    // of stranding them off the edge.
+    learnNavX: 0.5,
+    learnNavY: 1,
     muted: false,           // master audio mute; audible by default
     volume: 1,              // 0..1, applied at the master gain
     clicksOnly: false,      // silence the notes, keep the metronome and count-in

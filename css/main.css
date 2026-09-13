@@ -804,9 +804,10 @@ select:focus { outline: 1px solid var(--accent); }
    either side of it clear. */
 .learn-nav {
   position: absolute;
-  left: 50%;
-  bottom: 10px;
-  transform: translateX(-50%);
+  /* Placed by script, from a position kept per profile. No `bottom` and no
+     centring transform: both would fight the left/top the drag writes. */
+  left: 0;
+  top: 0;
   display: flex;
   align-items: stretch;
   gap: 4px;
@@ -817,11 +818,38 @@ select:focus { outline: 1px solid var(--accent); }
   backdrop-filter: blur(4px);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
   z-index: 6;
+  /* Its own width, not whatever is left of the window to the right of it.
+     An absolutely positioned box with `left` set shrink-to-fits into the space
+     remaining, so dragged near the right edge this flex row wrapped into a
+     column — 55px tall became 291px, and the panel hung out of the bottom of
+     the window it had just been dragged inside. */
+  width: max-content;
   max-width: calc(100% - 24px);
   flex-wrap: wrap;
   justify-content: center;
 }
 .learn-nav.hidden { display: none; }
+/* While it is being dragged the buttons stop answering — a drag that ends over
+   one of them must not read as a press of it — but the grip keeps its events,
+   since it is the element the pointer is captured by and every move of the drag
+   arrives there. */
+.learn-nav.dragging { cursor: grabbing; user-select: none; }
+.learn-nav.dragging .learn-nav-btn { pointer-events: none; }
+
+.learn-nav-grip {
+  flex: none;
+  width: 16px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--border);
+  cursor: grab;
+  touch-action: none;   /* the drag is ours, not the page's */
+}
+.learn-nav-grip:hover { color: var(--muted); background: var(--surface); }
+.learn-nav-grip:active { cursor: grabbing; }
+.learn-nav-grip svg { width: 10px; height: 20px; fill: currentColor; stroke: none; }
 .learn-nav-sep {
   width: 1px;
   margin: 3px 3px;

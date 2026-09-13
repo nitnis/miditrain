@@ -2368,8 +2368,15 @@ const bests = await page.evaluate(async () => {
   // Down one from the top, so whoever is second in the list is who we land on
   const second = await page.evaluate(async () =>
     (await import('/src/profiles.js')).listProfiles()[1].name);
+  const playheadWas = await page.evaluate(async () =>
+    (await import('/src/state.js')).state.transport.currentTime);
   await page.keyboard.press('ArrowDown');
   await page.waitForTimeout(120);
+  // Walking the menu must not walk the piece: the arrows are also the global
+  // playhead nudge, and this menu sits above it
+  check('walking the menu leaves the playhead where it was',
+    await page.evaluate(async () =>
+      (await import('/src/state.js')).state.transport.currentTime), playheadWas);
   await page.keyboard.press('Enter');
   await page.waitForTimeout(600);
   check('arrow then Enter chooses without a mouse', await inUse(), second);
@@ -2667,6 +2674,142 @@ const bests = await page.evaluate(async () => {
 
   await page.evaluate(async () => (await import('/src/learn.js')).stopLearn());
   await page.waitForTimeout(300);
+}
+
+// ── Moving the cluster controls ─────────────────────────────────────────────
+//
+// The panel floats over the falling notes, so wherever it sits it is on top of
+// something — and which notes depends on the piece, the hand, and how tall the
+// window has been dragged. So it is draggable, by a handle of its own: every
+// other thing in it is a button, and a drag that starts on a button is a press
+// that has not finished yet.
+//
+// Where it was put is kept as a fraction of the room it has to move in, not as
+// pixels, so a resized window moves it proportionally instead of stranding it
+// off an edge that is no longer there.
+{
+  await page.evaluate(async () => {
+    const { update } = await import('/src/state.js');
+    update('ui.view', 'piano-roll');
+    update('ui.learnCluster', 'bar');
+    update('transport.currentTime', 0);
+  });
+  await page.waitForTimeout(300);
+  await page.evaluate(async () => (await import('/src/learn.js')).startLearn());
+  await page.waitForTimeout(500);
+
+  // Measured against the window it lives in, and with the same `client` sizes
+  // the placing uses, so the two cannot disagree about where the edges are
+  const where = () => page.evaluate(() => {
+    const nav = document.getElementById('learn-nav');
+    const host = document.getElementById('falling-notes-container');
+    const n = nav.getBoundingClientRect();
+    const h = host.getBoundingClientRect();
+    return {
+      x: Math.round(n.left - h.left), y: Math.round(n.top - h.top),
+      w: nav.offsetWidth, h: nav.offsetHeight,
+      roomW: host.clientWidth, roomH: host.clientHeight,
+    };
+  });
+  const inside = (b) =>
+    b.x >= 0 && b.y >= 0 && b.x + b.w <= b.roomW + 1 && b.y + b.h <= b.roomH + 1;
+  const kept = () => page.evaluate(async () => {
+    const { state } = await import('/src/state.js');
+    return { x: +state.ui.learnNavX.toFixed(3), y: +state.ui.learnNavY.toFixed(3) };
+  });
+  const grip = async () => {
+    const g = await page.locator('#learn-nav-grip').boundingBox();
+    return { x: g.x + g.width / 2, y: g.y + g.height / 2 };
+  };
+  const dragBy = async (dx, dy) => {
+    const g = await grip();
+    await page.mouse.move(g.x, g.y);
+    await page.mouse.down();
+    await page.mouse.move(g.x + dx, g.y + dy, { steps: 10 });
+    await page.mouse.up();
+    await page.waitForTimeout(250);
+  };
+
+  const home = await where();
+  check('the controls start centred along the bottom of the window',
+    [Math.abs(home.x - (home.roomW - home.w) / 2) < 3, home.y === home.roomH - home.h],
+    [true, true]);
+
+  await dragBy(-300, -60);
+  const moved = await where();
+  check('dragging the handle moves them', [moved.x < home.x - 250, moved.y < home.y - 40],
+    [true, true]);
+  check('...and they stay inside the window', inside(moved), true);
+  const asFraction = await kept();
+  check('...with where they were put kept as a fraction of the room',
+    [asFraction.x > 0 && asFraction.x < 0.5, asFraction.y > 0 && asFraction.y < 1],
+    [true, true]);
+
+  // Dragged at the edge rather than merely landing there: a panel that can be
+  // pulled outside and springs back afterwards feels broken on the way out
+  await dragBy(-4000, -4000);
+  check('they cannot be dragged off the top-left', [(await where()).x, (await where()).y], [0, 0]);
+  await dragBy(4000, 4000);
+  const far = await where();
+  check('...nor off the bottom-right', inside(far), true);
+
+  // At the right-hand edge the space left over used to decide the panel's
+  // width, so the row wrapped into a column, trebled in height and hung out of
+  // the bottom of the window it had just been put inside
+  check('...and they do not wrap into a column when pushed against an edge',
+    far.h === home.h, true);
+
+  const beforeResize = await kept();
+  await page.setViewportSize({ width: 900, height: 700 });
+  await page.waitForTimeout(600);
+  const narrow = await where();
+  check('a narrower window keeps them inside it', inside(narrow), true);
+  // The position is a fraction of the room, so a resize moves the panel without
+  // rewriting where it was put
+  check('...without rewriting where they were put', await kept(), beforeResize);
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.waitForTimeout(500);
+
+  // The handle answers to the keyboard too — one that only takes a mouse is a
+  // handle half the app cannot use
+  await page.evaluate(async () => {
+    const { update } = await import('/src/state.js');
+    update('ui.learnNavX', 0.5);
+    update('ui.learnNavY', 0.5);
+  });
+  await page.evaluate(() => document.getElementById('learn-nav-grip').focus());
+  await page.waitForTimeout(250);
+  const middle = await where();
+  await page.keyboard.press('ArrowLeft');
+  await page.keyboard.press('ArrowUp');
+  await page.waitForTimeout(300);
+  const nudged = await where();
+  check('the arrows nudge them', [nudged.x < middle.x, nudged.y < middle.y], [true, true]);
+  // The arrows are also the global playhead nudge, and nudging the playhead
+  // ends a learn session — so moving the panel one step used to end the session
+  // the panel belongs to
+  check('...without ending the session they belong to', await page.evaluate(async () =>
+    Boolean((await import('/src/learn.js')).getLearnCluster())), true);
+
+  const back = await grip();
+  await page.mouse.dblclick(back.x, back.y);
+  await page.waitForTimeout(350);
+  check('double-clicking the handle puts them back', await kept(), { x: 0.5, y: 1 });
+
+  // A drag must not leave the buttons deaf afterwards
+  await dragBy(-200, -30);
+  await page.click('#btn-learn-next');
+  await page.waitForTimeout(400);
+  check('the buttons still work once they have been moved', await page.evaluate(async () =>
+    (await import('/src/learn.js')).getLearnCluster().index), 1);
+
+  const placed = await kept();
+  await page.evaluate(async () => (await import('/src/learn.js')).stopLearn());
+  await page.waitForTimeout(300);
+  check('the controls go with the session', await page.evaluate(() =>
+    document.getElementById('learn-nav').classList.contains('hidden')), true);
+  check('...and where they were put is remembered with the rest of the profile',
+    await kept(), placed);
 }
 
 

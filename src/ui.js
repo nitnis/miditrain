@@ -1454,6 +1454,9 @@ function bindProfileMenu() {
     else if (e.key === 'ArrowUp') { if (at <= 0) { close(); caret.focus(); } else items[at - 1].focus(); }
     else return;
     e.preventDefault();
+    // ...and no further: the arrows are also the global playhead nudge, so
+    // walking this menu was moving the piece underneath it
+    e.stopPropagation();
   });
 }
 
@@ -2074,6 +2077,127 @@ function bindLearnNav() {
   document.getElementById('btn-learn-next').onclick = press(() => learnStepCluster(1));
   document.getElementById('btn-learn-demo').onclick = press(() => learnDemoSection());
   document.getElementById('btn-learn-test').onclick = press(() => learnTest());
+  bindLearnNavDrag();
+}
+
+// ── Where the panel sits ─────────────────────────────────────────────────────
+//
+// It floats over the falling notes, so wherever it is put it is on top of
+// something: which notes depends on the piece, the hand, and how tall the
+// window has been dragged. So it moves, and where it was put is remembered with
+// the rest of that profile's state.
+//
+// Kept as a fraction of the room it has to move in rather than as pixels. A
+// window resized, a piano dragged taller, the same profile opened on a smaller
+// screen — all of them move the panel proportionally instead of leaving it
+// hanging off an edge that is no longer there.
+const NAV_HOME = { x: 0.5, y: 1 };
+
+function placeLearnNav() {
+  const nav = document.getElementById('learn-nav');
+  const host = document.getElementById('falling-notes-container');
+  if (!nav || !host || nav.classList.contains('hidden')) return;
+  const room = {
+    x: Math.max(0, host.clientWidth - nav.offsetWidth),
+    y: Math.max(0, host.clientHeight - nav.offsetHeight),
+  };
+  const clamp = (v) => Math.min(1, Math.max(0, Number.isFinite(v) ? v : 0.5));
+  nav.style.left = `${Math.round(clamp(state.ui.learnNavX) * room.x)}px`;
+  nav.style.top = `${Math.round(clamp(state.ui.learnNavY) * room.y)}px`;
+}
+
+function bindLearnNavDrag() {
+  const nav = document.getElementById('learn-nav');
+  const grip = document.getElementById('learn-nav-grip');
+  const host = document.getElementById('falling-notes-container');
+  let from = null;
+
+  // Written back as a fraction once, at the end of the drag: the panel follows
+  // the pointer through style, and putting every intermediate position through
+  // the store would be a save a frame
+  const settle = () => {
+    const room = {
+      x: Math.max(1, host.clientWidth - nav.offsetWidth),
+      y: Math.max(1, host.clientHeight - nav.offsetHeight),
+    };
+    update('ui.learnNavX', Math.min(1, Math.max(0, parseFloat(nav.style.left) / room.x)));
+    update('ui.learnNavY', Math.min(1, Math.max(0, parseFloat(nav.style.top) / room.y)));
+  };
+
+  grip.addEventListener('pointerdown', (e) => {
+    const box = nav.getBoundingClientRect();
+    const edge = host.getBoundingClientRect();
+    from = { dx: e.clientX - box.left, dy: e.clientY - box.top, edge };
+    nav.classList.add('dragging');
+    // The pointer is captured, so a drag that outruns the panel — or leaves the
+    // window entirely — still arrives here rather than being dropped mid-move
+    grip.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+
+  grip.addEventListener('pointermove', (e) => {
+    if (!from) return;
+    const room = {
+      x: Math.max(0, host.clientWidth - nav.offsetWidth),
+      y: Math.max(0, host.clientHeight - nav.offsetHeight),
+    };
+    // Clamped to the window as it moves, not merely when it lands: a panel that
+    // can be dragged past the edge and springs back is a panel that feels
+    // broken on the way out
+    nav.style.left = `${Math.min(room.x, Math.max(0, e.clientX - from.edge.left - from.dx))}px`;
+    nav.style.top = `${Math.min(room.y, Math.max(0, e.clientY - from.edge.top - from.dy))}px`;
+  });
+
+  const end = (e) => {
+    if (!from) return;
+    from = null;
+    nav.classList.remove('dragging');
+    if (grip.hasPointerCapture?.(e.pointerId)) grip.releasePointerCapture(e.pointerId);
+    settle();
+  };
+  grip.addEventListener('pointerup', end);
+  grip.addEventListener('pointercancel', end);
+
+  // Back where it started. A panel that has been dragged somewhere unhelpful —
+  // behind the keyboard, into a corner — needs one gesture that undoes it
+  // without hunting for the spot it came from.
+  grip.addEventListener('dblclick', () => {
+    update('ui.learnNavX', NAV_HOME.x);
+    update('ui.learnNavY', NAV_HOME.y);
+    placeLearnNav();
+    showToast('Controls back where they started', 1400);
+  });
+
+  // ...and from the keyboard, since a handle that only answers to a mouse is a
+  // handle half the app cannot use. A step is a twentieth of the room, so the
+  // panel crosses the window in twenty presses wherever it starts.
+  grip.addEventListener('keydown', (e) => {
+    const by = { ArrowLeft: ['X', -0.05], ArrowRight: ['X', 0.05],
+                 ArrowUp: ['Y', -0.05], ArrowDown: ['Y', 0.05] }[e.key];
+    if (!by) return;
+    const [axis, step] = by;
+    update(`ui.learnNav${axis}`, Math.min(1, Math.max(0, state.ui[`learnNav${axis}`] + step)));
+    placeLearnNav();
+    // Both, and the second one matters more: the global arrow shortcut nudges
+    // the playhead, and nudging the playhead ends a learn session — so without
+    // this, moving the panel one step to the left ended the session it belongs
+    // to. `preventDefault` alone does not stop it; the shortcut dispatcher is
+    // on the document and this bubbles straight to it.
+    e.preventDefault();
+    e.stopPropagation();
+  });
+
+  // The room the panel has keeps changing under it: the browser window resizes,
+  // and the piano below can be dragged taller, which takes its height out of
+  // this box. Watching the box itself catches both, and anything else that ever
+  // changes it, without each of them having to remember to say so.
+  //
+  // The panel is watched as well, because on a window too narrow for one row it
+  // wraps and becomes several times taller — which changes where its own bottom
+  // edge is, and so where it is allowed to sit.
+  const watch = new ResizeObserver(placeLearnNav);
+  watch.observe(host);
+  watch.observe(nav);
 }
 
 // Drawn from what learn.js says it is doing rather than from what was last
@@ -2084,6 +2208,7 @@ function syncLearnNav() {
   const at = getLearnCluster();
   nav.classList.toggle('hidden', !at);
   if (!at) return;
+  placeLearnNav();
 
   // Nothing to go back to from the first, and the last is the whole section,
   // which is the end of the walk
