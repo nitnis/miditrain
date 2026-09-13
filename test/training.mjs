@@ -2946,6 +2946,155 @@ const bests = await page.evaluate(async () => {
   await page.waitForTimeout(300);
 }
 
+// ── The run-up, and not falling out of the quick run ────────────────────────
+//
+// Pressing Space on the results of a quick run started a full, recorded
+// training session over whatever bars were last trained the ordinary way — a
+// key that means "that again" doing something else entirely, and filing a best
+// under it. It repeats the quick run now, at its own tempo and over its own
+// stretch.
+//
+// And a second scope: from the top of the section down to the end of this
+// cluster. A passage learned a bar at a time and never once played from the
+// beginning is a passage whose joins have never been tried.
+//
+// The results screen of a quick run also stops offering anything belonging to
+// the board, or anything that would start a recorded session: this run was
+// deliberately neither, and a "Replay my best" beside it invites a comparison
+// between a fragment at a drilling tempo and a real playing of the piece.
+{
+  await page.evaluate(async () => {
+    const { update } = await import('/src/state.js');
+    const notes = [];
+    for (let i = 0; i < 16; i++) {
+      notes.push({ id: `ru${i}`, pitch: 60 + (i % 4), hand: 'right',
+                   startTime: i * 500, duration: 400, velocity: 90 });
+    }
+    update('composition.notes', notes);
+    update('composition.name', 'Run Up');
+    update('composition.tempo', 120);
+    update('ui.learnCluster', 'bar');
+    update('ui.learnSectionBars', 0);
+    update('ui.countInEnabled', false);
+    update('ui.trainMode', false);
+    update('ui.quickTrainBpm', 60);
+    update('transport.loopEnabled', false);
+  });
+  await page.waitForTimeout(400);
+
+  // What is being graded, which stands still — unlike the playhead, which is
+  // moving the whole time a run is under way
+  const run = () => page.evaluate(async () => {
+    const { state } = await import('/src/state.js');
+    const l = await import('/src/learn.js');
+    const r = (await import('/src/accuracy.js')).getSessionRange();
+    return { tempo: state.composition.tempo, grading: state.accuracy.active,
+             cluster: l.getLearnCluster(),
+             range: r ? { from: Math.round(r.startMs), to: Math.round(r.endMs) } : null };
+  });
+  const offered = (id) => page.evaluate((id) => {
+    const el = document.getElementById(id);
+    return !el.classList.contains('hidden') && !el.hidden;
+  }, id);
+  const board = () => page.evaluate(async () =>
+    Object.keys((await import('/src/profiles.js')).current().bests || {}).length);
+  const ended = async () => {
+    for (let i = 0; i < 110; i++) {
+      if (!(await run()).grading) return true;
+      await page.waitForTimeout(200);
+    }
+    return false;
+  };
+
+  // A best over these very bars, so "Replay my best" would have one to offer
+  await page.evaluate(async () => {
+    const { update } = await import('/src/state.js');
+    update('transport.loopEnabled', true);
+    update('transport.loopStartBar', 1);
+    update('transport.loopEndBar', 1);
+    update('ui.trainMode', true);
+  });
+  await page.evaluate(() => document.getElementById('btn-play').click());
+  await ended();
+  await page.waitForTimeout(400);
+  const board0 = await board();
+  await page.click('#btn-close-accuracy');
+  await page.evaluate(async () => {
+    const { update } = await import('/src/state.js');
+    update('ui.trainMode', false);
+    update('transport.loopEnabled', false);
+  });
+  await page.waitForTimeout(300);
+
+  await page.evaluate(async () => (await import('/src/learn.js')).startLearn());
+  await page.waitForTimeout(500);
+  check('the run-up is not offered on the first cluster, being the same music',
+    await offered('btn-learn-train-section'), false);
+  await page.click('#btn-learn-next');
+  await page.waitForTimeout(400);
+  check('...and is on the second, where there is one to play',
+    await offered('btn-learn-train-section'), true);
+
+  await page.click('#btn-learn-train');
+  await page.waitForTimeout(700);
+  const cluster = (await run()).range;
+  check('the cluster run grades the cluster, which starts inside the piece',
+    cluster.from > 500, true);
+  await ended();
+  await page.waitForTimeout(400);
+
+  await page.click('#btn-results-train-section');
+  await page.waitForTimeout(700);
+  const runUp = (await run()).range;
+  check('the run-up starts at the top of the section', runUp.from < 60, true);
+  check('...and ends where the cluster run ended',
+    Math.abs(runUp.to - cluster.to) < 60, true);
+  await ended();
+  await page.waitForTimeout(400);
+
+  check('the run-up is offered on the results screen too',
+    await offered('btn-results-train-section'), true);
+  check('"Replay my best" is not, though there is a best to replay',
+    await offered('btn-replay-best'), false);
+  check('...nor the line about it', await offered('best-line'), false);
+  check('...nor the roughest bars, which would start a recorded run',
+    await offered('btn-train-section'), false);
+  check('...nor the sections either side, for the same reason',
+    [await offered('btn-results-prev'), await offered('btn-results-next')], [false, false]);
+
+  const boardBefore = await board();
+  await page.keyboard.press('Space');
+  await page.waitForTimeout(900);
+  const again = await run();
+  check('Space repeats the quick run rather than starting a full one',
+    [again.grading, again.tempo], [true, 60]);
+  check('...over the same stretch it was last asked for',
+    [Math.abs(again.range.from - runUp.from) < 60,
+     Math.abs(again.range.to - runUp.to) < 60], [true, true]);
+  await ended();
+  await page.waitForTimeout(500);
+  check('...and still records nothing', await board(), boardBefore);
+  check('...the board being where it was before any of this', boardBefore, board0);
+
+  await page.click('#btn-train-again');
+  await page.waitForTimeout(900);
+  check('Try Again repeats it as well', (await run()).grading, true);
+  await ended();
+  await page.waitForTimeout(400);
+  check('...also recording nothing', await board(), boardBefore);
+
+  // The results sit over the panel, as any dialog does over what is behind it
+  await page.click('#btn-close-accuracy');
+  await page.waitForTimeout(300);
+  await page.click('#btn-learn-again');
+  await page.waitForTimeout(1000);
+  check('and Again puts the walk back at the cluster it came from',
+    (await run()).cluster?.index, 1);
+
+  await page.evaluate(async () => (await import('/src/learn.js')).stopLearn());
+  await page.waitForTimeout(300);
+}
+
 
 await browser.close();
 
