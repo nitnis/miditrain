@@ -669,6 +669,24 @@ export function rememberBest(key, run) {
   return true;
 }
 
+// Give up a record.
+//
+// There is no undo and there is deliberately none: a best is one line in one
+// profile, and a screen offering to restore it would be more machinery than the
+// thing it restores. The caller asks first — see `forgetBestFromDialog`, which
+// names the run it is about to remove — and that is the whole of the safety.
+//
+// It says whether it removed anything, so a key that is already gone (a second
+// click, a stale row) is a quiet no rather than a persist and a redraw.
+export function forgetBest(key) {
+  const profile = current();
+  if (!profile?.bests || !(key in profile.bests)) return false;
+  delete profile.bests[key];
+  profile.updatedAt = Date.now();
+  persist();
+  return true;
+}
+
 // ── Calibration ──────────────────────────────────────────────────────────────
 // Measured once per player per keyboard, and read at the start of every run
 // that is being graded on dynamics.

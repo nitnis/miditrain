@@ -912,11 +912,93 @@ select:focus { outline: 1px solid var(--accent); }
 }
 
 /* Profiles */
-.profile-select {
-  max-width: 150px;
-  height: 28px;
-  font-size: 12px;
+/* Two buttons that read as one control: the name, and the caret that changes
+   it. Joined at the middle — square edges where they meet, rounded at the ends
+   — so the pair looks like the single thing it replaced rather than like two
+   controls that happen to be adjacent. */
+.profile-picker {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  max-width: 190px;
 }
+.profile-current,
+.profile-caret {
+  height: 32px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.profile-current {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0 10px;
+  border-radius: 6px 0 0 6px;
+  border-right: none;
+  /* A long name gives way rather than pushing the caret off the header */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+.profile-caret {
+  flex: none;
+  width: 24px;
+  padding: 0;
+  border-radius: 0 6px 6px 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+.profile-current:hover,
+.profile-caret:hover { background: var(--border); }
+.profile-caret:hover { color: var(--text); }
+.profile-caret svg { width: 12px; height: 12px; transition: transform 0.15s ease; }
+.profile-caret[aria-expanded="true"] svg { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) {
+  .profile-caret svg, .profile-caret[aria-expanded="true"] svg { transition: none; transform: none; }
+}
+
+/* The list of who else there is. Above everything in the header, and wide
+   enough to be read even when the button it hangs from has been squeezed. */
+.profile-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 100%;
+  max-width: 240px;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+  z-index: 120;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.profile-menu.hidden { display: none; }
+.profile-menu-item {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.profile-menu-item:hover { background: var(--surface); }
+.profile-menu-item[aria-checked="true"] { color: var(--accent); font-weight: 700; }
 .profiles-box {
   max-width: 560px;
   width: 92vw;
@@ -1042,6 +1124,19 @@ select:focus { outline: 1px solid var(--accent); }
 .bests-score { min-width: 42px; font-variant-numeric: tabular-nums; }
 .bests-when { flex: 1; color: var(--muted); font-size: 11px; }
 .bests-empty { padding: 14px; color: var(--muted); font-size: 13px; text-align: center; }
+/* The bin at the end of a run. A modal button's forty pixels would be taller
+   than the row it sits in, so it is cut down to the row — still a real target,
+   and the only one here that destroys anything, which is why it is the only
+   one that is not a word.
+   Qualified by the row it is in: `.icon-btn` sets the same properties from
+   further down this file, and at equal weight the later rule is the one that
+   counts. */
+.bests-run .bests-forget {
+  width: 26px;
+  height: 26px;
+  flex: none;
+}
+.bests-run .bests-forget svg { width: 14px; height: 14px; }
 
 /* ── Scale and arpeggio generator ── */
 .practice-box {

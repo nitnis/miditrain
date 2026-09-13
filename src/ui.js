@@ -34,7 +34,7 @@ import { looksLikeAudio, transcribeAudioFile } from './audio-import.js';
 import {
   listProfiles, current as currentProfile, switchProfile, createProfile, deleteProfile,
   renameProfile, adoptProfile, sectionKey, sectionTempo, rememberSectionTempo, setLearningPosition,
-  trainingKey, parseTrainingKey, bestFor, rememberBest, bestsTree,
+  trainingKey, parseTrainingKey, bestFor, rememberBest, forgetBest, bestsTree,
   learningPosition, canUseFolder, chooseFolder, folderHandle, storedFolder, scanFolder,
   writeToFolder, readFromFolder, removeFromFolder,
   fileNameFor, bundleToJSON, bundleFromJSON,
@@ -1005,6 +1005,22 @@ function whenText(at) {
 function renderBestsTree(profile) {
   const host = document.getElementById('bests-tree');
   const tree = bestsTree(profile);
+
+  // Which branches were open, so deleting a run does not fold the tree up and
+  // lose the reader's place. Kept by the path through the tree rather than by
+  // position, so the branch that held the deleted run stays open even though
+  // its count has changed — and a branch that emptied out simply is not there
+  // to reopen.
+  //
+  // `reopening` separates the redraw from the first draw. On a redraw what was
+  // open is the whole answer, including what was closed: without it, a branch
+  // that opens by default and had been closed by hand would spring back open
+  // every time anything at all was deleted.
+  const wasOpen = new Set([...host.querySelectorAll('details[data-path]')]
+    .filter(d => d.open).map(d => d.dataset.path));
+  const reopening = host.querySelector('details[data-path]') !== null;
+  const opens = (path, byDefault) => (reopening ? wasOpen.has(path) : byDefault);
+
   host.innerHTML = '';
 
   const runsIn = (songs) => songs.reduce((n, s) => n + s.hands.reduce(
@@ -1020,9 +1036,10 @@ function renderBestsTree(profile) {
     return;
   }
 
-  const detail = (cls, label, count) => {
+  const detail = (cls, label, count, path) => {
     const el = document.createElement('details');
     el.className = cls;
+    el.dataset.path = path;
     const head = document.createElement('summary');
     head.textContent = label;
     if (count !== undefined) {
@@ -1043,22 +1060,27 @@ function renderBestsTree(profile) {
   for (const branch of tree) {
     const songs = branch.songs;
     const into = branched
-      ? detail('bests-mode', MODE_NAMES[branch.mode] || branch.mode, runsIn(songs))
+      ? detail('bests-mode', MODE_NAMES[branch.mode] || branch.mode, runsIn(songs), branch.mode)
       : host;
-    if (branched) into.open = branch.mode === 'standard';
+    if (branched) into.open = opens(branch.mode, branch.mode === 'standard');
 
     for (const song of songs) {
       const runsHere = song.hands.reduce(
         (m, h) => m + h.speeds.reduce((k, v) => k + v.runs.length, 0), 0);
-      const songEl = detail('bests-song', song.songName, runsHere);
+      const songPath = `${branch.mode}/${song.songName}`;
+      const songEl = detail('bests-song', song.songName, runsHere, songPath);
       // One piece opens by itself, because opening it is then the only thing
       // there is to do
-      songEl.open = !branched && songs.length === 1;
+      songEl.open = opens(songPath, !branched && songs.length === 1);
 
       for (const hand of song.hands) {
-        const handEl = detail('bests-hand', HAND_NAMES[hand.hand] || hand.hand);
+        const handPath = `${songPath}/${hand.hand}`;
+        const handEl = detail('bests-hand', HAND_NAMES[hand.hand] || hand.hand, undefined, handPath);
+        handEl.open = opens(handPath, false);
         for (const speed of hand.speeds) {
-          const speedEl = detail('bests-speed', `${speed.bpm} BPM`);
+          const speedPath = `${handPath}/${speed.bpm}`;
+          const speedEl = detail('bests-speed', `${speed.bpm} BPM`, undefined, speedPath);
+          speedEl.open = opens(speedPath, false);
           for (const run of speed.runs) {
             speedEl.appendChild(bestRow(run));
           }
@@ -1126,9 +1148,47 @@ function bestRow(run) {
     feet.title = 'How the pedalling was timed';
   }
 
+  // Giving a record up. The same bin as the Profiles dialog, for the same
+  // reason: the row has no width to spell the word out in, and a line of these
+  // down the side of the tree reads as one column rather than as a button
+  // repeated.
+  const forget = iconButton(TRASH, `Delete this best run — ${describeRun(run)}`);
+  forget.classList.add('danger', 'bests-forget');
+  forget.onclick = () => forgetBestFromDialog(run);
+
   row.append(bars, stars, ...(level ? [level] : []), ...(feet ? [feet] : []),
-             score, when, load);
+             score, when, load, forget);
   return row;
+}
+
+// A run in one line, for a tooltip and for the question that asks before it
+// goes. The row itself only says the bars — the piece, the hand and the tempo
+// are the branches it hangs under, and they have to be spelled out here or the
+// question is "delete bars 1–4?" with no answer to "of what?".
+function describeRun(run) {
+  const at = parseTrainingKey(run.key);
+  const where = run.bars === 'all' ? 'the whole piece' : `bars ${run.bars.replace('-', '–')}`;
+  if (!at) return where;
+  const hand = (HAND_NAMES[at.hand] || at.hand).toLowerCase();
+  const mode = at.mode === 'pro' ? ', professional' : '';
+  return `${where} of "${at.songName}", ${hand} at ${at.bpm} BPM${mode}`;
+}
+
+// Asked before, not undone after: a best is one line in one profile, and an
+// undo for it would be more machinery than the thing it restores. So the
+// question names the run in full, and says what is actually lost — the score
+// and the recording of the take, which is the part people would miss.
+function forgetBestFromDialog(run) {
+  const scored = run.stars == null ? `${run.score}%` : `${run.score}%, ★ ${starText(run.stars)}`;
+  const alsoTake = run.take ? ' The recording of it goes too.' : '';
+  if (!confirm(`Delete your best for ${describeRun(run)}?\n\n${scored}, set ${whenText(run.at)}.`
+               + `${alsoTake} This cannot be undone.`)) return;
+  if (!forgetBest(run.key)) return;
+  // Redraw from the store rather than lifting the row out, so the counts on
+  // every branch above it, and the empty state when the last one goes, are
+  // right without this having to know about any of them
+  renderBestsTree(currentProfile());
+  showToast('Best run deleted', 2000);
 }
 
 function openBests(profile) {
@@ -1211,9 +1271,12 @@ async function loadBestRun(key) {
 
 function bindProfiles() {
   const modal = document.getElementById('profiles-modal');
-  const select = document.getElementById('profile-select');
 
-  select.onchange = (e) => { switchProfile(e.target.value); showProfileWelcome(); };
+  // Pressing the name asks what this profile has done. It is the same question
+  // the name answers inside the Profiles dialog, and the same answer.
+  document.getElementById('btn-profile-bests').onclick = () => openBests(currentProfile());
+  bindProfileMenu();
+
   document.getElementById('btn-profiles').onclick = () => {
     renderProfiles();
     backfillCurrentFile();
@@ -1343,17 +1406,85 @@ function showProfileWelcome() {
   );
 }
 
-function renderProfileSelect() {
-  const select = document.getElementById('profile-select');
+// The caret's menu: everyone there is to be, with the current one marked.
+//
+// A menu rather than the <select> this replaced, because a <select> is one
+// control and the name had to become a button of its own. What is lost with the
+// native element is its keyboard handling, so that is put back by hand below —
+// a picker you cannot reach from the keyboard is worse than the one it replaced,
+// however it looks.
+function bindProfileMenu() {
+  const caret = document.getElementById('btn-profile-switch');
+  const menu = document.getElementById('profile-menu');
+
+  const close = () => {
+    menu.classList.add('hidden');
+    caret.setAttribute('aria-expanded', 'false');
+  };
+  const open = () => {
+    renderProfileMenu();
+    menu.classList.remove('hidden');
+    caret.setAttribute('aria-expanded', 'true');
+    menu.querySelector('.profile-menu-item')?.focus();
+  };
+  closeProfileMenu = close;
+
+  caret.onclick = (e) => {
+    e.stopPropagation();   // ...or the document listener below closes it again
+    if (menu.classList.contains('hidden')) open(); else close();
+  };
+
+  // Anywhere else on the page dismisses it, which is what a menu does
+  document.addEventListener('click', (e) => {
+    if (!menu.classList.contains('hidden') && !e.target.closest?.('#profile-picker')) close();
+  });
+  menu.addEventListener('keydown', (e) => {
+    const items = [...menu.querySelectorAll('.profile-menu-item')];
+    const at = items.indexOf(document.activeElement);
+    if (e.key === 'Escape') { close(); caret.focus(); }
+    else if (e.key === 'ArrowDown') items[Math.min(items.length - 1, at + 1)]?.focus();
+    else if (e.key === 'ArrowUp') { if (at <= 0) { close(); caret.focus(); } else items[at - 1].focus(); }
+    else return;
+    e.preventDefault();
+  });
+}
+
+// Set by bindProfileMenu, so anything that changes who is current can put the
+// menu away without reaching into it
+let closeProfileMenu = () => {};
+
+function renderProfileMenu() {
+  const menu = document.getElementById('profile-menu');
   const active = currentProfile();
-  select.innerHTML = '';
+  menu.innerHTML = '';
   for (const profile of listProfiles()) {
-    const option = document.createElement('option');
-    option.value = profile.id;
-    option.textContent = profile.name;
-    option.selected = profile.id === active.id;
-    select.appendChild(option);
+    const item = document.createElement('button');
+    item.className = 'profile-menu-item';
+    item.textContent = profile.name;
+    item.title = profile.name;      // it may be showing only the front of it
+    item.setAttribute('role', 'menuitemradio');
+    item.setAttribute('aria-checked', String(profile.id === active.id));
+    item.onclick = () => {
+      closeProfileMenu();
+      document.getElementById('btn-profile-switch').focus();
+      if (profile.id === active.id) return;
+      switchProfile(profile.id);
+      showProfileWelcome();
+    };
+    menu.appendChild(item);
   }
+}
+
+// The name on the header button. Rebuilt from the store rather than written by
+// whoever changed it, so a rename, a switch and a profile arriving from a file
+// all land here the same way.
+function renderProfileSelect() {
+  const active = currentProfile();
+  const name = document.getElementById('btn-profile-bests');
+  name.textContent = active.name;
+  name.title = `${active.name} — what this profile has played, and how well`;
+  const menu = document.getElementById('profile-menu');
+  if (!menu.classList.contains('hidden')) renderProfileMenu();
 }
 
 // ── Calibration ──────────────────────────────────────────────────────────────

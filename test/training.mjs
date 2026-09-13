@@ -890,7 +890,7 @@ await page.evaluate(async () => {
   on('transport:play', () => { window.__played += 1; });
 });
 await page.locator('.bests-speed').filter({ hasText: '150 BPM' })
-  .locator('.bests-run button').click();
+  .locator('.bests-run .small-btn').click();
 await page.waitForTimeout(1000);
 // The tempo goes to the rate the run was set at. This record was written when
 // a speed slider could reach 150 by multiplying a written 120, so it still says
@@ -1288,7 +1288,7 @@ check('...and only the professional rows carry the second rating',
 
 // Loading a best arms the mode it was set in — a standard best retried with the
 // mode left on would file the retry somewhere the record it meant to beat is not
-await page.locator('.bests-mode').nth(1).locator('.bests-run button').click();
+await page.locator('.bests-mode').nth(1).locator('.bests-run .small-btn').click();
 await page.waitForTimeout(900);
 check('loading a professional best arms professional mode',
   await page.evaluate(() => window.__t.state.ui.professional), true);
@@ -1300,7 +1300,7 @@ await page.waitForTimeout(250);
 await page.locator('.profile-item.active .profile-open').click();
 await page.waitForTimeout(400);
 await page.evaluate(() => document.querySelectorAll('#bests-tree details').forEach(d => { d.open = true; }));
-await page.locator('.bests-mode').nth(0).locator('.bests-run button').click();
+await page.locator('.bests-mode').nth(0).locator('.bests-run .small-btn').click();
 await page.waitForTimeout(900);
 check('...and loading an ordinary one disarms it again',
   await page.evaluate(() => window.__t.state.ui.professional), false);
@@ -2227,9 +2227,13 @@ const bests = await page.evaluate(async () => {
   const shown = (id) => page.evaluate((id) =>
     !document.getElementById(id).classList.contains('hidden'), id);
 
+  // What must not be up there is the row of actions. What is left is the
+  // profile picker — who you are and what you have done — and the gear.
   const header = await page.evaluate(() =>
     [...document.querySelectorAll('#header .header-right button')].map(b => b.id));
-  check('the header is down to one button', header, ['btn-settings']);
+  check('the header carries no action buttons any more',
+    header.filter(id => !['btn-profile-bests', 'btn-profile-switch', 'btn-settings'].includes(id)), []);
+  check('...and the gear is one of the few left', header.includes('btn-settings'), true);
 
   check('the settings dialog starts closed', await shown('settings-modal'), false);
   await page.click('#btn-settings');
@@ -2283,6 +2287,201 @@ const bests = await page.evaluate(async () => {
     return state.composition.tempo;
   });
   check('the tempo alone says how fast this is going', keyed, 132);
+}
+
+// ── The profile picker is two things, not one ───────────────────────────────
+//
+// A <select> could only ever change who is practising: there is no part of one
+// you can press by itself. So the name became a button of its own — it opens
+// what that profile has done — with a caret beside it for changing who it is.
+//
+// The native element took its keyboard handling with it when it went, so that
+// is checked here too: a picker you cannot drive from the keyboard would be
+// worse than the one it replaced, however it looks.
+{
+  const shown = (id) => page.evaluate((id) =>
+    !document.getElementById(id).classList.contains('hidden'), id);
+  const headerName = () => page.textContent('#btn-profile-bests');
+  const inUse = () => page.evaluate(async () =>
+    (await import('/src/profiles.js')).current().name);
+
+  const made = await page.evaluate(async () => {
+    const p = await import('/src/profiles.js');
+    const back = p.current().id;
+    const other = p.createProfile('Someone Else').id;
+    p.switchProfile(back);
+    return { back, other, name: p.current().name };
+  });
+  await page.waitForTimeout(400);
+  check('the header shows who is practising', await headerName(), made.name);
+
+  // ── the name ──
+  await page.click('#btn-profile-bests');
+  await page.waitForTimeout(400);
+  check('pressing the name opens that profile’s best runs',
+    await shown('bests-modal'), true);
+  check('...and it is the profile in use it opened for',
+    await page.textContent('#bests-modal h2'), `${made.name} · best runs`);
+  await page.click('#btn-close-bests');
+  await page.waitForTimeout(250);
+
+  // ── the caret ──
+  check('the menu starts closed', await shown('profile-menu'), false);
+  await page.click('#btn-profile-switch');
+  await page.waitForTimeout(250);
+  check('the caret opens it', await shown('profile-menu'), true);
+  // Everyone in the store, in the store's order — which by now is a dozen and
+  // more from the blocks above, so it is asked of the store rather than listed
+  check('...listing everyone there is', await page.evaluate(() =>
+    [...document.querySelectorAll('.profile-menu-item')].map(b => b.textContent)),
+    await page.evaluate(async () =>
+      (await import('/src/profiles.js')).listProfiles().map(p => p.name)));
+  check('...with the one in use marked, and only that one', await page.evaluate(() =>
+    [...document.querySelectorAll('.profile-menu-item[aria-checked="true"]')]
+      .map(b => b.textContent)), [made.name]);
+
+  await page.evaluate(() => [...document.querySelectorAll('.profile-menu-item')]
+    .find(b => b.textContent === 'Someone Else').click());
+  await page.waitForTimeout(600);
+  check('choosing one switches to it', await inUse(), 'Someone Else');
+  check('...the header follows', await headerName(), 'Someone Else');
+  check('...and the menu puts itself away', await shown('profile-menu'), false);
+
+  // ── getting out of it ──
+  await page.click('#btn-profile-switch');
+  await page.waitForTimeout(200);
+  await page.mouse.click(700, 620);
+  await page.waitForTimeout(250);
+  check('a click anywhere else closes the menu', await shown('profile-menu'), false);
+
+  await page.click('#btn-profile-switch');
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(250);
+  check('Escape closes it', await shown('profile-menu'), false);
+
+  // ── from the keyboard alone ──
+  await page.click('#btn-profile-switch');
+  await page.waitForTimeout(250);
+  check('opening puts the focus in the menu', await page.evaluate(() =>
+    document.activeElement?.className), 'profile-menu-item');
+  // Down one from the top, so whoever is second in the list is who we land on
+  const second = await page.evaluate(async () =>
+    (await import('/src/profiles.js')).listProfiles()[1].name);
+  await page.keyboard.press('ArrowDown');
+  await page.waitForTimeout(120);
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(600);
+  check('arrow then Enter chooses without a mouse', await inUse(), second);
+
+  // A name longer than the header has room for must not push the caret off the
+  // end of it — the button that gets you back would be the one that vanished
+  await page.evaluate(async () => {
+    const p = await import('/src/profiles.js');
+    p.renameProfile(p.current().id, 'Bartholomew Quartermaine-Fitzwilliam');
+  });
+  await page.waitForTimeout(400);
+  check('a name too long for the header gives way rather than pushing',
+    await page.evaluate(() => {
+      const hdr = document.querySelector('.header-right');
+      return {
+        caret: document.getElementById('btn-profile-switch').getBoundingClientRect().width > 0,
+        spills: hdr.scrollWidth > hdr.clientWidth + 1,
+      };
+    }), { caret: true, spills: false });
+}
+
+// ── Giving a record up ──────────────────────────────────────────────────────
+//
+// A best can now be deleted, which is the one thing in this app that destroys
+// something a player earned. So: it asks first, Cancel means Cancel, and what
+// it asks names the run in full — the row itself only says which bars, and the
+// piece, the hand and the tempo are the branches it hangs under.
+//
+// There is no undo, deliberately, so the question is the whole of the safety
+// and is worth checking as carefully as the deletion.
+{
+  // A profile of its own, so the records are exactly these four and the counts
+  // below are not at the mercy of everything the suite did above
+  await page.evaluate(async () => {
+    const p = await import('/src/profiles.js');
+    p.createProfile('Records');
+    const take = { range: { startMs: 0, endMs: 900, tailMs: 0 },
+                   notes: [{ pitch: 60, startTime: 0, duration: 300, velocity: 90, matched: true }],
+                   expected: [{ pitch: 60, startTime: 0, grade: 'perfect' }] };
+    for (const [songName, bars, hand, bpm, score, stars] of [
+      ['Study in C', { startBar: 1, endBar: 4 }, 'both', 120, 92, 8],
+      ['Study in C', { startBar: 5, endBar: 8 }, 'both', 120, 78, 6],
+      ['Study in C', { startBar: 1, endBar: 4 }, 'left', 90, 85, 7],
+      ['Nocturne', { startBar: 1, endBar: 2 }, 'right', 60, 100, 10],
+    ]) {
+      p.rememberBest(p.trainingKey({ songName, bars, hand, bpm }), {
+        score, stars, perfect: 4, good: 0, almost: 0, missed: 0, extra: 0,
+        total: 4, avgLatencyMs: 20, tempo: bpm, take,
+      });
+    }
+  });
+  await page.waitForTimeout(400);
+
+  const kept = () => page.evaluate(async () =>
+    Object.keys((await import('/src/profiles.js')).current().bests).length);
+  const expandAll = async () => {
+    await page.evaluate(() =>
+      document.querySelectorAll('#bests-tree details').forEach(d => { d.open = true; }));
+    await page.waitForTimeout(150);
+  };
+
+  await page.click('#btn-profile-bests');
+  await page.waitForTimeout(400);
+  await expandAll();
+  check('four records to begin with', await kept(), 4);
+
+  const bins = await page.evaluate(() =>
+    [...document.querySelectorAll('.bests-run .bests-forget')].map(b => ({
+      drawn: !!b.querySelector('svg'), spelled: b.textContent.trim(),
+      labelled: (b.getAttribute('aria-label') || '').startsWith('Delete this best run'),
+    })));
+  check('every run offers a way to give it up', bins.length, 4);
+  check('...each a labelled picture rather than a bare drawing',
+    bins.filter(b => !(b.drawn && b.spelled === '' && b.labelled)), []);
+
+  // The question has to say what is going. "Delete bars 1–4?" has no answer to
+  // "of what?" — the piece and the hand are branches, not part of the row.
+  const asked = await page.evaluate(async () => {
+    let seen = null;
+    const real = window.confirm;
+    window.confirm = (message) => { seen = message; return false; };
+    document.querySelector('.bests-run .bests-forget').click();
+    window.confirm = real;
+    return seen;
+  });
+  check('it asks before deleting', Boolean(asked), true);
+  check('...naming the piece, the hand and the tempo, not just the bars',
+    ['Nocturne', 'right hand', '60 BPM', 'cannot be undone'].filter(s => !asked.includes(s)), []);
+  check('...and saying no keeps the record', await kept(), 4);
+
+  // Everything open stays open: deleting a run must not fold the tree up and
+  // lose the place of whoever is reading it
+  await page.evaluate(() => { window.confirm = () => true; });
+  await page.click('.bests-run .bests-forget');
+  await page.waitForTimeout(500);
+  check('saying yes takes it', await kept(), 3);
+  check('...and the tree keeps its place rather than folding up', await page.evaluate(() =>
+    [...document.querySelectorAll('#bests-tree details')].every(d => d.open)), true);
+
+  // ...down to none, where the branches and their counts have to go too
+  for (let i = 0; i < 3; i++) {
+    await expandAll();
+    if (!(await page.locator('.bests-run .bests-forget').count())) break;
+    await page.locator('.bests-run .bests-forget').first().click();
+    await page.waitForTimeout(400);
+  }
+  check('the last one can go as well', await kept(), 0);
+  check('...and the window says there is nothing rather than showing an empty tree',
+    await page.evaluate(() => Boolean(document.querySelector('.bests-empty'))), true);
+
+  await page.click('#btn-close-bests');
+  await page.waitForTimeout(200);
 }
 
 

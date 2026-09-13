@@ -31,7 +31,23 @@
     <span id="composition-name" class="composition-name" contenteditable="true" spellcheck="false">Untitled</span>
 
     <div class="header-right">
-      <select id="profile-select" class="profile-select" title="Who is practising — each profile keeps its own progress and speeds"></select>
+      <!-- Who is practising, as two things rather than one: the name opens what
+           that profile has done, and the caret beside it is how you change who
+           it is. A <select> could only ever be the second of those — there is
+           no part of one you can press on its own. -->
+      <div class="profile-picker" id="profile-picker">
+        <button class="profile-current" id="btn-profile-bests"
+                title="What this profile has played, and how well">Default</button>
+        <button class="profile-caret" id="btn-profile-switch"
+                aria-haspopup="menu" aria-expanded="false" aria-label="Switch profile"
+                title="Switch profile">
+          <svg viewBox="0 0 12 12" aria-hidden="true" fill="none" stroke="currentColor"
+               stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 4.5 6 7.5 9 4.5"/>
+          </svg>
+        </button>
+        <div class="profile-menu hidden" id="profile-menu" role="menu"></div>
+      </div>
       <input type="file" id="import-file" accept="application/json,.json,audio/midi,.mid,.midi,audio/*,.wav,.mp3,.m4a,.ogg,.flac" hidden>
       <!-- Everything that is not playing the piece lives behind this. The
            header used to carry ten buttons; nine of them were things you do
