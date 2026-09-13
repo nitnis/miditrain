@@ -6,7 +6,8 @@ import { refreshSuggestions, hasSuggestions } from './autofinger.js';
 import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWaitingPitches, setFallingBlind, setLoopPick, setTakeGhosts, noteAtFallingPoint, fallingMsPerPixel, fallingWindowMs, HAND_COLORS } from './pianoroll.js';
 import {
   startLearn, stopLearn, isHoldingMessage, CLUSTERS,
-  learnAgain, learnTest, learnStepCluster, learnDemoSection, getLearnCluster,
+  learnAgain, learnTest, learnStepCluster, learnGoToCluster, learnDemoSection,
+  getLearnCluster, getClusterRange,
 } from './learn.js';
 import {
   startSectionWalk, stopSectionWalk, repeatSection, advanceSection, previousSection,
@@ -171,6 +172,9 @@ export function initUI() {
   // ...and when the session ends however it ended, since the panel belongs to
   // the session rather than to any pass within it
   on('change:transport.mode', () => syncLearnNav());
+  // A new walk has begun, so whatever quick run came before it is over and the
+  // panel goes back to belonging to the walk alone
+  on('transport:learn', () => { quickTrain = null; });
   on('learn:hit', ({ pitch }) => spawnKeyEffect(pitch, 'good'));
   on('learn:wrong', ({ pitch }) => spawnKeyEffect(pitch, 'wrong'));
   // Only a looping session reports the pass it just finished; a straight
@@ -303,7 +307,11 @@ function bindTransport() {
     setStepControlsVisible(false);
     showLearnStatus(false);
     updatePositionDisplay(state.transport.currentTime);
-    if (state.ui.trainMode && state.accuracy.active) {
+    // A quick run over a cluster is graded without the Train switch being on,
+    // so "is the switch on" was the wrong question: what ends a run is the
+    // transport stopping under one. Without this the quick run's grading never
+    // closed — no results, no score, and the gauge left sitting there.
+    if ((state.ui.trainMode || quickTrain) && state.accuracy.active) {
       stopAccuracy();
     } else if (!state.accuracy.active) {
       showGauge(false);
@@ -2073,11 +2081,98 @@ function bindLearnNav() {
     fn();
   };
   document.getElementById('btn-learn-prev').onclick = press(() => learnStepCluster(-1));
-  document.getElementById('btn-learn-again').onclick = press(() => learnAgain());
+  document.getElementById('btn-learn-again').onclick = press(() => backToLearning());
   document.getElementById('btn-learn-next').onclick = press(() => learnStepCluster(1));
   document.getElementById('btn-learn-demo').onclick = press(() => learnDemoSection());
   document.getElementById('btn-learn-test').onclick = press(() => learnTest());
+  document.getElementById('btn-learn-train').onclick = press(() => quickTrainCluster());
+  document.getElementById('btn-learn-bpm-down').onclick = press(() => nudgeQuickBpm(-10));
+  document.getElementById('btn-learn-bpm-up').onclick = press(() => nudgeQuickBpm(10));
   bindLearnNavDrag();
+}
+
+// ── A graded run over the cluster ────────────────────────────────────────────
+//
+// The three learning passes tell you whether you can follow a phrase and
+// whether you can remember it. Neither asks the question a player actually
+// wants answered — is it in the hands yet, in time, without being waited for —
+// because learn mode never moves until the right key is down, so there is no
+// such thing as being late in it.
+//
+// So: the ordinary graded run, over this cluster alone, at a tempo of its own.
+//
+// Nothing is recorded. A four-note fragment at sixty is not an attempt at the
+// same thing a personal best is an attempt at, and filing it as one would put a
+// record on the board that no real playing of the piece could ever beat. That
+// is the whole reason this is a separate button and not the Train one.
+//
+// While it is running the panel stays up with the walk's buttons dark, so the
+// tempo can be changed and the run taken again — and `Again` means what it
+// always means, which here is going back to learning the cluster it came from.
+let quickTrain = null;   // { cluster, range } while a quick run is in play
+
+function quickTrainCluster() {
+  const at = getLearnCluster();
+  // Already in one: take it again at whatever the tempo now says
+  const from = at || quickTrain;
+  if (!from) return;
+
+  const range = at ? getClusterRange() : quickTrain.range;
+  if (!range) return;
+
+  // The tempo first, because it rescales every note in the piece — so a range
+  // measured before it has to be moved by the same ratio to still name the same
+  // music afterwards
+  const was = state.composition.tempo;
+  setTempo(state.ui.quickTrainBpm);
+  const k = was / state.composition.tempo;
+  const scaled = { startMs: range.startMs * k, endMs: range.endMs * k, tailMs: (range.tailMs || 0) * k };
+
+  quickTrain = { cluster: at ? at.index : quickTrain.cluster, range: scaled };
+  stopLearn();
+
+  document.getElementById('accuracy-modal').classList.add('hidden');
+  endReplay();
+  clearKeyEffects();
+  showGauge(true);
+  update('transport.currentTime', scaled.startMs);
+  // The one line that makes this unrecorded: `recordBest` files a run under its
+  // key, and a run with no key is not an attempt at anything it can file.
+  trainingRunKey = null;
+  trainingRunTempo = state.composition.tempo;
+  noteCalibrationDrift();
+  syncLearnNav();
+
+  withCountIn(() => {
+    startAccuracy(state.composition, scaled, { calibration: calibrationOf() });
+    playRange(scaled.startMs, scaled.endMs, scaled.tailMs);
+  });
+}
+
+// "Back to learning this cluster", which is what Again has always meant. From
+// inside the walk it is one call; from between runs the walk is not there any
+// more, so it is started again and wound to the cluster the run came from.
+function backToLearning() {
+  if (learnAgain()) return;
+  if (!quickTrain) return;
+  const where = quickTrain.cluster;
+  endQuickTrain();
+  document.getElementById('accuracy-modal').classList.add('hidden');
+  showGauge(false);
+  if (!startLearn()) { showToast('Nothing to learn here'); return; }
+  learnGoToCluster(where);
+}
+
+// The quick run is over and the panel goes back to belonging to the walk alone
+function endQuickTrain() {
+  quickTrain = null;
+  syncLearnNav();
+}
+
+function nudgeQuickBpm(by) {
+  const next = Math.max(20, Math.min(300, state.ui.quickTrainBpm + by));
+  update('ui.quickTrainBpm', next);
+  syncLearnNav();
 }
 
 // ── Where the panel sits ─────────────────────────────────────────────────────
@@ -2206,21 +2301,29 @@ function bindLearnNavDrag() {
 function syncLearnNav() {
   const nav = document.getElementById('learn-nav');
   const at = getLearnCluster();
-  nav.classList.toggle('hidden', !at);
-  if (!at) return;
+  // It outlives the walk by exactly as long as a quick run over a cluster
+  // lasts: that run stops the session, and a panel that vanished with it would
+  // take the tempo and the way back to learning with it
+  nav.classList.toggle('hidden', !at && !quickTrain);
+  if (!at && !quickTrain) return;
   placeLearnNav();
 
-  // Nothing to go back to from the first, and the last is the whole section,
-  // which is the end of the walk
-  document.getElementById('btn-learn-prev').disabled = at.first;
-  document.getElementById('btn-learn-next').disabled = at.last;
-  // Already hearing the section, and already being tested
-  document.getElementById('btn-learn-demo').disabled = at.phase === 'demo';
+  document.getElementById('learn-nav-bpm-value').textContent = state.ui.quickTrainBpm;
+  document.getElementById('btn-learn-bpm-down').disabled = state.ui.quickTrainBpm <= 20;
+  document.getElementById('btn-learn-bpm-up').disabled = state.ui.quickTrainBpm >= 300;
+
+  // Between runs there is no walk to drive, so everything that drives one goes
+  // dark. `Again` stays: it means what it always means, which here is going
+  // back to learning the cluster the run was taken from.
+  const walking = Boolean(at);
+  document.getElementById('btn-learn-prev').disabled = !walking || at.first;
+  document.getElementById('btn-learn-next').disabled = !walking || at.last;
+  document.getElementById('btn-learn-demo').disabled = !walking || at.phase === 'demo';
   const test = document.getElementById('btn-learn-test');
-  test.disabled = at.phase === 'memory' || at.phase === 'demo';
+  test.disabled = !walking || at.phase === 'memory' || at.phase === 'demo';
   // The one moment the panel has an opinion: the cluster has been followed and
   // is waiting to be asked for
-  test.classList.toggle('urging', at.phase === 'ready');
+  test.classList.toggle('urging', walking && at.phase === 'ready');
 }
 
 function updateLearnStatus({ pitches, done, total, looping, pass, slips, phase, cluster }) {

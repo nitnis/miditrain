@@ -61,6 +61,10 @@ const _state = {
     // of stranding them off the edge.
     learnNavX: 0.5,
     learnNavY: 1,
+    // What a quick run over a cluster is taken at. Its own tempo rather than
+    // the piece's: a cluster is drilled slowly and the piece is not necessarily
+    // written slowly. Sixty is where a passage gets learned.
+    quickTrainBpm: 60,
     muted: false,           // master audio mute; audible by default
     volume: 1,              // 0..1, applied at the master gain
     clicksOnly: false,      // silence the notes, keep the metronome and count-in

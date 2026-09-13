@@ -430,6 +430,27 @@ export function learnDemoSection() {
   return true;
 }
 
+// Where the cluster being worked on sits in the piece, for anything that wants
+// to play or grade exactly it.
+//
+// Measured from the notes it covers rather than from the metrical window it was
+// cut on. A cluster's window can open in silence — the grid decides where the
+// bar is, the music decides where the notes are — and a graded run that starts
+// a beat before the first note grades that silence as notes missed.
+export function getClusterRange() {
+  const here = cluster();
+  if (!here || !groups.length) return null;
+  const from = groups[here.from];
+  const to = groups[here.to];
+  if (!from || !to) return null;
+  return {
+    startMs: from.startMs,
+    endMs: to.startMs + to.durationMs,
+    // Room for the last note to ring rather than being cut off at the edge
+    tailMs: Math.min(1500, to.durationMs),
+  };
+}
+
 // What the controls need to know to draw themselves: which cluster, how many,
 // and what is being asked right now.
 export function getLearnCluster() {
