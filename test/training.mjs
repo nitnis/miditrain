@@ -3095,6 +3095,103 @@ const bests = await page.evaluate(async () => {
   await page.waitForTimeout(300);
 }
 
+// ── The chord under the hands ───────────────────────────────────────────────
+//
+// With nothing running the window could only tell you about music already
+// written. Sat at the keyboard working out a voicing — most of what anybody
+// does at a piano when they are not playing a piece — it had nothing to say.
+//
+// So when the transport is stopped, the keys being held are named. Only then:
+// while something is running the heading belongs to the piece, and a player
+// following a phrase does not want it changing under their own fingers.
+{
+  await page.evaluate(async () => {
+    const { update, state } = await import('/src/state.js');
+    // A chord under the playhead as well, so the written name has something to
+    // say and "the played one instead" means something
+    update('composition.notes', [
+      { id: 'ch1', pitch: 65, hand: 'left', startTime: 0, duration: 4000, velocity: 90 },
+      { id: 'ch2', pitch: 69, hand: 'left', startTime: 0, duration: 4000, velocity: 90 },
+      { id: 'ch3', pitch: 72, hand: 'left', startTime: 0, duration: 4000, velocity: 90 },
+    ]);
+    update('composition.name', 'Chords');
+    update('ui.showChordOverlay', true);
+    update('ui.trainMode', false);
+    update('transport.mode', 'stopped');
+    update('transport.currentTime', 500);
+    state.midi.activeNotes.clear();
+  });
+  await page.waitForTimeout(600);
+
+  // Which of the two names is on the screen, read off the canvas. Both are
+  // drawn at 0.82 alpha over a near-black ground, so what comes back is the
+  // blend rather than the colour asked for — hence "which channel leads"
+  // rather than a match against the literal value.
+  const named = () => page.evaluate(() => {
+    const c = document.getElementById('falling-canvas');
+    // The top strip, where the overlays live; below it the notes fall and the
+    // held keys glow, in colours of their own
+    const d = c.getContext('2d').getImageData(0, 0, c.width, 70).data;
+    let played = 0, written = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      const r = d[i], g = d[i + 1], b = d[i + 2];
+      if (b > r + 40 && b > g + 10) written++;        // #8ad4f5, what is written
+      else if (g > r + 40 && g > b + 20) played++;    // #6ee7a8, what is played
+    }
+    return { played: played > 20, written: written > 20 };
+  });
+  // What the MIDI path itself does when a key goes down and comes up
+  const hold = (...pitches) => page.evaluate(async (ps) => {
+    const { state } = await import('/src/state.js');
+    for (const p of ps) state.midi.activeNotes.add(p);
+  }, pitches);
+  const lift = () => page.evaluate(async () =>
+    (await import('/src/state.js')).state.midi.activeNotes.clear());
+
+  check('stopped with nothing held, the written chord is named',
+    await named(), { played: false, written: true });
+
+  await hold(60, 64, 67);
+  await page.waitForTimeout(400);
+  check('...and with a chord held, that is named instead',
+    await named(), { played: true, written: false });
+
+  // Chords are worked out by ear with the hands busy and the eyes down, so a
+  // name that vanished the instant the hands came off was one you could never
+  // actually read
+  await lift();
+  await page.waitForTimeout(600);
+  check('it outlasts the hands by a moment', (await named()).played, true);
+  await page.waitForTimeout(4200);
+  check('...and then gives way to the written one again',
+    await named(), { played: false, written: true });
+
+  await hold(60, 64, 67);
+  await page.evaluate(async () =>
+    (await import('/src/state.js')).update('transport.mode', 'playing'));
+  await page.waitForTimeout(400);
+  check('while something is running the piece keeps the heading',
+    await named(), { played: false, written: true });
+  await page.evaluate(async () =>
+    (await import('/src/state.js')).update('transport.mode', 'stopped'));
+  await lift();
+  await page.waitForTimeout(4500);
+
+  // It is the chord overlay, so the switch that turns chord names off turns
+  // this one off with them
+  await page.evaluate(async () =>
+    (await import('/src/state.js')).update('ui.showChordOverlay', false));
+  await hold(60, 64, 67);
+  await page.waitForTimeout(400);
+  check('with chord names switched off, neither is drawn',
+    await named(), { played: false, written: false });
+
+  await lift();
+  await page.evaluate(async () =>
+    (await import('/src/state.js')).update('ui.showChordOverlay', true));
+  await page.waitForTimeout(200);
+}
+
 
 await browser.close();
 

@@ -1056,6 +1056,43 @@ function currentChordLabel(notes, currentTimeMs, keySignature) {
 function resetChordLabel() {
   chordCache = { key: '', label: null };
   heldChord = { label: null, since: 0 };
+  playedChord = { key: '', label: null, until: 0 };
+}
+
+// ── ...and the chord the player is holding down ──────────────────────────────
+//
+// With nothing running there is nothing sounding to name, so the window could
+// only ever tell you about music that was already written. Sat at the keyboard
+// working out a voicing — which is most of what anybody does at a piano when
+// they are not playing a piece — it had nothing to say.
+//
+// So when the transport is stopped, the keys being held are named instead.
+// Only then: while something is running the name belongs to the piece, and a
+// player following a phrase does not want the heading changing under their own
+// fingers.
+//
+// The name outlasts the keys by a few seconds. Chords are worked out by ear
+// with the hands busy and the eyes down, and a name that vanished the instant
+// the hands came off was one you could never actually read.
+const PLAYED_CHORD_HOLD_MS = 4000;
+let playedChord = { key: '', label: null, until: 0 };
+
+function playedChordLabel(keySignature) {
+  const pitches = [...state.midi.activeNotes].sort((a, b) => a - b);
+  const held = pitches.length >= 2;
+  const key = `${pitches.join(',')}|${keySignature}`;
+
+  if (key !== playedChord.key) {
+    const label = held ? detectChord(pitches, keySignature) : null;
+    playedChord = label
+      // Under the fingers now, so it stands as long as they are
+      ? { key, label, until: Infinity }
+      // Fewer than two keys, or two that are not a chord this can name: keep
+      // what was last named and start it running out
+      : { key, label: playedChord.label, until: performance.now() + PLAYED_CHORD_HOLD_MS };
+  }
+  if (held && playedChord.label) return playedChord.label;
+  return performance.now() < playedChord.until ? playedChord.label : null;
 }
 
 // Alongside the signal rather than across the middle of the window. The middle
@@ -1063,7 +1100,14 @@ function resetChordLabel() {
 // harmony is a thing to glance at, not to read over the top of the playing.
 function drawChordName(notes, composition, currentTimeMs, signal) {
   if (!state.ui.showChordOverlay || blind) return;
-  const label = currentChordLabel(notes, currentTimeMs, composition.keySignature);
+
+  // Stopped, and hands on the keys: what is being played wins over what is
+  // written under the playhead. It falls back to the written one the moment
+  // there is nothing being played, so nothing is lost — a piece paused on a
+  // chord still says which chord.
+  const stopped = state.transport.mode === 'stopped';
+  const played = stopped ? playedChordLabel(composition.keySignature) : null;
+  const label = played || currentChordLabel(notes, currentTimeMs, composition.keySignature);
   if (!label) return;
 
   const size = Math.round(30 * signal.s);
@@ -1074,7 +1118,10 @@ function drawChordName(notes, composition, currentTimeMs, signal) {
   fallingCtx.globalAlpha = 0.82;
   fallingCtx.shadowColor = 'rgba(0,0,0,0.85)';
   fallingCtx.shadowBlur = 12;
-  fallingCtx.fillStyle = '#8ad4f5';
+  // Its own colour, because the two are different claims: one is what the piece
+  // says here, the other is what your hands are doing. Told apart at a glance,
+  // a player cannot mistake their own voicing for the one on the page.
+  fallingCtx.fillStyle = played ? '#6ee7a8' : '#8ad4f5';
   fallingCtx.fillText(label, signal.x - 12 * signal.s, signal.y + signal.height / 2);
   fallingCtx.restore();
 }
