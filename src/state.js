@@ -65,6 +65,10 @@ const _state = {
     // the piece's: a cluster is drilled slowly and the piece is not necessarily
     // written slowly. Sixty is where a passage gets learned.
     quickTrainBpm: 60,
+    // Going over each cluster with the two before it on the way to the next.
+    // Off by default: it roughly doubles the passes, which is the right trade
+    // once a section is being consolidated and the wrong one meeting it.
+    learnCascade: false,
     muted: false,           // master audio mute; audible by default
     volume: 1,              // 0..1, applied at the master gain
     clicksOnly: false,      // silence the notes, keep the metronome and count-in

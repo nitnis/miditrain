@@ -536,6 +536,19 @@
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 4.5 13 10l-5.5 5.5"/><path d="M14.5 4.5v11" opacity="0.55"/></svg>
           <span>Next</span>
         </button>
+        <!-- Going over each cluster with the two before it on the way to the
+             next, so the joins get tried as they are made rather than all at
+             once at the end. A switch rather than a command: it changes what
+             Next does from here on, which is why it sits beside Next. -->
+        <button class="learn-nav-btn learn-nav-cascade" id="btn-learn-cascade"
+                aria-pressed="false"
+                title="Cascading: on the way to the next cluster, go over this one with the two before it">
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <path d="M2.5 5.5h7"/><path d="M5.5 10h7"/><path d="M8.5 14.5h9"/>
+            <path d="M9.5 5.5v4.5M12.5 10v4.5" opacity="0.5"/>
+          </svg>
+          <span>Cascade</span>
+        </button>
         <span class="learn-nav-sep" aria-hidden="true"></span>
         <button class="learn-nav-btn" id="btn-learn-demo" title="Hear the whole section played through, then come back here">
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 4.5 15 10l-8 5.5Z"/><path d="M4 4.5v11" opacity="0.55"/></svg>

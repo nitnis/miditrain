@@ -3192,6 +3192,171 @@ const bests = await page.evaluate(async () => {
   await page.waitForTimeout(200);
 }
 
+// ── Cascading ───────────────────────────────────────────────────────────────
+//
+// Learning a section a cluster at a time leaves every join untried until the
+// whole-section pass at the very end, by which point there are a lot of them.
+// With cascading on, moving off a cluster goes through it once more with the
+// two before it — the phrase just learned, in the place it actually lives —
+// and then carries on to where the walk was going.
+//
+// It is a window of three, not everything so far: past the third cluster the
+// run-up would grow without limit and the pass would stop being about the
+// phrase just learned.
+{
+  await page.evaluate(async () => {
+    const { update } = await import('/src/state.js');
+    const notes = [];
+    // Six bars, a note a beat: six clusters, and the whole section after them
+    for (let i = 0; i < 24; i++) {
+      notes.push({ id: `cs${i}`, pitch: 60 + (i % 4), hand: 'right',
+                   startTime: i * 500, duration: 400, velocity: 90 });
+    }
+    update('composition.notes', notes);
+    update('composition.name', 'Cascade');
+    update('composition.tempo', 120);
+    update('ui.learnCluster', 'bar');
+    update('ui.learnSectionBars', 0);
+    update('ui.countInEnabled', false);
+    update('ui.trainMode', false);
+    update('ui.learnCascade', false);
+    update('transport.loopEnabled', false);
+  });
+  await page.waitForTimeout(500);
+
+  const on = () => page.evaluate(async () =>
+    (await import('/src/learn.js')).getLearnCluster());
+  const covers = () => page.evaluate(async () => {
+    const r = (await import('/src/learn.js')).getClusterRange();
+    return r ? { from: Math.round(r.startMs), to: Math.round(r.endMs) } : null;
+  });
+  const goTo = (k) => page.evaluate(async (k) =>
+    (await import('/src/learn.js')).learnGoToCluster(k), k);
+
+  await page.evaluate(async () => (await import('/src/learn.js')).startLearn());
+  await page.waitForTimeout(500);
+  check('cascading starts off', await page.getAttribute('#btn-learn-cascade', 'aria-pressed'), 'false');
+
+  // Off, Next is what it always was
+  await page.click('#btn-learn-next');
+  await page.waitForTimeout(400);
+  await page.click('#btn-learn-next');
+  await page.waitForTimeout(400);
+  let here = await on();
+  check('with it off, Next just moves on', [here.index, Boolean(here.review)], [2, false]);
+  const cluster2 = await covers();
+
+  await page.click('#btn-learn-cascade');
+  await page.waitForTimeout(300);
+  check('the button shows that it is on now',
+    await page.getAttribute('#btn-learn-cascade', 'aria-pressed'), 'true');
+
+  await page.click('#btn-learn-next');
+  await page.waitForTimeout(400);
+  here = await on();
+  check('with it on, Next goes over the last three first', Boolean(here.review), true);
+  check('...being the cluster just left and the two before it',
+    here.review, { from: 0, to: 2 });
+  const review = await covers();
+  check('...so it starts at the top of the section here', review.from < 60, true);
+  check('...and ends where the cluster just left ended', review.to, cluster2.to);
+  check('the heading says so rather than naming a cluster it is not on',
+    (await page.textContent('#learn-phase')).includes('clusters 1–3 together'), true);
+
+  await page.click('#btn-learn-next');
+  await page.waitForTimeout(400);
+  here = await on();
+  check('and then on to the cluster it was headed for',
+    [here.index, Boolean(here.review)], [3, false]);
+
+  // A window, not a run-up that grows for ever
+  await page.click('#btn-learn-next');
+  await page.waitForTimeout(400);
+  check('from the fourth cluster the review is the second to the fourth',
+    (await on()).review, { from: 1, to: 3 });
+  check('...so it no longer starts at the top of the section',
+    (await covers()).from > 60, true);
+
+  // Where a cascade would say nothing new
+  await goTo(0);
+  await page.waitForTimeout(400);
+  await page.click('#btn-learn-next');
+  await page.waitForTimeout(400);
+  here = await on();
+  check('nothing precedes the first cluster, so there is no review',
+    [here.index, Boolean(here.review)], [1, false]);
+
+  await goTo(5);
+  await page.waitForTimeout(400);
+  await page.click('#btn-learn-next');
+  await page.waitForTimeout(400);
+  here = await on();
+  check('...and the last cluster hands straight to the whole-section pass, '
+    + 'which is about to play all of this and more',
+    [here.index, Boolean(here.review), here.whole], [6, false, true]);
+
+  // "Go to cluster four" and "I am done with this one" are different requests.
+  // Only the second cascades — otherwise coming back to a cluster after a quick
+  // run would review instead of taking you there.
+  await goTo(2);
+  await page.waitForTimeout(400);
+  check('going to a cluster puts you on it, cascade or no',
+    [(await on()).index, Boolean((await on()).review)], [2, false]);
+
+  await page.click('#btn-learn-next');
+  await page.waitForTimeout(400);
+  await page.click('#btn-learn-again');
+  await page.waitForTimeout(500);
+  here = await on();
+  check('Again repeats the review rather than the cluster under it',
+    [Boolean(here.review), here.phase], [true, 'listen']);
+  await page.click('#btn-learn-prev');
+  await page.waitForTimeout(400);
+  check('Back leaves it for a plain cluster',
+    [(await on()).index, Boolean((await on()).review)], [1, false]);
+
+  // The path this is actually for: a cluster finished, rather than a button
+  const playIt = () => page.evaluate(async () => {
+    const { emit } = await import('/src/state.js');
+    const g = (await import('/src/learn.js')).getLearnProgress();
+    if (!g || !g.pending.length) return false;
+    for (const pitch of g.pending) emit('midi:noteon', { pitch, velocity: 90 });
+    for (const pitch of g.pending) emit('midi:noteoff', { pitch });
+    return true;
+  });
+  await goTo(2);
+  await page.waitForTimeout(500);
+  for (let i = 0; i < 80; i++) {
+    const h = await on();
+    if (!h || h.phase === 'ready') break;
+    if (h.phase === 'guided') { await playIt(); await page.waitForTimeout(90); }
+    else await page.waitForTimeout(120);
+  }
+  await page.click('#btn-learn-test');
+  await page.waitForTimeout(400);
+  check('into the memory pass of the third cluster',
+    [(await on()).phase, (await on()).index], ['memory', 2]);
+  for (let i = 0; i < 30; i++) {
+    const h = await on();
+    if (!h || h.phase !== 'memory') break;
+    if (!(await playIt())) break;
+    await page.waitForTimeout(110);
+  }
+  for (let i = 0; i < 30; i++) {
+    if ((await on())?.review) break;
+    await page.waitForTimeout(200);
+  }
+  here = await on();
+  check('a clean memory pass hands over to the review by itself',
+    [Boolean(here.review), here.phase], [true, 'listen']);
+  check('...over those same three clusters', here.review, { from: 0, to: 2 });
+
+  await page.evaluate(async () => (await import('/src/learn.js')).stopLearn());
+  await page.evaluate(async () =>
+    (await import('/src/state.js')).update('ui.learnCascade', false));
+  await page.waitForTimeout(300);
+}
+
 
 await browser.close();
 
