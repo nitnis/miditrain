@@ -5,7 +5,7 @@ import { setEditorLayout } from './note-editor.js';
 import { handOf, isPractised, practiceHand } from './hands.js';
 import { isAudible, trackColor } from './tracks.js';
 import { detectChord, midiToNoteWithOctave } from './chords.js';
-import { subdivision } from './metronome.js';
+import { subdivision, COUNT_SYLLABLES } from './metronome.js';
 import { beatOffsets } from './swing.js';
 import { suggestedFinger } from './autofinger.js';
 import { drawHands, forgetHands } from './hand-overlay.js';
@@ -1134,13 +1134,6 @@ function drawChordName(notes, composition, currentTimeMs, signal) {
 //
 // The syllables follow the metronome's own subdivision, so what is written is
 // what is being clicked.
-const COUNT_SYLLABLES = {
-  1: [],
-  2: ['&'],
-  3: ['trip', 'let'],
-  4: ['e', '&', 'a'],
-};
-
 function drawBeatCount(composition, currentTimeMs, cw, signal) {
   if (!state.ui.showCountOverlay || blind) return;
 

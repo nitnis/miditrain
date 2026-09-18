@@ -1,6 +1,6 @@
 // Transport engine: record, play, stop, seek
 import { state, update, emit, on } from './state.js';
-import { startMetronome, stopMetronome, scheduleCountInClicks, beatMs } from './metronome.js';
+import { startMetronome, stopMetronome, scheduleCountInClicks, beatMs, pulseWanted } from './metronome.js';
 import { startPlaybackAudio, stopPlaybackAudio, stopAllAudio } from './audio.js';
 import { barStartMs } from './quantizer.js';
 
@@ -32,7 +32,7 @@ function restartAt(ms) {
   update('transport.currentTime', Math.max(0, ms));
   perfStart = performance.now();
   posStart = state.transport.currentTime;
-  if (state.ui.metronomeEnabled) startMetronome(state.transport.currentTime);
+  if (pulseWanted()) startMetronome(state.transport.currentTime);
   if (state.transport.mode === 'playing') startPlaybackAudio(state.transport.currentTime, playUntilMs ?? Infinity);
   rafId = requestAnimationFrame(loop);
 }
@@ -78,7 +78,7 @@ export function record() {
   posStart = state.transport.currentTime;
   activeRecordNotes.clear();
 
-  if (state.ui.metronomeEnabled) startMetronome(posStart);
+  if (pulseWanted()) startMetronome(posStart);
 
   // Listen for MIDI notes
   on('midi:noteon', handleRecordNoteOn);
@@ -103,7 +103,7 @@ function startPlaying(untilMs, stopMs) {
   perfStart = performance.now();
   posStart = state.transport.currentTime;
 
-  if (state.ui.metronomeEnabled) startMetronome(posStart);
+  if (pulseWanted()) startMetronome(posStart);
   startPlaybackAudio(posStart, untilMs ?? Infinity);
 
   rafId = requestAnimationFrame(loop);

@@ -3357,6 +3357,132 @@ const bests = await page.evaluate(async () => {
   await page.waitForTimeout(300);
 }
 
+// ── Counting the bar out loud ───────────────────────────────────────────────
+//
+// The syllables are synthesised from formants rather than spoken. The browser
+// can speak, through `speechSynthesis`, but it cannot speak in time: an
+// utterance is queued, not scheduled, and a sixteenth at 120 BPM is 125ms.
+// Recordings would sound better and are megabytes of somebody's voice that
+// this app has no licence to carry.
+//
+// A voice that makes no sound, or the same sound for every syllable, or the
+// right sound at the wrong moment, is otherwise something you could only find
+// out by listening — which no test can do. So each one is rendered offline and
+// measured.
+{
+  const say = (name, opts) => page.evaluate(async ({ name, opts }) => {
+    const { speakSyllable } = await import('/src/voice.js');
+    const rate = 44100;
+    const ctx = new OfflineAudioContext(1, Math.ceil(rate * 0.5), rate);
+    const bus = ctx.createGain();
+    bus.connect(ctx.destination);
+    const when = 0.05;
+    speakSyllable(ctx, bus, when, name, opts || {});
+    const d = (await ctx.startRendering()).getChannelData(0);
+
+    let peak = 0, first = -1, last = -1;
+    for (let i = 0; i < d.length; i++) if (Math.abs(d[i]) > peak) peak = Math.abs(d[i]);
+    const floor = peak * 0.05;
+    for (let i = 0; i < d.length; i++) {
+      if (Math.abs(d[i]) > floor) { if (first < 0) first = i; last = i; }
+    }
+    // A threshold on the peak cannot see a bandpassed noise burst — it is
+    // quiet next to a vowel — so the consonant is found by its energy instead
+    const rmsBetween = (fromMs, toMs) => {
+      const a = Math.max(0, Math.round((when + fromMs / 1000) * rate));
+      const b = Math.min(d.length, Math.round((when + toMs / 1000) * rate));
+      let sum = 0;
+      for (let i = a; i < b; i++) sum += d[i] * d[i];
+      return Math.sqrt(sum / Math.max(1, b - a));
+    };
+    // Which resonance leads, by a coarse sweep of the band a vowel lives in
+    const at = (f) => {
+      const from = Math.max(0, first), to = Math.min(d.length, last + 1);
+      const w = 2 * Math.PI * f / rate;
+      let re = 0, im = 0;
+      for (let i = from; i < to; i++) { re += d[i] * Math.cos(w * i); im += d[i] * Math.sin(w * i); }
+      return Math.sqrt(re * re + im * im) / Math.max(1, to - from);
+    };
+    let loudestHz = 0, most = 0;
+    for (let f = 200; f <= 2800; f += 50) { const e = at(f); if (e > most) { most = e; loudestHz = f; } }
+
+    return {
+      peak: +peak.toFixed(4),
+      before: +rmsBetween(-40, -2).toFixed(5),
+      on: +rmsBetween(2, 60).toFixed(5),
+      lengthMs: first < 0 ? 0 : +((last - first) / rate * 1000).toFixed(1),
+      loudestHz,
+    };
+  }, { name, opts });
+
+  const names = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12',
+                 'e', '&', 'a', 'trip', 'let'];
+  const said = {};
+  for (const n of names) said[n] = await say(n);
+
+  check('every syllable the count can use makes a sound',
+    names.filter(n => said[n].peak < 0.02), []);
+  check('...and every one of them is sounding on the beat it belongs to',
+    names.filter(n => said[n].on < 0.004), []);
+
+  // A listener hears a syllable at its vowel, not at the hiss in front of it,
+  // so the consonants lead the beat and the vowel lands on it. Routed through
+  // the vowel's own envelope they were multiplied by a gain still ramping up
+  // from silence: scheduled, rendered, and inaudible.
+  check('the ones with a consonant are already sounding before the beat',
+    ['2', '3', '4', '6', 'trip'].filter(n => said[n].before < 0.0004), []);
+  check('...and the ones without are silent until it',
+    ['8', 'e', 'a'].filter(n => said[n].before > 0.0002), []);
+
+  // If every syllable were the same sound the count would be a drum, not a
+  // count: the vowels are the whole of what tells them apart
+  check('the vowels do not all sit in the same place',
+    new Set(['1', '2', '3', 'e', 'a'].map(n => said[n].loudestHz)).size >= 3, true);
+
+  // Faster than a syllable is long, and a count slurs into a drone
+  const slow = await say('1', { gapMs: 500 });
+  const eighth = await say('1', { gapMs: 250 });
+  const sixteenth = await say('1', { gapMs: 125 });
+  check('a syllable is clipped to fit the gap to the next one',
+    [slow.lengthMs <= 140, eighth.lengthMs < slow.lengthMs + 1, sixteenth.lengthMs < 125],
+    [true, true, true]);
+  check('...without shrinking away to nothing', sixteenth.lengthMs > 20, true);
+
+  const down = await say('1', { accent: 'downbeat' });
+  const beat = await say('1', { accent: 'beat' });
+  const sub = await say('e', { accent: 'sub' });
+  check('the downbeat is said harder than the beats', down.peak > beat.peak, true);
+  check('...and the divisions lighter than both', sub.peak < beat.peak, true);
+
+  check('a syllable that does not exist is silence rather than a crash',
+    (await say('nonesuch')).peak, 0);
+
+  // ── the switch ──
+  check('counting aloud is off to begin with', await page.evaluate(async () =>
+    (await import('/src/state.js')).state.ui.countAloud === true), false);
+  // The pulse drives the clicks and the voice, so either is reason enough for
+  // it to run — counting without the clicks is the whole point for some people
+  const pulse = () => page.evaluate(async () =>
+    (await import('/src/metronome.js')).pulseWanted());
+  await page.evaluate(async () => {
+    const { update } = await import('/src/state.js');
+    update('ui.metronomeEnabled', false);
+    update('ui.countAloud', false);
+  });
+  check('with neither wanted there is no pulse', await pulse(), false);
+  await page.evaluate(async () =>
+    (await import('/src/state.js')).update('ui.countAloud', true));
+  check('...the count alone is reason enough for one', await pulse(), true);
+  await page.evaluate(async () => {
+    const { update } = await import('/src/state.js');
+    update('ui.countAloud', false);
+    update('ui.metronomeEnabled', true);
+  });
+  check('...and so are the clicks alone', await pulse(), true);
+  await page.evaluate(async () =>
+    (await import('/src/state.js')).update('ui.metronomeEnabled', false));
+}
+
 
 await browser.close();
 

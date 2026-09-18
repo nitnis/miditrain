@@ -2,6 +2,7 @@
 import { state } from './state.js';
 import { getAudioContext, getClickBus } from './audio.js';
 import { beatOffsets } from './swing.js';
+import { speakSyllable, countingAloud } from './voice.js';
 
 let schedulerTimer = null;
 let nextTickTime = 0;
@@ -40,6 +41,16 @@ function scheduleClick(time, kind) {
   osc.stop(time + decay + 0.01);
   osc.addEventListener('ended', () => { osc.disconnect(); gain.disconnect(); });
 }
+
+// One, two, three, four — and the syllables between them, because that is how
+// the divisions of a beat are taught and said out loud. Shared: the row over
+// the falling notes writes these, and the voice says them.
+export const COUNT_SYLLABLES = {
+  1: [],
+  2: ['&'],
+  3: ['trip', 'let'],
+  4: ['e', '&', 'a'],
+};
 
 // How many clicks to the beat, and what each of them is
 export function subdivision() {
@@ -90,18 +101,47 @@ function realSeconds(ms) {
   return ms / 1000;
 }
 
+// The pulse is wanted by two things now, and either is reason enough to run it.
+// Counting out loud without the ticks is a perfectly ordinary thing to want —
+// for many players it is the whole point, the click being the thing they are
+// trying to stop needing.
+export function pulseWanted() {
+  return Boolean(state.ui.metronomeEnabled) || countingAloud();
+}
+
+// Which syllable a tick is, and how hard it is said
+function tickSyllable(tick, subs, beatsPerBar) {
+  const slot = ((tick % subs) + subs) % subs;
+  const beat = Math.floor(tick / subs) % beatsPerBar;
+  if (slot === 0) return { name: String(beat + 1), accent: beat === 0 ? 'downbeat' : 'beat' };
+  const between = COUNT_SYLLABLES[subs] || [];
+  const name = between[slot - 1];
+  return name ? { name, accent: 'sub' } : null;
+}
+
 function scheduler() {
-  if (!state.ui.metronomeEnabled) return;
+  if (!pulseWanted()) return;
 
   const ctx = getAudioCtx();
   const beatsPerBar = Math.max(1, state.composition.timeSignature.numerator);
   const subs = subdivision();
+  const aloud = countingAloud();
 
   while (nextTickTime < ctx.currentTime + LOOKAHEAD_MS / 1000) {
-    scheduleClick(nextTickTime, clickKind(tickCount, subs, beatsPerBar));
+    if (state.ui.metronomeEnabled) {
+      scheduleClick(nextTickTime, clickKind(tickCount, subs, beatsPerBar));
+    }
     // Recomputed every pass, so changing the tempo or the subdivision takes
     // effect at the next tick rather than at the next bar
-    nextTickTime += realSeconds(tickGapBeats(tickCount) * beatMs());
+    const gap = realSeconds(tickGapBeats(tickCount) * beatMs());
+    if (aloud) {
+      const said = tickSyllable(tickCount, subs, beatsPerBar);
+      // The gap goes with it, so a fast count is clipped short rather than
+      // slurring one syllable into the next
+      if (said) speakSyllable(ctx, getClickBus(), nextTickTime, said.name,
+        { gapMs: gap * 1000, accent: said.accent });
+    }
+    nextTickTime += gap;
     tickCount++;
   }
 }
@@ -171,8 +211,17 @@ export function scheduleCountInClicks(beats, tempo, timeSignature) {
 
   // The count-in stays on plain beats: it is a countdown, and subdividing it
   // would make it harder to count rather than easier
+  const aloud = countingAloud();
   for (let i = 0; i < beats; i++) {
-    scheduleClick(ctx.currentTime + lead + i * interval, i % perBar === 0 ? 'downbeat' : 'beat');
+    const at = ctx.currentTime + lead + i * interval;
+    const down = i % perBar === 0;
+    scheduleClick(at, down ? 'downbeat' : 'beat');
+    // A counted-in bar is the one place everybody already says the numbers out
+    // loud, so it says them too
+    if (aloud) {
+      speakSyllable(ctx, getClickBus(), at, String((i % perBar) + 1),
+        { gapMs: interval * 1000, accent: down ? 'downbeat' : 'beat' });
+    }
   }
   // The beat the music begins on, measured on the same clock the clicks were
   // scheduled against rather than on the timer that will announce it
