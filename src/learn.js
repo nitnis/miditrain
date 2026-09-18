@@ -162,7 +162,65 @@ function pieceCount() {
   return clusters.filter(c => !c.whole).length;
 }
 
-function cluster() { return clusters[clusterIndex] || null; }
+// ── Cascading ────────────────────────────────────────────────────────────────
+//
+// Learning a section a cluster at a time leaves every join untried until the
+// whole-section pass at the very end, by which point there are a lot of them.
+// With cascading on, moving off a cluster goes through it once more with the
+// two before it — the phrase just learned, in the place it actually lives.
+//
+// It is a pass like any other: heard, followed, waited on, played from memory.
+// What makes it different is that it is not a cluster of its own — it spans
+// several, and the walk carries on from where it was going when it is done.
+const CASCADE_SPAN = 3;   // the cluster just learned, and the two before it
+
+let review = null;        // { from, to, startMs, endMs, over, next } while one runs
+
+// Whichever is being worked on: a review while there is one, else the cluster
+// the walk is pointing at. Everything that asks "what am I on" goes through
+// here, so a review is simply the answer for as long as it lasts.
+function cluster() { return review || clusters[clusterIndex] || null; }
+
+// What a cascade over the cluster just finished would cover, or null when there
+// is no sense in one.
+function cascadeBefore(to) {
+  if (!state.ui.learnCascade || review) return null;
+  // Only moving on by one. Jumping about the walk is a deliberate choice about
+  // where to be, not the end of a cluster.
+  if (to !== clusterIndex + 1) return null;
+  const last = clusters[clusterIndex];
+  if (!last || last.whole) return null;
+  const first = Math.max(0, clusterIndex - (CASCADE_SPAN - 1));
+  // Nothing before it to put it in the context of: the review would be the
+  // cluster again, which the walk has just done three times
+  if (first === clusterIndex) return null;
+  // ...and not immediately before the whole-section pass, which is about to
+  // play all of this and more
+  if (clusters[to] && clusters[to].whole) return null;
+  return {
+    from: clusters[first].from,
+    to: last.to,
+    startMs: clusters[first].startMs,
+    endMs: last.endMs,
+    over: [first, clusterIndex],
+    next: to,
+  };
+}
+
+// The one place the walk moves forward, so the cascade only has to be decided
+// once however the move was asked for — the button, or a memory pass passed.
+function moveOn(to) {
+  const spec = cascadeBefore(to);
+  if (spec) { beginReview(spec); return; }
+  beginCluster(to);
+}
+
+// This pass from the top, whichever kind it is. What Again means, and what a
+// memory pass with a slip in it earns.
+function repeatPass() {
+  if (review) beginReview(review);
+  else beginCluster(clusterIndex);
+}
 
 // One entry per attack, in time order
 export function groupAttacks(notes) {
@@ -209,6 +267,7 @@ export function startLearn(bars = null) {
   if (!groups.length) return false;
 
   clusters = buildClusters();
+  review = null;
   // Each cluster already repeats until it is right, so the repeat-until-clean
   // pass would be a loop around a loop
   looping = Boolean(section) && !bars && !clusters.length;
@@ -285,6 +344,9 @@ function announcePhase() {
     cluster: clusterIndex,
     clusters: pieceCount(),
     whole: Boolean(cluster() && cluster().whole),
+    // A cascade over the cluster just learned and the two before it, so the
+    // heading can say so rather than claiming to be on a cluster it is not
+    review: review ? { from: review.over[0], to: review.over[1] } : null,
     // Nothing may be shown while it is being played from memory — not the
     // falling notes and not the chord being spelled out at the top of them
     blind: phase === 'memory',
@@ -292,24 +354,37 @@ function announcePhase() {
 }
 
 function beginCluster(k) {
+  review = null;
+  clusterIndex = k;
+  // `finish` does the clearing up this would otherwise have to
+  if (k >= clusters.length) { finish(true); return; }
+  beginPass(clusters[k]);
+}
+
+function beginReview(spec) {
+  review = spec;
+  beginPass(spec);
+}
+
+// A stretch, learned: heard, then followed, then asked for from memory. A
+// cluster and a cascade over three of them differ only in what they cover.
+function beginPass(here) {
   clearPrompt();
   clearTimeout(holding);
   holding = null;
   if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
   sounding = null;
-  clusterIndex = k;
-  if (k >= clusters.length) { finish(true); return; }
 
   resetTally();
   say(null);
   hinting = false;
   phase = 'listen';
-  index = clusters[k].from;
+  index = here.from;
   pending.clear();
   struck.clear();
   announcePhase();
   announce();
-  soundThrough(clusters[k].from, clusters[k].to, clusters[k].startMs, clusters[k].endMs, beginGuided);
+  soundThrough(here.from, here.to, here.startMs, here.endMs, beginGuided);
 }
 
 // Play a stretch through, in time, with the notes falling. The cluster's listen
@@ -381,7 +456,7 @@ function beginReady() {
 // one function: take me back to learning this.
 export function learnAgain() {
   if (!clusters.length || state.transport.mode !== 'learning') return false;
-  beginCluster(clusterIndex);
+  repeatPass();
   return true;
 }
 
@@ -397,6 +472,8 @@ export function learnTest() {
   return true;
 }
 
+// Put me on this cluster. A statement about where to be, so it goes there —
+// no cascade, whatever the switch says.
 export function learnGoToCluster(k) {
   if (!clusters.length || state.transport.mode !== 'learning') return false;
   if (k < 0 || k >= clusters.length) return false;
@@ -404,8 +481,16 @@ export function learnGoToCluster(k) {
   return true;
 }
 
+// ...whereas moving on by one is the same move the walk makes when a cluster is
+// finished, and cascades for the same reason. Which is the whole distinction:
+// "go to cluster four" and "I am done with this one" are different requests
+// that used to be the same call.
 export function learnStepCluster(delta) {
-  return learnGoToCluster(clusterIndex + delta);
+  if (!clusters.length || state.transport.mode !== 'learning') return false;
+  const to = clusterIndex + delta;
+  if (to < 0 || to >= clusters.length) return false;
+  if (delta === 1) { moveOn(to); return true; }
+  return learnGoToCluster(to);
 }
 
 // The whole section played through, as a reminder of what all this is a piece
@@ -481,6 +566,7 @@ export function getLearnCluster() {
     whole: Boolean(here && here.whole),
     first: clusterIndex === 0,
     last: clusterIndex >= clusters.length - 1,
+    review: review ? { from: review.over[0], to: review.over[1] } : null,
     // Whether there is anything before this cluster in the section. When there
     // is not, the run-up and the cluster are the same music and offering both
     // says the same thing twice.
@@ -537,6 +623,7 @@ function finish(completed) {
   if (rafId !== null) cancelAnimationFrame(rafId);
   rafId = null;
   sounding = null;
+  review = null;
   clearTimeout(holding);
   holding = null;
   hinting = false;
@@ -717,8 +804,11 @@ function advance() {
     // once more, and one played straight is done with.
     const clean = memoryMisses === 0;
     say(clean ? 'good' : 'almost');
-    const next = clean ? clusterIndex + 1 : clusterIndex;
-    hold(clean ? GOOD_MS : ALMOST_MS, () => beginCluster(next));
+    // A review that went astray comes round again as itself; one played
+    // straight hands back to the walk where it was going
+    if (!clean) { hold(ALMOST_MS, repeatPass); return; }
+    const onward = review ? review.next : clusterIndex + 1;
+    hold(GOOD_MS, () => moveOn(onward));
     return;
   }
   stepMemory(index + 1);

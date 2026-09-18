@@ -920,6 +920,18 @@ select:focus { outline: 1px solid var(--accent); }
 .learn-nav-step:hover:not(:disabled) { background: var(--surface); color: var(--text); }
 .learn-nav-step:disabled { opacity: 0.3; cursor: default; }
 
+/* A switch, not a command: lit when it is on, so what Next is about to do can
+   be read off the panel rather than remembered */
+.learn-nav-btn[aria-pressed="true"] {
+  background: rgba(167, 139, 250, 0.18);
+  border-color: #a78bfa;
+  color: #c4b5fd;
+}
+.learn-nav-btn[aria-pressed="true"]:hover:not(:disabled) {
+  background: rgba(167, 139, 250, 0.26);
+  color: #c4b5fd;
+}
+
 .learn-nav-train { color: #6ee7a8; }
 .learn-nav-train:hover:not(:disabled) { color: #6ee7a8; background: rgba(110, 231, 168, 0.14); }
 .learn-nav-test { color: var(--accent); }

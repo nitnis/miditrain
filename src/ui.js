@@ -162,11 +162,15 @@ export function initUI() {
   on('learn:react', ({ tone }) => showLearnReaction(tone));
   on('learn:tally', ({ correct, misses }) => updateLearnCounters(correct, misses));
   // The memory pass shows nothing, so the window has to be told to show nothing
-  on('learn:phase', ({ phase, blind, cluster, clusters, whole }) => {
+  on('learn:phase', ({ phase, blind, cluster, clusters, whole, review }) => {
     setFallingBlind(blind);
     syncLearnNav();
     if (!clusters) { setLearnPhase(''); return; }
-    const which = whole ? 'the whole section' : `cluster ${cluster + 1}/${clusters}`;
+    // A cascade is not a cluster, and saying it was one would have the heading
+    // claim a place in the walk that the music being played does not match
+    const which = review
+      ? `clusters ${review.from + 1}\u2013${review.to + 1} together`
+      : (whole ? 'the whole section' : `cluster ${cluster + 1}/${clusters}`);
     setLearnPhase(`${CLUSTER_PHASE[phase] || ''} · ${which}`);
   });
   // ...and when the session ends however it ended, since the panel belongs to
@@ -2083,6 +2087,13 @@ function bindLearnNav() {
   document.getElementById('btn-learn-prev').onclick = press(() => learnStepCluster(-1));
   document.getElementById('btn-learn-again').onclick = press(() => backToLearning());
   document.getElementById('btn-learn-next').onclick = press(() => learnStepCluster(1));
+  document.getElementById('btn-learn-cascade').onclick = press(() => {
+    update('ui.learnCascade', !state.ui.learnCascade);
+    syncLearnNav();
+    showToast(state.ui.learnCascade
+      ? 'Cascading on \u2014 each cluster is gone over with the two before it'
+      : 'Cascading off \u2014 Next moves straight on', 2200);
+  });
   document.getElementById('btn-learn-demo').onclick = press(() => learnDemoSection());
   document.getElementById('btn-learn-test').onclick = press(() => learnTest());
   document.getElementById('btn-learn-train').onclick = press(() => quickTrainCluster('cluster'));
@@ -2347,6 +2358,8 @@ function syncLearnNav() {
   document.getElementById('btn-learn-prev').disabled = !walking || at.first;
   document.getElementById('btn-learn-next').disabled = !walking || at.last;
   document.getElementById('btn-learn-demo').disabled = !walking || at.phase === 'demo';
+  const cascade = document.getElementById('btn-learn-cascade');
+  cascade.setAttribute('aria-pressed', String(Boolean(state.ui.learnCascade)));
   const section = document.getElementById('btn-learn-train-section');
   section.classList.toggle('hidden', !quickSectionWorthOffering());
   const test = document.getElementById('btn-learn-test');

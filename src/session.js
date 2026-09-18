@@ -58,6 +58,7 @@ const SETTINGS = {
   'ui.learnNavX': range(0, 1),
   'ui.learnNavY': range(0, 1),
   'ui.quickTrainBpm': wholeRange(20, 300),
+  'ui.learnCascade': bool,
   'ui.muted': bool,
   'ui.volume': range(0, 1),
   'ui.clicksOnly': bool,
