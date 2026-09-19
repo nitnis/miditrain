@@ -48,6 +48,7 @@ const SETTINGS = {
   'ui.learnMode': bool,
   'ui.metronomeEnabled': bool,
   'ui.metronomeSubdivision': oneOf(1, 2, 3, 4),
+  'ui.countAloud': bool,
   'ui.showBeatOverlay': bool,
   'ui.showChordOverlay': bool,
   'ui.showCountOverlay': bool,

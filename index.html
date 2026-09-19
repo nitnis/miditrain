@@ -213,6 +213,17 @@
           <option value="3">Triplets</option>
           <option value="4">&#9835; 16ths</option>
         </select>
+        <!-- The bar said out loud, on the same grid as the clicks. Beside the
+             subdivision picker because that is what decides which syllables
+             there are to say. -->
+        <button class="toggle-btn icon-only" id="btn-count-aloud" title="Count the bar out loud — one e and a two e and a (Shift+A)">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"/>
+            <path d="M6 11a6 6 0 0 0 12 0"/>
+            <line x1="12" y1="17" x2="12" y2="21"/>
+          </svg>
+          <span class="btn-label">Count</span>
+        </button>
         <button class="toggle-btn icon-only" id="btn-clicks-only" title="Hear only the metronome and count-in">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M9 17V5l10-2v12"/>

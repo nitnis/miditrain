@@ -47,6 +47,10 @@ const _state = {
     practiceHand: 'both',   // 'both' | 'left' | 'right' — the hand train and learn work on
     metronomeEnabled: false,
     metronomeSubdivision: 1, // clicks per beat: 1 beat only, 2 eighths, 3 triplets, 4 sixteenths
+    // The bar said out loud — "one e and a" — on the same grid as the clicks.
+    // Off by default: it is a strong opinion about how to practise, and a voice
+    // nobody asked for is worse than no voice.
+    countAloud: false,
     showBeatOverlay: true,  // the beat counter over the falling notes, seen without being heard
     showChordOverlay: true, // the name of the chord under the playhead
     showCountOverlay: true, // the bar counted out in syllables — 1 e & a 2 e & a

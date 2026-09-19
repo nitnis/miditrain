@@ -19,7 +19,7 @@ import {
   startAccuracy, stopAccuracy, getWorstSection, getTake, getAccuracyResults, STAR_COUNT,
   professionalWouldGrade,
 } from './accuracy.js';
-import { startMetronome, stopMetronome } from './metronome.js';
+import { startMetronome, stopMetronome, pulseWanted, subdivision } from './metronome.js';
 import { resumeAudioContext, applyOutputLevel, applyClicksOnly, silenceMonitored, setPlaybackSource } from './audio.js';
 import { setInputEnabled } from './midi.js';
 import { startStepRecord, stopStepRecord, stepInsertRest, stepGoBack, getStepMs } from './step-recorder.js';
@@ -235,6 +235,7 @@ function applyStateToControls() {
   document.getElementById('btn-clicks-only').classList.toggle('active', ui.clicksOnly);
   document.getElementById('btn-monitor').classList.toggle('active', ui.monitorEnabled);
   document.getElementById('btn-metronome').classList.toggle('active', ui.metronomeEnabled);
+  document.getElementById('btn-count-aloud').classList.toggle('active', ui.countAloud === true);
   document.getElementById('metro-subdivision').value = String(ui.metronomeSubdivision);
   document.getElementById('btn-beat-overlay').classList.toggle('active', ui.showBeatOverlay);
   document.getElementById('btn-chord-overlay').classList.toggle('active', ui.showChordOverlay);
@@ -2655,7 +2656,7 @@ function setSubdivision(value) {
   document.getElementById('metro-subdivision').value = String(subs);
   // Ticks are counted in the old division, so a running metronome has to be
   // re-anchored rather than left to carry a stale count into the new one
-  if (state.ui.metronomeEnabled && state.transport.mode !== 'stopped') {
+  if (pulseWanted() && state.transport.mode !== 'stopped') {
     startMetronome(state.transport.currentTime);
   }
   showToast(`Metronome clicks ${SUBDIVISION_NAME[subs]}`, 1500);
@@ -2771,14 +2772,29 @@ function toggleMetronome() {
   const enabled = !state.ui.metronomeEnabled;
   update('ui.metronomeEnabled', enabled);
   document.getElementById('btn-metronome').classList.toggle('active', enabled);
-  if (enabled) {
-    // Turning it on mid-take should be audible straight away
-    if (state.transport.mode === 'playing' || state.transport.mode === 'recording') {
-      startMetronome(state.transport.currentTime);
-    }
-  } else {
-    stopMetronome();
-  }
+  syncPulse();
+}
+
+// The pulse feeds the clicks and the spoken count, so it runs while either is
+// wanted and stops when neither is. Switching the clicks off used to stop it
+// outright, which would take a count that was still wanted down with them.
+function syncPulse() {
+  const running = state.transport.mode === 'playing' || state.transport.mode === 'recording';
+  if (pulseWanted() && running) startMetronome(state.transport.currentTime);
+  else if (!pulseWanted()) stopMetronome();
+}
+
+// Saying the bar out loud: "one e and a two e and a". Synthesised rather than
+// spoken — see voice.js for why the browser's own speech cannot do this — and
+// off by default, because it is a strong opinion about how to practise.
+function toggleCountAloud() {
+  const on = !state.ui.countAloud;
+  update('ui.countAloud', on);
+  document.getElementById('btn-count-aloud').classList.toggle('active', on);
+  syncPulse();
+  showToast(on
+    ? `Counting out loud \u2014 ${SUBDIVISION_NAME[subdivision()] || 'the beat'}`
+    : 'Counting out loud off', 1800);
 }
 
 // Move the playhead without leaving the current mode. Step recording keeps its
@@ -3301,6 +3317,7 @@ function bindToolbar() {
   document.getElementById('btn-beat-overlay').onclick = () => toggleOverlay('beat');
   document.getElementById('btn-chord-overlay').onclick = () => toggleOverlay('chord');
   document.getElementById('btn-count-overlay').onclick = () => toggleOverlay('count');
+  document.getElementById('btn-count-aloud').onclick = toggleCountAloud;
   document.getElementById('btn-pedal-overlay').onclick = () => toggleOverlay('pedal');
   document.getElementById('btn-fingering').onclick = () => {
     toggleOverlay('fingering'); syncFingeringGuessNote(); syncHandStage();
@@ -4065,6 +4082,10 @@ function shortcutActions() {
       section: 'Options', label: 'Show the chord over the falling notes',
       defaultBindings: [{ code: 'KeyC', shift: true }],
       run: () => toggleOverlay('chord') },
+    { id: 'count-aloud', group: 'global', hint: 'btn-count-aloud',
+      section: 'View', label: 'Count the bar out loud',
+      defaultBindings: [{ code: 'KeyA', shift: true }],
+      run: () => toggleCountAloud() },
     { id: 'count-overlay', group: 'global', hint: 'btn-count-overlay',
       section: 'Options', label: 'Count the bar out over the falling notes',
       defaultBindings: [{ code: 'KeyN', shift: true }],
