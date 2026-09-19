@@ -119,6 +119,41 @@ function tickSyllable(tick, subs, beatsPerBar) {
   return name ? { name, accent: 'sub' } : null;
 }
 
+// ...and what a moment in the piece is called, for anything that wants to count
+// something other than a tick. Learn mode says the count over each attack as it
+// is presented, and an attack is wherever the music put it.
+//
+// Off the grid it is called nothing at all. A note a third of the way through a
+// beat has no name in "one e and a" — naming it after the nearest thing would
+// teach the player to hear it as falling somewhere it does not.
+const ON_SLOT = 0.25;        // of the gap to the next one
+const ON_SLOT_MAX_MS = 80;   // ...and at a crawl, still near enough to be late
+
+export function countAt(ms) {
+  const subs = subdivision();
+  const beatsPerBar = Math.max(1, state.composition.timeSignature.numerator);
+  const beat = beatMs();
+  const beatsIn = Math.max(0, ms) / beat;
+  const offs = beatOffsets(subs);
+  const whole = Math.floor(beatsIn);
+  const into = beatsIn - whole;
+
+  // The nearest slot, counting the top of the next beat as one of them — a note
+  // a hair before the barline belongs to the bar it is announcing
+  let tick = whole * subs;
+  let off = Infinity;
+  for (let i = 0; i <= offs.length; i++) {
+    const at = i < offs.length ? offs[i] : 1;
+    const d = Math.abs(into - at);
+    if (d < off) { off = d; tick = whole * subs + i; }
+  }
+
+  const gap = tickGapBeats(tick) * beat;
+  if (off * beat > Math.min(gap * ON_SLOT, ON_SLOT_MAX_MS)) return null;
+  const said = tickSyllable(tick, subs, beatsPerBar);
+  return said ? { ...said, gapMs: gap } : null;
+}
+
 function scheduler() {
   if (!pulseWanted()) return;
 

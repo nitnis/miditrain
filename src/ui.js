@@ -2787,13 +2787,20 @@ function syncPulse() {
 // Saying the bar out loud: "one e and a two e and a". Synthesised rather than
 // spoken — see voice.js for why the browser's own speech cannot do this — and
 // off by default, because it is a strong opinion about how to practise.
+//
+// One switch for two things, because they are the same thing: under the
+// transport it counts the bar underneath the music, and in learn mode it names
+// each note as it is presented. The toast says which — turning it on mid-walk
+// otherwise promises a count and appears to do nothing until the next attack.
 function toggleCountAloud() {
   const on = !state.ui.countAloud;
+  const learning = state.transport.mode === 'learning';
   update('ui.countAloud', on);
   document.getElementById('btn-count-aloud').classList.toggle('active', on);
   syncPulse();
+  const grid = SUBDIVISION_NAME[subdivision()] || 'the beat';
   showToast(on
-    ? `Counting out loud \u2014 ${SUBDIVISION_NAME[subdivision()] || 'the beat'}`
+    ? `${learning ? 'Counting the notes' : 'Counting out loud'} \u2014 ${grid}`
     : 'Counting out loud off', 1800);
 }
 

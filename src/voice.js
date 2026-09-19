@@ -33,6 +33,12 @@
 // Consonants are a short burst of filtered noise before the vowel — "t", "s",
 // "f" and friends really are mostly noise — and the nasal at the end of "one"
 // and "nine" is the vowel closing onto a low resonance.
+//
+// The same voice does two jobs. Under the transport it counts the bar
+// underneath the music, on the metronome's grid. In learn mode it is given a
+// pitch and sings one syllable on each note as it is presented, which is a
+// different thing entirely: not a pulse to play against, but the name of the
+// place this note goes, said on the note itself.
 import { state } from './state.js';
 
 // Where the resonances sit, in hertz. A speaking voice, not a singing one.
@@ -86,6 +92,21 @@ const SYLLABLES = {
 // in the music, and it falls a little through the syllable the way speech does.
 const F0 = 132;
 const F0_FALL = 0.94;
+
+// Where a voice can go, when it is asked to say a syllable at the pitch of a
+// note. The formants above it do not move with it: they are the shape of a
+// mouth, and the mouth is the same size whatever it is singing. Take F0 up past
+// the first formant — 280Hz for "ee", the lowest here — and the buzz sails over
+// the resonance that was making it a vowel, and what comes out is a whistle
+// with a word lost somewhere inside it.
+//
+// So a pitch is brought into this octave by octaves, which is what a singer
+// does when the tune is out of their range: a bass asked to sing along with a
+// piccolo sings the same note, three octaves down, and nobody says they sang a
+// different note. The pitch class is the part you hear as the pitch.
+const SINGS_FROM = 110;   // A2
+const SINGS_TO = 220;     // A3 — an octave, and clear of every first formant
+
 // A syllable has to be over before the next one is due, or the count slurs into
 // a drone. Whichever is shorter: what a syllable wants, or most of the gap.
 const WANTS_MS = 135;
@@ -102,6 +123,15 @@ function noise(ctx) {
   return noiseBuffer;
 }
 
+// What a MIDI pitch sounds like in a voice's range.
+export function voiceHz(midi) {
+  if (!Number.isFinite(midi)) return null;
+  let hz = 440 * Math.pow(2, (midi - 69) / 12);
+  while (hz >= SINGS_TO) hz /= 2;
+  while (hz < SINGS_FROM) hz *= 2;
+  return hz;
+}
+
 // What to say at a given tick. `beat` is 1-based; `slot` is where in the beat,
 // against the syllables the count is written in.
 export function syllableFor(beat, slot, between) {
@@ -116,7 +146,9 @@ export function syllableFor(beat, slot, between) {
 // this can be rendered offline and measured — a voice that makes no sound, or
 // makes the wrong one, is otherwise something you can only find out by
 // listening, which no test can do.
-export function speakSyllable(ctx, bus, when, name, { gapMs = 500, accent = 'beat' } = {}) {
+// `f0` sings it at a given pitch instead of speaking it at the voice's own —
+// learn mode says the count on the note, at the note.
+export function speakSyllable(ctx, bus, when, name, { gapMs = 500, accent = 'beat', f0: sung = null } = {}) {
   const spec = SYLLABLES[name];
   if (!spec) return;
 
@@ -125,7 +157,9 @@ export function speakSyllable(ctx, bus, when, name, { gapMs = 500, accent = 'bea
   // The downbeat is said harder and a touch higher, the way anybody counting
   // marks the start of a bar; the divisions are said lightly, under the beats
   const level = accent === 'downbeat' ? 0.5 : accent === 'sub' ? 0.2 : 0.34;
-  const f0 = F0 * (accent === 'downbeat' ? 1.08 : 1);
+  // A sung syllable takes its pitch from the note and keeps it: lifting the
+  // downbeat a semitone and a half for emphasis would be singing the wrong note
+  const f0 = sung || F0 * (accent === 'downbeat' ? 1.08 : 1);
 
   const onset = ONSETS[spec.onset];
   const onsetS = onset ? onset.ms / 1000 : 0;

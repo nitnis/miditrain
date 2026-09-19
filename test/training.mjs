@@ -3484,6 +3484,295 @@ const bests = await page.evaluate(async () => {
 }
 
 
+// ── Counting the notes, in learn mode ───────────────────────────────────────
+//
+// Under the pulse, the count is a grid laid over the music. In learn mode it is
+// said on the note instead: one word, on the attack being presented, at the
+// pitch of the top of it. A player who has heard "and" land on that chord a
+// dozen times knows where the chord goes without counting to it.
+//
+// Three things can go wrong and none of them can be seen: the word can be the
+// wrong one for where the note is, it can be said for a note that has no word,
+// and it can be sung at the wrong pitch. So the naming is asked directly, and
+// the sound is measured — offline for the pitch, and off the app's own click
+// bus for whether learn mode says anything at all.
+{
+  // ── what a moment in the piece is called ──
+  const naming = await page.evaluate(async () => {
+    const { update } = await import('/src/state.js');
+    const { countAt } = await import('/src/metronome.js');
+    update('composition.tempo', 120);          // a beat is 500ms, a bar 2000ms
+    update('composition.timeSignature', { numerator: 4, denominator: 4 });
+    update('ui.swing', 'off');
+    const say = ms => { const s = countAt(ms); return s ? `${s.name}/${s.accent}` : null; };
+    const out = {};
+    update('ui.metronomeSubdivision', 4);
+    out.sixteenths = [0, 125, 250, 375, 500, 1500, 1875, 2000].map(say);
+    out.near = [130, 150, 160, 60].map(say);
+    update('ui.metronomeSubdivision', 3);
+    out.triplets = [0, 500 / 3, 1000 / 3].map(say);
+    update('ui.metronomeSubdivision', 1);
+    out.beatsOnly = [0, 250, 500].map(say);
+    update('ui.swing', 'on');
+    update('ui.metronomeSubdivision', 2);
+    out.swung = [0, 250, 1000 / 3].map(say);
+    update('ui.swing', 'off');
+    update('ui.metronomeSubdivision', 4);
+    return out;
+  });
+
+  check('a bar of sixteenths is counted one e and a, two e and a',
+    naming.sixteenths,
+    ['1/downbeat', 'e/sub', '&/sub', 'a/sub', '2/beat', '4/beat', 'a/sub', '1/downbeat']);
+  check('triplets are counted trip-a-let', naming.triplets,
+    ['1/downbeat', 'trip/sub', 'let/sub']);
+  // With the count written in beats there is no word for the offbeat, and
+  // naming it after the nearest thing would teach the player to hear it as
+  // falling where it does not
+  check('...and with the beat undivided the offbeat has no name', naming.beatsOnly,
+    ['1/downbeat', null, '2/beat']);
+  // The "&" goes where a swung eighth is played, which is where the click puts
+  // it and where the overlay lights it
+  check('under a swing the & is counted where it is played, not halfway',
+    naming.swung, ['1/downbeat', null, '&/sub']);
+  // Near enough is on it — nothing here is quantized, and a hand is not a grid
+  check('a note played a little off its division is still counted as on it',
+    [naming.near[0], naming.near[1]], ['e/sub', 'e/sub']);
+  check('...and one genuinely between the divisions is counted as nothing',
+    [naming.near[2], naming.near[3]], [null, null]);
+
+  // ── at the pitch of the note ──
+  //
+  // The formants do not move with the pitch: they are the shape of a mouth, and
+  // the mouth is the same size whatever it is singing. Take the voice up past
+  // the first formant and the buzz sails over the resonance that was making it
+  // a vowel. So a pitch is brought into one octave of a voice's range, the way
+  // a bass sings along with a piccolo.
+  const fold = await page.evaluate(async () => {
+    const { voiceHz } = await import('/src/voice.js');
+    const at = m => +voiceHz(m).toFixed(1);
+    return {
+      inRange: [at(45), at(48), at(56)],        // A2, C3, G#3
+      high: [at(60), at(72), at(108)],          // C4, C5, C8 — all a C
+      low: [at(21), at(33)],                    // A0, A1 — all an A
+      nothing: voiceHz(undefined),
+    };
+  });
+  check('a pitch a voice could reach is sung where it is written',
+    fold.inRange, [110, 130.8, 207.7]);
+  check('...one above it comes down by octaves, keeping the note',
+    fold.high, [130.8, 130.8, 130.8]);
+  check('...and one below it comes up the same way', fold.low, [110, 110]);
+  check('a syllable with no note to sing falls back to the speaking voice',
+    fold.nothing, null);
+
+  // Rendered and measured, because "it is at the right pitch" is otherwise
+  // something only an ear can tell. The fundamental reads about 3% flat: the
+  // voice falls a little through the syllable the way speech does, and this is
+  // the middle of it.
+  const sang = (f0) => page.evaluate(async (f0) => {
+    const { speakSyllable } = await import('/src/voice.js');
+    const rate = 44100;
+    const ctx = new OfflineAudioContext(1, Math.ceil(rate * 0.5), rate);
+    const bus = ctx.createGain();
+    bus.connect(ctx.destination);
+    speakSyllable(ctx, bus, 0.05, '1', f0 ? { f0 } : {});
+    const d = (await ctx.startRendering()).getChannelData(0);
+    // The steady middle of the vowel, by the period the whole waveform
+    // repeats at — every formant is a harmonic of it
+    const a = Math.round(0.08 * rate), b = Math.round(0.14 * rate);
+    let norm = 0, best = 0, lag0 = 0;
+    for (let i = a; i < b; i++) norm += d[i] * d[i];
+    for (let lag = Math.round(rate / 400); lag <= Math.round(rate / 80); lag++) {
+      let s = 0;
+      for (let i = a; i < b; i++) s += d[i] * d[i + lag];
+      if (s / (norm || 1) > best) { best = s / (norm || 1); lag0 = lag; }
+    }
+    return lag0 ? rate / lag0 : 0;
+  }, f0);
+
+  const asked = [110, 164.8, 207.7];
+  const got = [];
+  for (const f0 of asked) got.push(await sang(f0));
+  check('a syllable given a pitch is sung at it',
+    got.map((hz, i) => hz > asked[i] * 0.95 && hz < asked[i] * 1.01), [true, true, true]);
+  check('...and one given none speaks at the voice\'s own',
+    Math.abs(await sang(null) - 132) < 8, true);
+
+  // ── and in the app ──
+  //
+  // The count goes out on the click bus, so it survives "clicks only" and so
+  // the prompt chord — which goes out on the note bus — cannot be mistaken for
+  // it. That separation is what makes this measurable at all: anything on this
+  // bus during a learn pass is the voice.
+  await page.evaluate(async () => {
+    const { update } = await import('/src/state.js');
+    const audio = await import('/src/audio.js');
+    audio.resumeAudioContext();
+    update('composition.name', 'Counted');
+    update('ui.learnCluster', 'bar');
+    update('ui.learnSectionBars', 0);
+    update('ui.learnCascade', false);
+    update('ui.countInEnabled', false);
+    update('ui.trainMode', false);
+    update('ui.metronomeEnabled', false);
+    update('transport.loopEnabled', false);
+
+    const ctx = audio.getAudioContext();
+    const listener = ctx.createAnalyser();
+    listener.fftSize = 2048;
+    audio.getClickBus().connect(listener);
+    const buf = new Float32Array(listener.fftSize);
+    let peak = 0, timer = null;
+    window.__heard = {
+      from: () => {
+        peak = 0;
+        clearInterval(timer);
+        timer = setInterval(() => {
+          listener.getFloatTimeDomainData(buf);
+          for (let i = 0; i < buf.length; i++) {
+            const a = Math.abs(buf[i]);
+            if (a > peak) peak = a;
+          }
+        }, 10);
+      },
+      stop: () => { clearInterval(timer); return +peak.toFixed(3); },
+    };
+  });
+
+  // A note a beat, every one of them on a beat
+  const write = (at) => page.evaluate(async (at) => {
+    (await import('/src/learn.js')).stopLearn();
+    (await import('/src/state.js')).update('composition.notes',
+      at.map((ms, i) => ({ id: `ct${i}`, pitch: 60 + i, hand: 'right',
+                           startTime: ms, duration: 400, velocity: 90 })));
+  }, at);
+
+  // The listen pass plays the stretch through in time, sounding each attack as
+  // it reaches it, so a bar of it is four attacks and four words
+  const overAPass = async (aloud, at) => {
+    await write(at);
+    await page.evaluate(async (aloud) =>
+      (await import('/src/state.js')).update('ui.countAloud', aloud), aloud);
+    await page.waitForTimeout(250);
+    await page.evaluate(async () => {
+      window.__heard.from();
+      (await import('/src/learn.js')).startLearn();
+    });
+    await page.waitForTimeout(2300);
+    const peak = await page.evaluate(() => window.__heard.stop());
+    await page.evaluate(async () => (await import('/src/learn.js')).stopLearn());
+    await page.waitForTimeout(200);
+    return peak;
+  };
+
+  const onTheBeat = [0, 500, 1000, 1500];
+  check('with counting off, learn mode says nothing',
+    await overAPass(false, onTheBeat), 0);
+  check('...and with it on, the notes are counted as they are presented',
+    await overAPass(true, onTheBeat) > 0.02, true);
+  // A note a third of the way into the beat has no name in "one e and a", and
+  // being told the nearest word would be worse than being told nothing
+  check('...but only the ones that land on a division',
+    await overAPass(true, onTheBeat.map(ms => ms + 170)), 0);
+
+  // The guided pass is deliberately silent — the cluster has just been heard
+  // and the only sound should be the player's own. The count is not the note
+  // though: it is the name of where the note goes, and hearing that while you
+  // are the one producing the sound is the point of the pass.
+  await write(onTheBeat);
+  await page.evaluate(async () => {
+    (await import('/src/state.js')).update('ui.countAloud', true);
+    (await import('/src/learn.js')).startLearn();
+  });
+  for (let i = 0; i < 60; i++) {
+    const phase = await page.evaluate(async () => {
+      const here = (await import('/src/learn.js')).getLearnCluster();
+      return here && here.phase;
+    });
+    if (phase === 'guided') break;
+    await page.waitForTimeout(100);
+  }
+  check('the cluster is followed through in silence after it is heard',
+    await page.evaluate(async () => (await import('/src/learn.js')).getLearnCluster().phase),
+    'guided');
+  await page.waitForTimeout(300);
+  await page.evaluate(async () => {
+    const { emit } = await import('/src/state.js');
+    window.__heard.from();
+    // ...and on to the next attack, which is a beat of falling away
+    for (const pitch of (await import('/src/learn.js')).getLearnProgress().pending) {
+      emit('midi:noteon', { pitch, velocity: 90 });
+    }
+  });
+  await page.waitForTimeout(900);
+  check('...but each attack is still named as it arrives',
+    await page.evaluate(() => window.__heard.stop()) > 0.02, true);
+
+  // The top of the chord is the note an ear picks out of it, so it is the one
+  // the word is sung on. Everything under it is held the same across the two,
+  // so a difference can only be the note on top.
+  const onTop = async (pitches) => {
+    await page.evaluate(async (pitches) => {
+      (await import('/src/learn.js')).stopLearn();
+      (await import('/src/state.js')).update('composition.notes',
+        pitches.map((p, i) => ({ id: `tp${i}`, pitch: p, hand: 'right',
+                                 startTime: 0, duration: 900, velocity: 90 })));
+    }, pitches);
+    await page.waitForTimeout(300);
+    return page.evaluate(async () => {
+      const ctx = (await import('/src/audio.js')).getAudioContext();
+      const listener = ctx.createAnalyser();
+      listener.fftSize = 2048;
+      (await import('/src/audio.js')).getClickBus().connect(listener);
+      const buf = new Float32Array(listener.fftSize);
+      const rate = ctx.sampleRate;
+      let loudest = null, peak = 0;
+      (await import('/src/learn.js')).startLearn();
+      await new Promise(done => {
+        const timer = setInterval(() => {
+          listener.getFloatTimeDomainData(buf);
+          let p = 0;
+          for (let i = 0; i < buf.length; i++) {
+            const a = Math.abs(buf[i]);
+            if (a > p) p = a;
+          }
+          if (p > peak) { peak = p; loudest = buf.slice(); }
+        }, 10);
+        setTimeout(() => { clearInterval(timer); done(); }, 450);
+      });
+      listener.disconnect();
+      if (!loudest) return 0;
+      const b = loudest.length - Math.round(rate / 80) - 1;
+      let norm = 0, best = 0, lag0 = 0;
+      for (let i = 0; i < b; i++) norm += loudest[i] * loudest[i];
+      for (let lag = Math.round(rate / 400); lag <= Math.round(rate / 80); lag++) {
+        let s = 0;
+        for (let i = 0; i < b; i++) s += loudest[i] * loudest[i + lag];
+        if (s / (norm || 1) > best) { best = s / (norm || 1); lag0 = lag; }
+      }
+      return lag0 ? rate / lag0 : 0;
+    });
+  };
+
+  // Read as whichever of the three it came nearest to, rather than as a ratio:
+  // the question is which note was sung, and a voice that falls a little
+  // through the syllable is never going to land on a round number.
+  const nearest = (hz) => [110, 130.8, 164.8]
+    .reduce((a, b) => (Math.abs(b - hz) < Math.abs(a - hz) ? b : a));
+  const underA3 = await onTop([48, 55, 57]);     // A3 — sung at 110
+  const underE4 = await onTop([48, 55, 64]);     // E4 — sung at 164.8
+  const underC6 = await onTop([48, 55, 84]);     // C6 — three octaves down, 130.8
+  check('the word is sung on the top note of the chord it belongs to',
+    [nearest(underA3), nearest(underE4)], [110, 164.8]);
+  check('...however far above a voice that note is', nearest(underC6), 130.8);
+
+  await page.evaluate(async () => {
+    (await import('/src/learn.js')).stopLearn();
+    (await import('/src/state.js')).update('ui.countAloud', false);
+  });
+}
+
 await browser.close();
 
 const failed = checks.filter(c => !c.ok);
