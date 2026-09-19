@@ -11,10 +11,12 @@
 //
 // Set a cluster size and it walks in three passes instead of one. See below.
 import { state, update, emit, on } from './state.js';
-import { noteOn, noteOff, resumeAudioContext } from './audio.js';
+import { noteOn, noteOff, resumeAudioContext, getAudioContext, getClickBus } from './audio.js';
 import { barRangeMs, atOrPast, EDGE_MS } from './quantizer.js';
 import { loopBars, loopRangeMs } from './range.js';
 import { isPractised } from './hands.js';
+import { countAt } from './metronome.js';
+import { speakSyllable, countingAloud, voiceHz } from './voice.js';
 
 // Notes struck this close together are one thing to play, so they are waited
 // on together. Matches the tolerance the slur renderer uses for "same attack".
@@ -690,8 +692,11 @@ function arrive() {
   update('transport.currentTime', targetMs);
   emit('transport:tick', targetMs);
   // The guided pass is deliberately silent: the cluster has just been heard,
-  // and the only sound now should be the player's own
+  // and the only sound now should be the player's own — but the count is not
+  // the note, it is the name of where the note goes, and being told that while
+  // you are the one producing the sound is the point of the pass
   if (phase !== 'guided') playPrompt(groups[index]);
+  else countAttack(groups[index]);
   announce();
 }
 
@@ -728,8 +733,46 @@ function announce() {
   });
 }
 
+// ── Saying where the note is ─────────────────────────────────────────────────
+//
+// With counting out loud on, each attack is named as it is presented: not a
+// pulse underneath the music, but the one word that belongs to this note. That
+// is the whole of it — a player who has heard "and" land on that chord a dozen
+// times knows where the chord goes without counting to it, which is what
+// counting was for.
+//
+// Nothing is said for a note that falls between the divisions. It has no name.
+//
+// The consonant leads the vowel so the vowel lands on the beat, so a syllable
+// asked for at this instant would have its "s" or "t" scheduled in the past and
+// lose it. This is the longest of them, given back.
+const VOICE_LEAD_S = 0.035;
+
+// The top of the chord — the note an ear picks out of it, and so the one to
+// sing the word on
+function topPitch(group) {
+  let top = -Infinity;
+  for (const pitch of group.pitches) if (pitch > top) top = pitch;
+  return top;
+}
+
+function countAttack(group) {
+  if (!countingAloud()) return;
+  const said = countAt(group.startMs);
+  if (!said) return;
+  const ctx = getAudioContext();
+  // On the click bus, like the metronome's count: it is help, not music, and
+  // "clicks only" is exactly the setting where you want to hear it
+  speakSyllable(ctx, getClickBus(), ctx.currentTime + VOICE_LEAD_S, said.name, {
+    gapMs: said.gapMs,
+    accent: said.accent,
+    f0: voiceHz(topPitch(group)),
+  });
+}
+
 function playPrompt(group) {
   clearPrompt();
+  countAttack(group);
   for (const note of group.notes) {
     noteOn(note.pitch, note.velocity ?? 90);
     prompting.push(note.pitch);
