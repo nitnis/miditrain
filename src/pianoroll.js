@@ -268,14 +268,44 @@ function drawTakeGhosts(currentTimeMs, ch, pixelsPerMs, windowStart, windowEnd) 
 const FINGER_ON_WHITE = '#1b3a5c';
 const FINGER_ON_BLACK = '#e8f2ff';
 const FINGER_HALO = 'rgba(255,255,255,0.9)';
-// A worked-out fingering is drawn in a different ink from a known one, and
-// underlined, so a guess never passes for the answer at a glance
-const GUESS_ON_WHITE = '#6b5bd6';
-const GUESS_ON_BLACK = '#cdc2ff';
+
+// ── A colour per finger ──────────────────────────────────────────────────────
+//
+// Five small digits on five keys is not much to tell apart, and a glance is all
+// the hand gets: it is looking at the keys, not reading. So each finger keeps a
+// colour of its own wherever on the keyboard it turns up — the thumb is always
+// red, the little finger always violet. The digit is still what says which
+// finger it is. The colour is what makes it recognisable before it is read.
+//
+// Hue and saturation only. How light it is depends on what it is written on,
+// and a hue that survives both a white key and a black one does not exist at
+// one lightness — dark enough to read on ivory is invisible on ebony.
+const FINGER_INK = {
+  1: { h: 352, s: 82 },   // thumb  — red
+  2: { h: 32,  s: 92 },   // index  — amber
+  3: { h: 132, s: 52 },   // middle — green
+  4: { h: 205, s: 88 },   // ring   — blue
+  5: { h: 286, s: 60 },   // little — violet
+};
+
+// Dark on a white key, light on a black one, because the rim behind the digit
+// goes the other way.
+const INK_LIGHTNESS = { white: 36, black: 74 };
+// The left hand, a shade darker. The two hands have the same five fingers, so
+// giving them different colours would be saying something that is not true —
+// and which hand it is, you can see from where it is.
+const LEFT_SHADE = 12;
+
+function fingerInk(finger, onWhite, hand) {
+  const ink = FINGER_INK[finger];
+  if (!ink) return onWhite ? FINGER_ON_WHITE : FINGER_ON_BLACK;
+  const l = INK_LIGHTNESS[onWhite ? 'white' : 'black'] - (hand === 'left' ? LEFT_SHADE : 0);
+  return `hsl(${ink.h}, ${ink.s}%, ${l}%)`;
+}
 
 // Rebuilt each frame by drawFallingNotes, which runs first and already has both
-// the notes and the time to pick them out with. Each entry is [finger, guessed].
-let fingerByPitch = new Map();
+// the notes and the time to pick them out with.
+let fingerByPitch = new Map();   // pitch -> { finger, guessed, hand }
 
 // How far ahead of the playhead a note still counts as "here". Learn mode holds
 // the transport a hair short of the note it is waiting on, so an exact test
@@ -311,10 +341,13 @@ function collectFingerings(notes, currentTimeMs) {
                      note.startTime - currentTimeMs <= FINGER_LEAD_MS;
     const wanted = waitingPitches.has(note.pitch) &&
                    Math.abs(note.startTime - currentTimeMs) <= FINGER_LEAD_MS;
-    if (sounding || imminent || wanted) fingerByPitch.set(note.pitch, [finger, Boolean(guess)]);
+    const hand = handOf(note);
+    if (sounding || imminent || wanted) {
+      fingerByPitch.set(note.pitch, { finger, guessed: Boolean(guess), hand });
+    }
 
     if (note.startTime > currentTimeMs + FINGER_LEAD_MS) continue;
-    const slot = recent[handOf(note)];
+    const slot = recent[hand];
     const at = note.startTime;
     const entry = { finger, pitch: note.pitch, live: sounding || imminent || wanted };
     if (at > slot.atNow + SAME_ATTACK_MS) {
@@ -399,39 +432,48 @@ function drawFingerings() {
   if (handCtx) handCtx.clearRect(0, 0, handCanvas.width, handCanvas.height);
   if (!fingerByPitch.size) return;
 
-  for (const [midi, [finger, guessed]] of fingerByPitch) {
+  for (const [midi, { finger, guessed, hand }] of fingerByPitch) {
     const key = keyMap.get(midi);
     if (!key) continue;
 
-    const size = Math.max(9, Math.min(18, Math.round(key.w * (key.isWhite ? 0.62 : 0.78))));
+    const size = Math.max(10, Math.min(20, Math.round(key.w * (key.isWhite ? 0.68 : 0.84))));
     const cx = key.x + key.w / 2;
     // Low on a white key, where nothing else is drawn and the hand can see it
     // past its own fingers; just above the tip of a black one
     const cy = key.isWhite ? key.h - size * 0.85 : key.h - size * 0.75;
+    const digit = String(finger);
+    const ink = fingerInk(finger, key.isWhite, hand);
 
     kbCtx.save();
-    kbCtx.font = `600 ${size}px system-ui, sans-serif`;
+    kbCtx.font = `800 ${size}px system-ui, sans-serif`;
     kbCtx.textAlign = 'center';
     kbCtx.textBaseline = 'middle';
+    kbCtx.lineJoin = 'round';
     // A rim in the key's own colour, so the digit reads over the pulsing
     // amber of a waiting key as well as over the plain one
-    kbCtx.lineWidth = Math.max(2, size * 0.22);
+    kbCtx.lineWidth = Math.max(2.5, size * 0.30);
     kbCtx.strokeStyle = key.isWhite ? FINGER_HALO : 'rgba(0,0,0,0.85)';
-    kbCtx.lineJoin = 'round';
-    kbCtx.strokeText(String(finger), cx, cy);
-    kbCtx.fillStyle = guessed
-      ? (key.isWhite ? GUESS_ON_WHITE : GUESS_ON_BLACK)
-      : (key.isWhite ? FINGER_ON_WHITE : FINGER_ON_BLACK);
-    kbCtx.fillText(String(finger), cx, cy);
+    kbCtx.strokeText(digit, cx, cy);
+    kbCtx.fillStyle = ink;
+    kbCtx.fillText(digit, cx, cy);
+    // ...and the glyph grown outwards into its own ink, which is the only
+    // reliable way to make canvas text heavier. Asking for a bolder weight only
+    // gets you one the font has: system-ui stops where it stops, and 800 on a
+    // face that ends at 700 is 700. Stroking the glyph in the colour it is
+    // already filled with thickens it whatever the face can do.
+    kbCtx.lineWidth = Math.max(1, size * 0.13);
+    kbCtx.strokeStyle = ink;
+    kbCtx.strokeText(digit, cx, cy);
     if (guessed) {
-      // Underlined the way an editor's addition is, rather than left to a
-      // colour that a glance at a small key will not register
+      // Underlined the way an editor's addition is. This used to be a second
+      // signal beside a colour of its own, but the colour now says which finger
+      // — and the underline was always the half that a glance at a small key
+      // actually registered, so it carries it alone and carries it heavier.
       const half = size * 0.32;
-      kbCtx.lineWidth = Math.max(1, size * 0.09);
-      kbCtx.strokeStyle = kbCtx.fillStyle;
+      kbCtx.lineWidth = Math.max(1.5, size * 0.12);
       kbCtx.beginPath();
-      kbCtx.moveTo(cx - half, cy + size * 0.46);
-      kbCtx.lineTo(cx + half, cy + size * 0.46);
+      kbCtx.moveTo(cx - half, cy + size * 0.48);
+      kbCtx.lineTo(cx + half, cy + size * 0.48);
       kbCtx.stroke();
     }
     kbCtx.restore();

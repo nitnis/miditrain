@@ -3773,6 +3773,121 @@ const bests = await page.evaluate(async () => {
   });
 }
 
+// ── The fingering, in colour ────────────────────────────────────────────────
+//
+// Five small digits on five keys, read at a glance by someone looking at their
+// hands. Each finger keeps a colour of its own so the number is recognised
+// before it is read, and the left hand takes the same colour a shade darker —
+// the two hands have the same five fingers, so different colours would be
+// saying something untrue.
+//
+// All of this is drawn on a canvas, so none of it can be asserted about the
+// DOM. It is read back off the pixels instead: every coloured pixel on the
+// keyboard belongs to a digit, because the keys themselves are black and white.
+{
+  // Three rows of the same five fingers: the left hand on white keys, the right
+  // hand on white keys, the right hand on black ones. In pitch order, so the
+  // blobs come out of the scan left to right in the order they were written.
+  const digits = await page.evaluate(async () => {
+    const { state, update } = await import('/src/state.js');
+    const roll = await import('/src/pianoroll.js');
+    const notes = [];
+    const put = (pitches, hand) => pitches.forEach((pitch, i) => notes.push({
+      id: `${hand}${pitch}`, pitch, hand, startTime: 0, duration: 2000,
+      velocity: 90, finger: i + 1,
+    }));
+    put([48, 50, 52, 53, 55], 'left');    // C3 D E F G
+    put([60, 62, 64, 65, 67], 'right');   // C4 D E F G
+    put([73, 75, 78, 80, 82], 'right');   // C#5 D# F# G# A#
+    update('composition.notes', notes);
+    update('composition.name', 'Fingered');
+    update('ui.showFingering', true);
+    update('ui.handOverlay', false);
+    update('transport.currentTime', 500);
+    roll.drawFallingNotes(notes, state.composition, 500, null, false);
+    roll.drawKeyboard(new Map());
+
+    const canvas = document.querySelector('#piano-keyboard canvas');
+    const ctx = canvas.getContext('2d');
+    const { width, height } = canvas;
+    const data = ctx.getImageData(0, 0, width, height).data;
+    const hsl = (r, g, b) => {
+      r /= 255; g /= 255; b /= 255;
+      const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+      const l = (mx + mn) / 2;
+      if (!d) return [0, 0, l * 100];
+      const s = d / (1 - Math.abs(2 * l - 1));
+      const h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+      return [(h * 60 + 360) % 360, s * 100, l * 100];
+    };
+    // Which columns carry ink, and what colour it is
+    const columns = new Map();
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const i = (y * width + x) * 4;
+        const [h, s, l] = hsl(data[i], data[i + 1], data[i + 2]);
+        if (s > 30 && l > 12 && l < 88) {
+          if (!columns.has(x)) columns.set(x, []);
+          columns.get(x).push([h, l]);
+        }
+      }
+    }
+    // ...and each digit is a run of them with clear key between it and the next
+    const blobs = [];
+    let run = null;
+    for (const x of [...columns.keys()].sort((a, b) => a - b)) {
+      if (!run || x - run.last > 4) { run = { last: x, px: [] }; blobs.push(run); }
+      run.last = x;
+      run.px.push(...columns.get(x));
+    }
+    const middle = (xs) => xs.sort((a, b) => a - b)[xs.length >> 1];
+    return blobs.map(b => ({
+      ink: b.px.length,
+      hue: Math.round(middle(b.px.map(p => p[0]))),
+      light: Math.round(middle(b.px.map(p => p[1]))),
+    }));
+  });
+
+  check('every finger written on the keys is found', digits.length, 15);
+  const leftWhite = digits.slice(0, 5);
+  const rightWhite = digits.slice(5, 10);
+  const rightBlack = digits.slice(10, 15);
+
+  // Same finger, same colour — wherever on the keyboard it turns up, and
+  // whichever hand is playing it. That is the whole of what makes a number
+  // recognisable before it has been read.
+  check('a finger keeps its colour from one hand to the other',
+    rightWhite.map((d, i) => Math.abs(d.hue - leftWhite[i].hue) <= 2), [true, true, true, true, true]);
+  check('...and from a white key to a black one',
+    rightWhite.map((d, i) => Math.abs(d.hue - rightBlack[i].hue) <= 2), [true, true, true, true, true]);
+
+  // ...and a different one from its neighbours, far enough apart to tell at the
+  // size a key allows. Round the circle, so 350 and 10 are twenty apart.
+  const apart = (a, b) => Math.min(Math.abs(a - b), 360 - Math.abs(a - b));
+  const pairs = [];
+  for (let i = 0; i < 5; i++) {
+    for (let j = i + 1; j < 5; j++) pairs.push(apart(rightWhite[i].hue, rightWhite[j].hue));
+  }
+  check('the five fingers are five colours', new Set(rightWhite.map(d => d.hue)).size, 5);
+  check('...none of them near enough to another to be mistaken for it',
+    pairs.filter(d => d < 30), []);
+
+  // The left hand, a shade darker in the same colour. On a black key the digit
+  // is light to begin with and still drops, so "darker" is one rule and not two.
+  check('the left hand is written in the same colour, darker',
+    leftWhite.map((d, i) => d.light < rightWhite[i].light - 5), [true, true, true, true, true]);
+
+  // Thicker than it was. The digits used to carry 42-57 pixels of ink apiece at
+  // this size; a glyph stroked in its own colour on top of the fill carries
+  // getting on for three times that, which is what makes it readable at a
+  // glance from playing distance rather than only when looked at.
+  check('the digits are drawn heavily enough to read without looking for them',
+    [...leftWhite, ...rightWhite].filter(d => d.ink < 90), []);
+
+  await page.evaluate(async () =>
+    (await import('/src/state.js')).update('transport.currentTime', 0));
+}
+
 await browser.close();
 
 const failed = checks.filter(c => !c.ok);
