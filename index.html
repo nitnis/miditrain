@@ -536,11 +536,48 @@
             <circle cx="3.5" cy="14" r="1.1"/><circle cx="6.5" cy="14" r="1.1"/>
           </svg>
         </button>
+        <!-- Which hand is being learned. First in the row because it decides
+             what everything after it is working on: hands are learned
+             separately long before they are put together, and a single hand is
+             already small enough to hold, so picking one makes the thing to
+             learn the whole section in one rather than a bar at a time.
+             Pressing the hand already chosen goes back to both. -->
+        <button class="learn-nav-btn learn-nav-hand" id="btn-learn-left" aria-pressed="false"
+                title="Learn the left hand alone, the whole section in one pass">
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <!-- Palm towards you: a left hand has its thumb on the right -->
+            <g transform="scale(-1,1) translate(-20,0)">
+            <rect x="7.2" y="4.4" width="2.2" height="7.2" rx="1.1"/>
+            <rect x="9.6" y="2.9" width="2.2" height="8.7" rx="1.1"/>
+            <rect x="12" y="4" width="2.2" height="7.6" rx="1.1"/>
+            <rect x="14.4" y="6.2" width="2.2" height="5.4" rx="1.1"/>
+            <rect x="4.5" y="9" width="2.3" height="6" rx="1.15" transform="rotate(-36 5.6 12)"/>
+            <path d="M6.9 9.6h9.7v2.7c0 3-2 5.1-4.85 5.1S6.9 15.3 6.9 12.3z"/>
+            </g>
+          </svg>
+          <span>Left</span>
+        </button>
+        <button class="learn-nav-btn learn-nav-hand" id="btn-learn-right" aria-pressed="false"
+                title="Learn the right hand alone, the whole section in one pass">
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <rect x="7.2" y="4.4" width="2.2" height="7.2" rx="1.1"/>
+            <rect x="9.6" y="2.9" width="2.2" height="8.7" rx="1.1"/>
+            <rect x="12" y="4" width="2.2" height="7.6" rx="1.1"/>
+            <rect x="14.4" y="6.2" width="2.2" height="5.4" rx="1.1"/>
+            <rect x="4.5" y="9" width="2.3" height="6" rx="1.15" transform="rotate(-36 5.6 12)"/>
+            <path d="M6.9 9.6h9.7v2.7c0 3-2 5.1-4.85 5.1S6.9 15.3 6.9 12.3z"/>
+          </svg>
+          <span>Right</span>
+        </button>
+        <span class="learn-nav-sep" aria-hidden="true"></span>
         <button class="learn-nav-btn" id="btn-learn-prev" title="The cluster before this one">
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4.5 7 10l5.5 5.5"/><path d="M5.5 4.5v11" opacity="0.55"/></svg>
           <span>Back</span>
         </button>
-        <button class="learn-nav-btn" id="btn-learn-again" title="Hear this cluster and follow it again (Space)">
+        <!-- The whole cluster from the top, whichever pass you are in. Space
+             restarts the pass you are in; this goes back further, to hearing
+             it played. -->
+        <button class="learn-nav-btn" id="btn-learn-again" title="Hear this cluster and follow it again, from the top">
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16 10a6 6 0 1 1-1.9-4.4"/><path d="M16.3 3v3.4h-3.4"/></svg>
           <span>Again</span>
         </button>

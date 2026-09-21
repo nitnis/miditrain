@@ -138,6 +138,21 @@ export function repeatSection() {
   beginPreview();
 }
 
+// This section's walk again, because something changed underneath it — which
+// so far means switching to one hand, where the notes being walked are no
+// longer the notes the walk was built out of.
+//
+// The listeners go first. Learn mode ending is how this knows the player cut
+// the walk short, and tearing one down to build another would read as exactly
+// that and stop the walk instead of restarting it.
+export function restartSectionWalk() {
+  if (phase !== 'walking') return false;
+  release();
+  stopLearn();
+  beginWalk();
+  return true;
+}
+
 // Back one. The walk has always been able to repeat a section or move on, but
 // not to go back to the one before — which is what you want the moment you
 // realise the trouble started earlier.

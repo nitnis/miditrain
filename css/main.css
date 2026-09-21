@@ -932,6 +932,34 @@ select:focus { outline: 1px solid var(--accent); }
   color: #c4b5fd;
 }
 
+/* A hand is the one icon in this row that has to be read as a shape rather
+   than as a diagram: four fingers and a thumb in outline, at eighteen pixels,
+   is a smudge. Filled, the thumb tells you which hand it is. */
+.learn-nav-btn.learn-nav-hand svg { fill: currentColor; stroke: none; }
+
+/* The two hands, lit in the colours the drawn hands already wear, so a pressed
+   button and the hand on the keys are saying the same thing. Louder than the
+   plain pressed state on purpose: which hand you are on changes what a cluster
+   even is, and that should not look like any other switch in the row. */
+#btn-learn-left[aria-pressed="true"] {
+  background: rgba(244, 114, 182, 0.2);
+  border-color: #e0679f;
+  color: #f9a8d4;
+}
+#btn-learn-left[aria-pressed="true"]:hover:not(:disabled) {
+  background: rgba(244, 114, 182, 0.3);
+  color: #f9a8d4;
+}
+#btn-learn-right[aria-pressed="true"] {
+  background: rgba(61, 139, 253, 0.2);
+  border-color: #4f8fe0;
+  color: #93c5fd;
+}
+#btn-learn-right[aria-pressed="true"]:hover:not(:disabled) {
+  background: rgba(61, 139, 253, 0.3);
+  color: #93c5fd;
+}
+
 .learn-nav-train { color: #6ee7a8; }
 .learn-nav-train:hover:not(:disabled) { color: #6ee7a8; background: rgba(110, 231, 168, 0.14); }
 .learn-nav-test { color: var(--accent); }
