@@ -2580,12 +2580,59 @@ const bests = await page.evaluate(async () => {
   await page.waitForTimeout(300);
   check('Test me is what takes it to the memory pass', (await at()).phase, 'memory');
 
-  // Out of a memory pass that is going badly, without ending the session
+  // ── Space starts the pass you are in again ──
+  //
+  // Not the cluster from the top, and not the session: the pass. Somebody who
+  // has lost the thread of a test wants the test again, and used to be sent
+  // back two passes to hear the cluster played — or, in a pass where Space was
+  // not bound at all, out of learn mode altogether by the key that stops the
+  // transport.
+  const step = () => page.evaluate(async () => {
+    const g = (await import('/src/learn.js')).getLearnProgress();
+    return g ? g.done : null;
+  });
+  await playIt();                       // one attack into the test
+  await page.waitForTimeout(150);
+  const intoTest = await step();
+  check('a test moves on as the notes are played', intoTest > 0, true);
+
   await page.keyboard.press('Space');
   await page.waitForTimeout(400);
   here = await at();
-  check('Space in the memory pass goes back to learning that cluster',
-    [here.phase, here.index], ['listen', 0]);
+  check('Space in the memory pass starts the test again',
+    [here.phase, here.index], ['memory', 0]);
+  check('...from its first note rather than where it had got to',
+    await step() < intoTest, true);
+
+  // ...and the same key, meaning the same thing, in the passes where it used
+  // to stop the session outright
+  await page.click('#btn-learn-again');
+  await page.waitForTimeout(250);
+  check('Again is still the whole cluster from the top', (await at()).phase, 'listen');
+  await page.keyboard.press('Space');
+  await page.waitForTimeout(250);
+  check('Space while the cluster plays itself does not end the session',
+    (await at() || {}).phase, 'listen');
+
+  await reach('guided');
+  await playIt();
+  await page.waitForTimeout(150);
+  const intoGuided = await step();
+  await page.keyboard.press('Space');
+  await page.waitForTimeout(300);
+  here = await at();
+  check('Space while following it starts the following again',
+    [here && here.phase, (await step()) < intoGuided], ['guided', true]);
+
+  await reach('ready');
+  await page.keyboard.press('Space');
+  await page.waitForTimeout(300);
+  check('...and at the wait it is the choice on offer, which is the cluster again',
+    (await at()).phase, 'listen');
+
+  await reach('ready');
+  await page.click('#btn-learn-test');
+  await page.waitForTimeout(300);
 
   await page.click('#btn-learn-next');
   await page.waitForTimeout(300);
@@ -2611,6 +2658,167 @@ const bests = await page.evaluate(async () => {
   await page.keyboard.press('KeyT');
   await page.waitForTimeout(350);
   check('T asks for the test from anywhere in the cluster', (await at()).phase, 'memory');
+
+  // ── One hand at a time ──
+  //
+  // Hands are learned separately long before they are put together, and a
+  // single hand is already a small enough thing to hold: half the notes, and
+  // every one of them under a hand that does not have to be placed against the
+  // other. So picking one makes the thing to learn the whole section, in one,
+  // with the same four passes a bar would have got.
+  {
+    await page.evaluate(async () => {
+      const { update } = await import('/src/state.js');
+      (await import('/src/learn.js')).stopLearn();
+      const notes = [];
+      // Four bars of two hands, so with both there are clusters to collapse
+      for (let i = 0; i < 16; i++) {
+        notes.push({ id: `hr${i}`, pitch: 72 + (i % 4), hand: 'right',
+                     startTime: i * 500, duration: 400, velocity: 90 });
+        notes.push({ id: `hl${i}`, pitch: 48 + (i % 3), hand: 'left',
+                     startTime: i * 500, duration: 400, velocity: 90 });
+      }
+      update('composition.notes', notes);
+      update('ui.practiceHand', 'both');
+      update('transport.currentTime', 0);
+    });
+    await page.waitForTimeout(300);
+    await page.evaluate(async () => (await import('/src/learn.js')).startLearn());
+    await page.waitForTimeout(400);
+
+    const hands = () => page.evaluate(() =>
+      ['left', 'right'].map(h =>
+        document.getElementById(`btn-learn-${h}`).getAttribute('aria-pressed')));
+    // Which notes the session is walking, read off its first attack. Asking for
+    // the test lights it, and a two-handed texture lights two keys where one
+    // hand lights one — the counts alone cannot tell them apart, since the two
+    // hands strike together and a chord is one attack however many notes it is.
+    const firstChord = () => page.evaluate(async () => {
+      const learn = await import('/src/learn.js');
+      learn.learnTest();
+      const at = learn.getLearnProgress();
+      return at ? [...at.pending].sort((a, b) => a - b) : null;
+    });
+
+    check('a session starts on both hands', await hands(), ['false', 'false']);
+    const bothClusters = (await at()).pieces;
+    check('...cut into clusters', bothClusters > 1, true);
+    check('...over everything being played', await firstChord(), [48, 72]);
+
+    await page.click('#btn-learn-right');
+    await page.waitForTimeout(800);
+    let here = await at();
+    check('picking a hand lights that hand alone', await hands(), ['false', 'true']);
+    check('...and makes the whole section the cluster',
+      [here.total, here.whole, here.pieces], [1, true, 0]);
+    check('...with nowhere to go before or after it',
+      [here.first, here.last], [true, true]);
+    check('the heading says so rather than counting a cluster that is not there',
+      await page.evaluate(() => document.getElementById('learn-phase').textContent),
+      'Listen · the whole section');
+    check('...and it waits on that hand\'s notes alone', await firstChord(), [72]);
+
+    await page.click('#btn-learn-left');
+    await page.waitForTimeout(800);
+    check('the other hand takes over rather than adding to it',
+      await hands(), ['true', 'false']);
+    check('...on its own notes', await firstChord(), [48]);
+
+    await page.click('#btn-learn-left');
+    await page.waitForTimeout(800);
+    here = await at();
+    check('pressing the hand you are on goes back to both',
+      await hands(), ['false', 'false']);
+    check('...and the clusters come back with it', here.pieces, bothClusters);
+    check('...and both hands with them', await firstChord(), [48, 72]);
+
+    // The switch in the settings and the two buttons are one setting, so a
+    // session has to be rebuilt whichever of them was used
+    await page.selectOption('#practice-hand', 'right');
+    await page.waitForTimeout(800);
+    check('the settings switch rebuilds the session the same way',
+      [(await at()).whole, await firstChord()], [true, [72]]);
+    await page.selectOption('#practice-hand', 'both');
+    await page.waitForTimeout(800);
+    check('...and back', [(await at()).whole, await firstChord()], [false, [48, 72]]);
+
+    // Inside a section walk the same switch has to rebuild the section's walk
+    // rather than end it. Learn mode ending is how the walk knows the player
+    // cut it short, so tearing one down to build the next reads as exactly
+    // that unless the walk stops listening first.
+    await page.evaluate(async () => {
+      (await import('/src/learn.js')).stopLearn();
+      (await import('/src/state.js')).update('ui.practiceHand', 'both');
+    });
+    await page.waitForTimeout(300);
+    await page.evaluate(async () =>
+      (await import('/src/section-learn.js')).startSectionWalk(2));
+    const walkingNow = async () => page.evaluate(async () => {
+      const { state } = await import('/src/state.js');
+      const walk = await import('/src/section-learn.js');
+      return walk.isWalking() && state.transport.mode === 'learning';
+    });
+    // The section is played through before it is walked, and that is real time
+    for (let i = 0; i < 80 && !(await walkingNow()); i++) await page.waitForTimeout(150);
+    check('a section walk reaches the walking part of a section', await walkingNow(), true);
+
+    await page.click('#btn-learn-right');
+    await page.waitForTimeout(900);
+    check('switching hands inside a section walk does not end the walk',
+      await walkingNow(), true);
+    check('...and the section is walked on that hand alone', await firstChord(), [72]);
+
+    await page.evaluate(async () => {
+      (await import('/src/section-learn.js')).stopSectionWalk();
+      (await import('/src/learn.js')).stopLearn();
+      (await import('/src/state.js')).update('ui.practiceHand', 'both');
+    });
+    await page.waitForTimeout(300);
+  }
+
+  // ── The fast walk, and the way out ──
+  //
+  // Space used to be how you left a session: in the passes where it was not
+  // bound it fell through to the key that stops the transport. It restarts the
+  // pass now, everywhere — so in the fast walk, which has no passes, it is the
+  // section from the top, and the way out is the key that stops and rewinds.
+  {
+    await page.evaluate(async () => {
+      (await import('/src/learn.js')).stopLearn();
+      (await import('/src/state.js')).update('ui.learnCluster', 'off');
+    });
+    await page.waitForTimeout(250);
+    await page.evaluate(async () => (await import('/src/learn.js')).startLearn());
+    await page.waitForTimeout(400);
+
+    const learning = () => page.evaluate(async () =>
+      (await import('/src/state.js')).state.transport.mode === 'learning');
+    const along = () => page.evaluate(async () => {
+      const at = (await import('/src/learn.js')).getLearnProgress();
+      return at ? at.done : null;
+    });
+
+    check('a fast walk is running', await learning(), true);
+    await playIt();
+    await page.waitForTimeout(140);
+    await playIt();
+    await page.waitForTimeout(140);
+    const got = await along();
+    check('...and moves on as the notes are played', got > 0, true);
+
+    await page.keyboard.press('Space');
+    await page.waitForTimeout(400);
+    check('Space in the fast walk starts the section again rather than ending it',
+      [await learning(), (await along()) < got], [true, true]);
+
+    await page.keyboard.press('Shift+Space');
+    await page.waitForTimeout(400);
+    check('...and stop-and-rewind is the way out that Space used to be',
+      await learning(), false);
+    await page.evaluate(async () =>
+      (await import('/src/state.js')).update('ui.learnCluster', 'bar'));
+    await page.waitForTimeout(200);
+  }
 
   await page.evaluate(async () => (await import('/src/learn.js')).stopLearn());
   await page.waitForTimeout(300);

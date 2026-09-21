@@ -14,7 +14,7 @@ import { state, update, emit, on } from './state.js';
 import { noteOn, noteOff, resumeAudioContext, getAudioContext, getClickBus } from './audio.js';
 import { barRangeMs, atOrPast, EDGE_MS } from './quantizer.js';
 import { loopBars, loopRangeMs } from './range.js';
-import { isPractised } from './hands.js';
+import { isPractised, practiceHand } from './hands.js';
 import { countAt } from './metronome.js';
 import { speakSyllable, countingAloud, voiceHz } from './voice.js';
 
@@ -134,8 +134,26 @@ export function clusterMs() {
 // up able to play every bar of something and not the thing itself — the joins
 // are the hard part, and nothing before this pass has asked for them.
 function buildClusters() {
+  if (!groups.length) return [];
+
+  // One hand at a time is already a small enough thing to hold. Half the notes,
+  // and every one of them under a hand that does not have to be placed against
+  // the other — which is most of what makes a cluster necessary in the first
+  // place. So a hand is learned a section at a time, in one, and gets the same
+  // four passes a bar would have got: heard, followed, waited on, played back.
+  if (practiceHand() !== 'both') {
+    const last = groups[groups.length - 1];
+    return [{
+      from: 0,
+      to: groups.length - 1,
+      startMs: Math.min(sectionStartMs, groups[0].startMs),
+      endMs: last.startMs + last.durationMs,
+      whole: true,
+    }];
+  }
+
   const size = clusterMs();
-  if (!size || !groups.length) return [];
+  if (!size) return [];
   const out = [];
   let from = 0;
   while (from < groups.length) {
@@ -343,6 +361,10 @@ function hold(ms, then) {
 function announcePhase() {
   emit('learn:phase', {
     phase,
+    // This only ever runs inside a cluster session, which the end of a session
+    // has to be able to say it is not. `clusters` cannot carry that: a hand
+    // learned in one is a cluster session with no pieces in it.
+    inCluster: true,
     cluster: clusterIndex,
     clusters: pieceCount(),
     whole: Boolean(cluster() && cluster().whole),
@@ -460,6 +482,46 @@ export function learnAgain() {
   if (!clusters.length || state.transport.mode !== 'learning') return false;
   repeatPass();
   return true;
+}
+
+// Whatever is happening, from the top of it. This is what Space is for, and it
+// is one idea: you have lost the thread of this pass and want it again.
+//
+// It used to mean "back to learning this cluster", and only in the two passes
+// where nothing was moving — anywhere else Space fell through to the key that
+// stops the transport, which ended the session. Both were wrong the same way.
+// The pass you are in is the thing you wanted another go at: being sent back
+// three passes to listen again, or thrown out of learn mode altogether, is not
+// that. A test restarted is a test, from its first note.
+export function learnRestart() {
+  if (state.transport.mode !== 'learning') return false;
+  clearTimeout(holding);
+  holding = null;
+  if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+  sounding = null;
+  clearPrompt();
+  resetTally();
+
+  // The fast walk is one pass over the section and nothing else, so the top of
+  // what is happening is the top of the section
+  if (!clusters.length) { restartWalk(); return true; }
+  if (phase === 'demo') { learnDemoSection(); return true; }
+  if (phase === 'memory') { beginMemory(); return true; }
+  if (phase === 'guided') { beginGuided(); return true; }
+  // `listen` is already the top of a pass, and `ready` is the one place the
+  // player is being offered exactly this
+  repeatPass();
+  return true;
+}
+
+// The fast walk, from the top of the section. Not `restartPass`: that is the
+// looping drill banking a pass and beginning the next one, and somebody asking
+// for this has not finished anything.
+function restartWalk() {
+  slips = 0;
+  index = -1;
+  update('transport.currentTime', sectionStartMs);
+  goTo(0);
 }
 
 // Straight to the test, whenever the player reckons they have it
@@ -638,7 +700,10 @@ function finish(completed) {
   emit('learn:waiting', { pitches: [], done: index, total: groups.length, looping, pass, slips });
   if (completed) {
     emit('learn:pass', { pass, slips, clean: slips === 0, total: groups.length });
-    emit('learn:complete', { total: groups.length, passes: pass, looping, clusters: pieceCount() });
+    // Whether it was learned in clusters, not how many there were: one hand
+    // over a whole section is the most thorough of them and has no pieces
+    emit('learn:complete', { total: groups.length, passes: pass, looping,
+                             inClusters: clusters.length > 0 });
   }
   // Already out of the mode when something else stopped us — saying so twice
   // would bounce back through the mode listener

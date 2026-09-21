@@ -6,12 +6,12 @@ import { refreshSuggestions, hasSuggestions } from './autofinger.js';
 import { initPianoRoll, renderPianoRoll, spawnKeyEffect, clearKeyEffects, setWaitingPitches, setFallingBlind, setLoopPick, setTakeGhosts, noteAtFallingPoint, fallingMsPerPixel, fallingWindowMs, HAND_COLORS } from './pianoroll.js';
 import {
   startLearn, stopLearn, isHoldingMessage, CLUSTERS,
-  learnAgain, learnTest, learnStepCluster, learnGoToCluster, learnDemoSection,
+  learnAgain, learnRestart, learnTest, learnStepCluster, learnGoToCluster, learnDemoSection,
   getLearnCluster, getClusterRange, getSectionToHereRange,
 } from './learn.js';
 import {
-  startSectionWalk, stopSectionWalk, repeatSection, advanceSection, previousSection,
-  handOverForTraining, isWalking, buildSections,
+  startSectionWalk, stopSectionWalk, repeatSection, restartSectionWalk, advanceSection,
+  previousSection, handOverForTraining, isWalking, buildSections,
 } from './section-learn.js';
 import { saveComposition, listCompositions, deleteComposition, compositionToJSON, compositionFromJSON } from './storage.js';
 import { compositionToMidi, midiToComposition } from './midi-file.js';
@@ -162,10 +162,10 @@ export function initUI() {
   on('learn:react', ({ tone }) => showLearnReaction(tone));
   on('learn:tally', ({ correct, misses }) => updateLearnCounters(correct, misses));
   // The memory pass shows nothing, so the window has to be told to show nothing
-  on('learn:phase', ({ phase, blind, cluster, clusters, whole, review }) => {
+  on('learn:phase', ({ phase, blind, inCluster, cluster, clusters, whole, review }) => {
     setFallingBlind(blind);
     syncLearnNav();
-    if (!clusters) { setLearnPhase(''); return; }
+    if (!inCluster) { setLearnPhase(''); return; }
     // A cascade is not a cluster, and saying it was one would have the heading
     // claim a place in the walk that the music being played does not match
     const which = review
@@ -187,8 +187,8 @@ export function initUI() {
     if (clean) return;
     showToast(`${slips} slip${slips === 1 ? '' : 's'} on pass ${pass} — from the top`, 1800);
   });
-  on('learn:complete', ({ total, passes, looping, clusters }) => {
-    learnedInClusters = Boolean(clusters);
+  on('learn:complete', ({ total, passes, looping, inClusters }) => {
+    learnedInClusters = Boolean(inClusters);
     showToast(looping
       ? `Clean pass — ${total} played in ${passes} attempt${passes === 1 ? '' : 's'}`
       : `Learn complete — ${total} played`, 2400);
@@ -516,9 +516,29 @@ const PRACTICE_CYCLE = ['both', 'left', 'right'];
 
 function setPracticeHand(hand) {
   const want = PRACTICE_CYCLE.includes(hand) ? hand : 'both';
+  if (want === state.ui.practiceHand) return;
   update('ui.practiceHand', want);
   syncPracticeHand();
+  relearnForHand();
+  syncLearnNav();
   showToast(`Practising ${PRACTICE_LABEL[want]}`, 1600);
+}
+
+// A learn session is built out of one hand's notes at the moment it starts:
+// which attacks there are, what the clusters are, how many of them. On a
+// different hand it is the wrong session, so it is begun again rather than
+// left driving a walk through notes that are no longer being practised.
+function relearnForHand() {
+  if (restartSectionWalk()) return;
+  if (state.transport.mode !== 'learning') return;
+  stopLearn();
+  if (!startLearn()) showToast('Nothing to learn for that hand');
+}
+
+// The panel's two hand buttons are one three-way switch between them: pressing
+// the hand already being practised goes back to both.
+function toggleLearnHand(hand) {
+  setPracticeHand(state.ui.practiceHand === hand ? 'both' : hand);
 }
 
 function syncPracticeHand() {
@@ -2065,11 +2085,13 @@ const CLUSTER_PHASE = {
   listen: 'Listen', guided: 'Follow it', ready: 'Again, or test yourself',
   memory: 'From memory', demo: 'The whole section',
 };
+// Space says the same thing in every one of them — this pass again, from the
+// top — so each says it in the terms of the pass the player is actually in
 const CLUSTER_HINT = {
-  listen: 'Listen to the cluster',
+  listen: 'Listen to the cluster · Space to hear it again',
   ready: 'Again, or Test me when you have it',
-  memory: 'Now play the cluster again from memory · Space to go back to it',
-  demo: 'Listening to the whole section',
+  memory: 'Now play the cluster again from memory · Space to start the test over',
+  demo: 'Listening to the whole section · Space to hear it again',
 };
 
 // ── The cluster controls ─────────────────────────────────────────────────────
@@ -2085,6 +2107,8 @@ function bindLearnNav() {
     e.currentTarget.blur();
     fn();
   };
+  document.getElementById('btn-learn-left').onclick = press(() => toggleLearnHand('left'));
+  document.getElementById('btn-learn-right').onclick = press(() => toggleLearnHand('right'));
   document.getElementById('btn-learn-prev').onclick = press(() => learnStepCluster(-1));
   document.getElementById('btn-learn-again').onclick = press(() => backToLearning());
   document.getElementById('btn-learn-next').onclick = press(() => learnStepCluster(1));
@@ -2356,6 +2380,13 @@ function syncLearnNav() {
   // dark. `Again` stays: it means what it always means, which here is going
   // back to learning the cluster the run was taken from.
   const walking = Boolean(at);
+  // Which hand, lit. Only while a walk is running: between quick runs there is
+  // no session to rebuild, and switching hands would change nothing you can see
+  for (const hand of ['left', 'right']) {
+    const button = document.getElementById(`btn-learn-${hand}`);
+    button.setAttribute('aria-pressed', String(state.ui.practiceHand === hand));
+    button.disabled = !walking;
+  }
   document.getElementById('btn-learn-prev').disabled = !walking || at.first;
   document.getElementById('btn-learn-next').disabled = !walking || at.last;
   document.getElementById('btn-learn-demo').disabled = !walking || at.phase === 'demo';
@@ -3894,6 +3925,11 @@ function shortcutActions() {
     const at = getLearnCluster();
     return Boolean(at) && phases.includes(at.phase) && !isHoldingMessage();
   };
+  // Any learn session at all, clusters or the fast walk — but never while a
+  // verdict is being read, when the session is a moment from carrying on by
+  // itself and pressing through it would cut in.
+  const learnRunning = () =>
+    state.transport.mode === 'learning' && !isHoldingMessage();
   const sectionUp = () => !document.getElementById('section-modal').classList.contains('hidden');
 
   return [
@@ -3920,20 +3956,23 @@ function shortcutActions() {
       defaultBindings: [{ code: 'KeyN' }],
       run: () => advanceSection() },
 
-    // ── Inside a cluster session ──
+    // ── Inside a learn session ──
     //
-    // Space means "take me back to learning this" — which is what it is for in
-    // the middle of a memory pass that has gone wrong, and what it is for when
-    // the cluster has been followed and is waiting to be asked for. One idea,
-    // so one key.
+    // Space means "this pass again, from the top of it" — whichever pass that
+    // is. A test restarted is a test; a cluster being followed starts being
+    // followed again. One idea, so one key, and the same key everywhere.
     //
-    // Scoped to those two passes only. While the cluster is playing itself or
-    // being followed, Space keeps its ordinary meaning, so there is always a
-    // way to stop a session with the key that stops everything else.
-    { id: 'learn-again', group: 'learn', scope: () => learnWaitingAt('memory', 'ready'),
-      section: 'Training', label: 'Back to learning this cluster',
+    // It used to be scoped to the two passes where nothing was moving, and to
+    // mean "back to learning this cluster" in both. Everywhere else Space fell
+    // through to the transport and stopped the session — which is a long way
+    // from what somebody reaching for it in the middle of a test wanted.
+    //
+    // That was also the way out of a session, so the way out is now Shift+Space
+    // (stop and rewind) or P, both of which stop anything that is running.
+    { id: 'learn-restart', group: 'learn', scope: learnRunning,
+      section: 'Training', label: 'Start this pass again',
       defaultBindings: [{ code: 'Space' }],
-      run: () => learnAgain() },
+      run: () => learnRestart() },
     { id: 'learn-test', group: 'learn', scope: () => learnWaitingAt('listen', 'guided', 'ready'),
       section: 'Training', label: 'Play this cluster from memory now',
       defaultBindings: [{ code: 'KeyT' }],
